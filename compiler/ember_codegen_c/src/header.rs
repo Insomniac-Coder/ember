@@ -34,7 +34,7 @@ pub(super) fn render(emitter: &Emitter<'_>, bodies: &[Body], package_name: &str)
                 _ => {}
             }
         }
-        if !matches!(emitter.types.kind(body.return_ty()), TyKind::Class(_)) {
+        if emitter.types.thread_shared_object(body.return_ty()).is_none() {
             reachable.visit(body.return_ty())?;
         }
     }
@@ -147,7 +147,7 @@ pub(super) fn render(emitter: &Emitter<'_>, bodies: &[Body], package_name: &str)
     // the object), and each `pub` method, its object first.
     for class in &classes {
         line(&mut out, "");
-        line(&mut out, &format!("/* `{0}`, an Ember `@sync` class: each handle holds a count of the object (atomic, so on", class.name));
+        line(&mut out, &format!("/* `{0}`, an Ember `thread_shared` object: each handle holds a count of the object (atomic, so on", class.name));
         line(&mut out, " * any thread); retain takes another, release gives one back, and the last one's release frees it. */");
         line(&mut out, &format!("void {}({}* self);", class.retain, class.name));
         line(&mut out, &format!("void {}({}* self);", class.release, class.name));
@@ -228,7 +228,7 @@ fn render_cpp(emitter: &Emitter<'_>, bodies: &[Body], package_name: &str) -> Str
     }
     for class in &classes {
         let name = &class.name;
-        line(&mut out, &format!("/* [BLD-FFI-5a] `{name}`, an Ember `@sync` class: copies share the object; the last one's end frees it. */"));
+        line(&mut out, &format!("/* [BLD-FFI-5a] `{name}`, an Ember `thread_shared` object: copies share the object; the last one's end frees it. */"));
         line(&mut out, &format!("class {name} {{"));
         line(&mut out, "public:");
         line(&mut out, &format!("    explicit {name}(::{name}* handle) noexcept : handle_(handle) {{}}"));
@@ -283,10 +283,7 @@ fn render_cpp(emitter: &Emitter<'_>, bodies: &[Body], package_name: &str) -> Str
             .map(|(index, (_, decl))| (decl.name.clone().filter(|name| name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')).unwrap_or_else(|| format!("_{index}")), decl.ty))
             .collect();
         // `[BLD-FFI-5a]` — an export that takes or gives a class's object: in C++, the class.
-        let class_of = |ty: ember_types::Ty| match emitter.types.kind(ty) {
-            TyKind::Class(id) => classes.iter().find(|class| class.class == *id).map(|class| class.name.clone()),
-            _ => None,
-        };
+        let class_of = |ty: ember_types::Ty| emitter.types.thread_shared_object(ty).and_then(|id| classes.iter().find(|class| class.class == id).map(|class| class.name.clone()));
         if args.iter().any(|(_, ty)| class_of(*ty).is_some()) || class_of(body.return_ty()).is_some() {
             let params: Vec<String> = args.iter().map(|(name, ty)| match class_of(*ty) {
                 Some(class) => format!("const {class}& {name}"),
@@ -419,8 +416,9 @@ impl<'a, 'b> Reachable<'a, 'b> {
             | TyKind::Float(_) | TyKind::CLongDouble | TyKind::Void | TyKind::Never | TyKind::CStr => {}
             // `[FFI-8]` — the runtime header's `ember_va_list`.
             TyKind::VaList => self.runtime_integer_carrier = true,
-            // `[BLD-FFI-5a]` — a `@sync` class's handle, declared with its methods.
+            // `[BLD-FFI-5a]` — a `thread_shared` object, declared with its methods.
             TyKind::Class(id) if self.emitter.types.class_def(id).is_sync => {}
+            TyKind::Link { kind: ember_types::LinkKind::ThreadShared, target } if matches!(self.emitter.types.kind(target), TyKind::Class(_)) => {}
             _ => return Err(self.unsupported(ty)),
         }
         Ok(())

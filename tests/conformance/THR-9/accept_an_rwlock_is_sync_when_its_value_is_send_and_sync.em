@@ -6,12 +6,11 @@
 
 from std.sync import RwLock
 
-@sync
 class Names:
     names: RwLock[Array[String]] = RwLock([])
 
 fn main():
-    names = Names()
+    names = thread_shared Names()
     with w = names.names.write():
         w.push(owns "a".to_string())
         w.push(owns "b".to_string())

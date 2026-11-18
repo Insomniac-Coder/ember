@@ -1,12 +1,11 @@
 #$ test: compile-fail
 #$ rules: THR-1, THR-8, THR-9
 #$ profiles: debug
-#$ error[E7001]: field `Holder_Local.value` has type `Local`, which is not Send or Sync
+# `[THR-1]` — a generic class is judged for the instance made `thread_shared`, to the field at fault.
 
 class Local:
-    value: int = 1
+    value: Cell[int] = Cell(1)
 
-@sync
 [T]
 class Holder:
     value: T
@@ -15,5 +14,5 @@ class Holder:
         this.value = value
 
 fn main():
-    holder = Holder(Local())
-    println(holder.value.value)
+    _plain = Holder(1)
+    _holder = thread_shared Holder(Local())    #$ error[E7015]: `Local.value` is a `Cell[i64]`

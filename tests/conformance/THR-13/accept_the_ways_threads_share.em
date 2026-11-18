@@ -6,9 +6,8 @@
 # (e) a value moved to the other thread; each is shown here.
 
 import std.thread
-from std.sync import Atomic, SyncShared
+from std.sync import Atomic
 
-@sync
 class Stats:
     seen: Atomic[int] = Atomic(0)
 
@@ -18,15 +17,15 @@ fn bump(ref mut s: MutSpan[int], at: int, by: int):
     s[at] += by
 
 fn main():
-    stats = Stats()
-    theirs = shares mut stats
+    stats = thread_shared Stats()
+    theirs = thread_shared stats
     a = thread.spawn(owns owned fn() => theirs.seen.fetch_add(3))
     a.join()
     b = thread.spawn(owns owned fn() => TOTAL.fetch_add(5))
     b.join()
-    shared = SyncShared(Atomic(7))
+    shared = thread_shared Atomic(7)
     copy = shared
-    c = thread.spawn(owns owned fn() => copy.get().load())
+    c = thread.spawn(owns owned fn() => copy.load())
     seven = c.join()
     counts = [0, 0]
     first, second = counts.as_mut_span().split_at(1)
@@ -36,5 +35,5 @@ fn main():
         scope.spawn(owns fn() => bump(ref mut second, 0, 2))
         scope.spawn(owns fn() => nine.load())
     text = "moved".to_string()
-    d = thread.spawn(owns owned fn() => text.clone())
+    d = thread.spawn(owns owned fn() => copy of text)
     println(stats.seen.load(), TOTAL.load(), seven, counts, nine.load(), d.join())

@@ -888,34 +888,50 @@ impl TypeTable {
         }
     }
 
+    /// `[BLD-FFI-5a]` — the class of a `thread_shared` owner of an object.
+    pub fn thread_shared_object(&self, ty: Ty) -> Option<ClassId> {
+        let TyKind::Link { kind: LinkKind::ThreadShared, target } = *self.kind(ty) else { return None };
+        match *self.kind(target) {
+            TyKind::Class(id) => Some(id),
+            _ => None,
+        }
+    }
+
     /// `[RC-4]` — every class a `thread_shared` type names counts its owners atomically, with its whole
     /// family, since an object is reached through its base classes too. Biased counting replaces this
-    /// with the two counts on the header of M6b.
-    pub fn settle_thread_shared(&mut self) {
+    /// with the two counts on the header of M6b. Gives the families that also have `shares mut` owners.
+    pub fn settle_thread_shared(&mut self) -> Vec<ClassId> {
         let root = |types: &Self, mut id: ClassId| {
             while let Some(base) = types.class_def(id).base {
                 id = base;
             }
             id
         };
-        let roots: HashSet<ClassId> = self
-            .kinds
-            .iter()
-            .filter_map(|kind| match kind {
-                TyKind::Link { kind: LinkKind::ThreadShared, target } => match self.kind(*target) {
-                    TyKind::Class(id) => Some(root(self, *id)),
+        let roots_of = |types: &Self, wanted: LinkKind| -> HashSet<ClassId> {
+            types
+                .kinds
+                .iter()
+                .filter_map(|kind| match kind {
+                    TyKind::Link { kind, target } if *kind == wanted => match types.kind(*target) {
+                        TyKind::Class(id) => Some(root(types, *id)),
+                        _ => None,
+                    },
                     _ => None,
-                },
-                _ => None,
-            })
-            .collect();
+                })
+                .collect()
+        };
+        let roots = roots_of(self, LinkKind::ThreadShared);
         if roots.is_empty() {
-            return;
+            return Vec::new();
         }
+        let changing = roots_of(self, LinkKind::SharesMut);
         let family: Vec<ClassId> = self.classes().map(|(id, _)| id).filter(|&id| roots.contains(&root(self, id))).collect();
         for id in family {
             self.class_def_mut(id).is_sync = true;
         }
+        let mut both: Vec<ClassId> = roots.intersection(&changing).copied().collect();
+        both.sort_by_key(|id| id.0);
+        both
     }
 
     /// A link of `kind` to `target`, with the pointer type `link_payload` finds for a value in a block.
@@ -979,7 +995,7 @@ impl TypeTable {
         match self.kind(ty) {
             TyKind::Param { .. } | TyKind::ArrayN { .. } => true,
             TyKind::Const(value) => value.mentions_params(),
-            TyKind::Ref { inner, .. } | TyKind::Ptr { inner, .. } => {
+            TyKind::Ref { inner, .. } | TyKind::Ptr { inner, .. } | TyKind::Link { target: inner, .. } => {
                 self.is_generic_in(*inner, seen)
             }
             TyKind::Array { elem, .. } | TyKind::Vec { elem, .. } => self.is_generic_in(*elem, seen),
@@ -2012,7 +2028,7 @@ impl TypeTable {
     fn thread_properties(&self, ty: Ty, visiting: &mut HashSet<Ty>, params: &dyn Fn(Ty) -> Option<(bool, bool)>) -> (bool, bool) {
         if !visiting.insert(ty) {
             // Recursive value storage is impossible without indirection. A
-            // recursive @sync handle is safe once its declaration is checked.
+            // recursive class is judged by its other fields.
             return (true, true);
         }
         if matches!(self.kind(ty), TyKind::Param { .. } | TyKind::Assoc { .. })
@@ -2045,12 +2061,10 @@ impl TypeTable {
             // `[THR-8]`, `[THR-9]` — a class object by its class's fields, inherited ones included.
             TyKind::Class(id) => {
                 let mut facts = (true, true);
-                if !self.class_def(*id).is_sync {
-                    for index in 0..self.class_field_count(*id) {
-                        if let Some(field) = self.class_field_at(*id, index) {
-                            let (send, shared) = both(field.ty, visiting);
-                            facts = (facts.0 && send, facts.1 && shared);
-                        }
+                for index in 0..self.class_field_count(*id) {
+                    if let Some(field) = self.class_field_at(*id, index) {
+                        let (send, shared) = both(field.ty, visiting);
+                        facts = (facts.0 && send, facts.1 && shared);
                     }
                 }
                 facts
@@ -2141,7 +2155,7 @@ impl TypeTable {
         };
         // `[TYP-35]` — a phantom parameter counts as a field of its type.
         let mut result = match self.kind(ty) {
-            TyKind::Struct(_) | TyKind::Enum(_) => self.phantoms(ty).iter()
+            TyKind::Struct(_) | TyKind::Enum(_) | TyKind::Class(_) => self.phantoms(ty).iter()
                 .map(|&arg| both(arg, visiting))
                 .fold(result, |a, b| (a.0 && b.0, a.1 && b.1)),
             _ => result,

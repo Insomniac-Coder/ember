@@ -14,12 +14,11 @@
 import std.thread
 from std.sync import Atomic, Mutex
 
-@sync
 class Stats:
     words: Atomic[int] = Atomic(0)
     tags: Mutex[Array[String]] = Mutex([])
 
-fn scan(stats: Stats, text: StrView):
+fn scan(stats: thread_shared Stats, text: StrView):
     for w in text.split_whitespace():
         stats.words.fetch_add(1)
         if w.starts_with("#"):
@@ -40,11 +39,13 @@ fn total(s: Span[int]) -> int:
     return s[0] + s[1]
 
 fn main():
-    stats = Stats()
+    stats = thread_shared Stats()
     texts = ["#ember is fast", "no tags here", "#python #c"]
+    # Both are views the task copies, until capture words let it say `ref t` (`[THR-17]`).
+    reader = ref stats
     with scope = thread.scope():
         for t in texts:
-            scope.spawn(owns fn() => scan(stats, t))
+            scope.spawn(owns fn() => scan(reader, t))
     println(stats.words.load(), "words")
     with tags = stats.tags.lock():
         println(tags.len(), "tags")

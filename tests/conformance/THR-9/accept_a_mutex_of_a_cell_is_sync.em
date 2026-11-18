@@ -6,12 +6,11 @@
 
 from std.sync import Mutex
 
-@sync
 class Counter:
     count: Mutex[Cell[int]] = Mutex(Cell(0))
 
 fn main():
-    c = Counter()
+    c = thread_shared Counter()
     with g = c.count.lock():
         g.set(g.get() + 3)
     with g = c.count.lock():

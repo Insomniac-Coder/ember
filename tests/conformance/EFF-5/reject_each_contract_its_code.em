@@ -9,9 +9,8 @@
 # `[EFF-5]` — each contract forbids its effect, and a violation is the contract's code: `E4001`
 # for an allocation, `E4041` for console output (`[EFF-20]`), `E4003` for `input`, which may wait
 # (and is `Io` too: effects are independent, `[EFF-18]`), `E4040` for a written panic, `E4070`
-# for the platform's `sin` (`[DET-1]`), and `E4002` for retaining a `@sync` handle.
+# for the platform's `sin` (`[DET-1]`), and `E4002` for one more owner of a `thread_shared` object.
 
-@sync
 class Token:
     n: int
 
@@ -38,12 +37,12 @@ fn wobbles(x: f64) -> f64:
     return x.sin()
 
 @nosync
-fn retains(t: shares Token) -> int:
-    copies = [shares t, shares t]
+fn retains(t: thread_shared Token) -> int:
+    copies = [thread_shared t, thread_shared t]
     return copies.len()
 
 fn main():
     xs: Array[int] = []
     grows(ref mut xs)
     prints(1)
-    println(waits(), stops(1), wobbles(1.0), retains(shares Token(1)))
+    println(waits(), stops(1), wobbles(1.0), retains(thread_shared Token(1)))

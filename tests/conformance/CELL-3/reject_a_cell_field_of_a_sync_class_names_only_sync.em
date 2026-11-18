@@ -1,14 +1,13 @@
 #$ test: compile-fail
 #$ rules: CELL-3, THR-1
-## `[CELL-3]` — `Cell[T]` may move between threads when `T: Send`, but is never
-## shared: the field breaks `Sync` only, and the diagnostic says so.
+## `[CELL-3]` — `Cell[T]` may move between threads when `T: Send`, but is never shared: the message says
+## that several threads may not read it at once, not that it stays on one.
 
-@sync
 class Shared:
-    let cell: Cell[int] #$ error[E7001]: field `Shared.cell` has type `Cell[i64]`, which is not Sync
+    let cell: Cell[int]
 
     fn init():
         this.cell = Cell(1)
 
 fn main():
-    pass
+    _s = thread_shared Shared()    #$ error[E7015]: `Shared.cell` is a `Cell[i64]`, which several threads may not read at once

@@ -12,7 +12,7 @@
 ##   `std.arena`  what the prelude's arenas are (Part VII.6)
 ##   `std.simd`  vector and mask types (Part XII.2)
 ##   `std.ecs`  entities, component storage and the component registry (Part XII.3)
-##   `std.sync`  locks, atomics, `Once` and `SyncShared` (Part XI.2)
+##   `std.sync`  locks, atomics and `Once` (Part XI.2)
 ##   `std.thread`  `spawn` and `JoinHandle` (`[THR-10]`)
 ##   `std.jobs`  the job system: `submit`, `wait`, `scope` (Part XI.5)
 ##   `std.coroutine`  gameplay sequencing on generators: `Wait`, `Scheduler`

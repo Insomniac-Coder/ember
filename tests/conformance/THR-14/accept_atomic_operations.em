@@ -22,7 +22,6 @@ from std.sync import Atomic, MemoryOrder
 
 static HITS: Atomic[int] = Atomic(0)
 
-@sync
 class Stats:
     words: Atomic[int] = Atomic(0)
 
@@ -32,7 +31,7 @@ fn pick(strong: bool) -> MemoryOrder:
     return MemoryOrder.Relaxed
 
 fn main():
-    stats = Stats()
+    stats = thread_shared Stats()
     stats.words.fetch_add(1)
     stats.words.fetch_add(2, MemoryOrder.Relaxed)
     println(stats.words.load(), stats.words.load(order=MemoryOrder.Acquire))

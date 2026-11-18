@@ -1243,7 +1243,7 @@ impl SiteBuilder<'_> {
         if let TyKind::Class(id) = self.types.kind(place_type(body, self.types, place))
             && self.types.class_def(*id).is_sync
         {
-            sites.push(Site { effects: Effects::SYNC, span, origin: Origin::Operation("retaining a `@sync` handle") });
+            sites.push(Site { effects: Effects::SYNC, span, origin: Origin::Operation("one more owner of a `thread_shared` object") });
         }
     }
 
@@ -1317,13 +1317,13 @@ impl SiteBuilder<'_> {
                     sites.push(Site { effects, span, origin: Origin::Operation(operation) });
                 }
                 match which {
-                    // `[EFF-1]` — one more owner of a `@sync` object is an atomic count.
+                    // `[EFF-1]` — one more owner of a `thread_shared` object is an atomic count.
                     Builtin::LinkMake { link, .. } => {
                         if let TyKind::Link { target, .. } = *self.types.kind(*link)
                             && let TyKind::Class(id) = *self.types.kind(target)
                             && self.types.class_def(id).is_sync
                         {
-                            sites.push(Site { effects: Effects::SYNC, span, origin: Origin::Operation("retaining a `@sync` handle") });
+                            sites.push(Site { effects: Effects::SYNC, span, origin: Origin::Operation("one more owner of a `thread_shared` object") });
                         }
                     }
                     // The elements a call removes are dropped.
@@ -1517,7 +1517,7 @@ const RELAXED: &str = "a function with `@fastmath` or `@fp(allow_fma)`";
 
 fn drop_description(effects: Effects) -> &'static str {
     if effects == Effects::SYNC {
-        "releasing a `@sync` handle or a lock"
+        "ending an owner of a `thread_shared` object, or a lock"
     } else {
         "dropping a value whose drop is not known here"
     }

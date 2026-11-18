@@ -24,7 +24,6 @@ fn left(ref mut q: Query[(Entity, Pos)]):
 fn right(ref mut q: Query[(Entity, Mut[Vel])]):
     pass
 
-@sync
 class Tally:
     total: Atomic[int] = Atomic(0)
 
@@ -35,9 +34,9 @@ fn main():
     b = w.create()
     w.add(b, owns Vel(4))
     w.run_parallel(owns [left, right])
-    tally = Tally()
-    tally_1 = shares tally
+    tally = thread_shared Tally()
+    tally_1 = thread_shared tally
     counted = system(owns owned fn(ref mut q: Query[Vel]): tally_1.total.fetch_add(1), "counted")
-    tally_2 = shares tally
+    tally_2 = thread_shared tally
     w.run_parallel(owns [counted, system(owns owned fn(ref mut q: Query[Pos]): tally_2.total.fetch_add(2), "two")])
     println(tally.total.load())

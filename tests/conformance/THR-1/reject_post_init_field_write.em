@@ -1,9 +1,8 @@
 #$ test: compile-fail
 #$ rules: THR-1, CLS-8
 #$ profiles: debug
-#$ error[E7003]: cannot write field `value` of an `@sync` class after `init` or after using `this` as a whole
+# `[THR-1]` — no owner writes a field of a `thread_shared` value.
 
-@sync
 class Token:
     value: int
 
@@ -11,5 +10,5 @@ class Token:
         this.value = 1
 
 fn main():
-    token = Token()
-    token.value = 2
+    token = thread_shared Token()
+    token.value = 2    #$ error[E7014]: is shared between threads

@@ -1,9 +1,8 @@
 #$ test: compile-fail
 #$ rules: THR-1, CLS-8
 #$ profiles: debug
-#$ error[E7003]: cannot write field `items` of an `@sync` class after `init` or after using `this` as a whole
+# `[THR-1]` — a list in a `thread_shared` value is filled where the value is made, or kept under a lock.
 
-@sync
 class Token:
     items: Array[int]
 
@@ -11,5 +10,5 @@ class Token:
         this.items = [1]
 
 fn main():
-    token = Token()
-    token.items.push(owns 2)
+    token = thread_shared Token()
+    token.items.push(owns 2)    #$ error[E7014]: is shared between threads

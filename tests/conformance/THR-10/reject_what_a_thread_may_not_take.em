@@ -1,11 +1,12 @@
 #$ test: compile-fail
 #$ rules: THR-10, THR-8
-#$ error[E7004]: the thread's function captures `count`, a `shares mut i64`, which is not Send
+#$ error[E7015]: the thread's function captures `count`, a `shares mut i64`, which is not Send
 #$ error[E3026]: the thread's function borrows `total`, which it may outlive
-#$ error[E7004]: the thread's function returns a `Plain`, which is not Send
+#$ error[E7015]: the thread's function returns a `shares Plain`, which is not Send
 #$ error[E7004]: a `fn() -> i64` value may hold anything, so it is not Send
 #$ error[E2020]: `thread.spawn` takes a function of no arguments, found `fn(i64) -> i64`
-# `[THR-10]` — what a thread's function captures and returns must be `Send` (`E7004`, naming the
+# `[THR-10]` — what a thread's function captures and returns must be `Send` (`E7004`, `E7015` for a
+# one-thread owner, naming the
 # capture); a lambda that borrows may be outlived by the thread (`E3026`, ODR-103); a callable
 # value's captures are unknown, so it is not `Send`.
 
@@ -19,7 +20,7 @@ fn main():
     a = thread.spawn(owns owned fn() => count + 1)
     total = 5
     c = thread.spawn(owns fn() => total + 1)
-    d = thread.spawn(owns owned fn() => Plain(3))
+    d = thread.spawn(owns owned fn() => shares Plain(3))
     g: fn() -> int = owned fn() => 4
     e = thread.spawn(g)
     f = thread.spawn(owns owned fn(x: int) => x)

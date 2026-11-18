@@ -1917,13 +1917,18 @@ impl Reporter<'_> {
             _ => format!("`{name}` {was} handed over and is used on line {used}"),
         };
         let ty = body.local(local).ty;
+        // An owner's second owner is made with its own word.
+        let owner = match self.types.kind(ty) {
+            TyKind::Link { kind, .. } => kind.word(),
+            _ => "shares",
+        };
         let (tail, help) = if self.types.is_copy(ty) {
             (format!("to keep it, write `owns copy of {name}`"), format!("write `owns copy of {name}` where it is handed over"))
         } else {
             match site.as_ref().map(|site| &site.keep) {
                 Some(Keep::Store { dest }) => (
-                    format!("to keep both, write `{dest} = copy of {name}` (a copy of your own) or `{dest} = shares {name}` (two owners of one value)"),
-                    format!("write `{dest} = copy of {name}` (a copy of your own) or `{dest} = shares {name}` (two owners), or use `{name}` before it is handed over"),
+                    format!("to keep both, write `{dest} = copy of {name}` (a copy of your own) or `{dest} = {owner} {name}` (two owners of one value)"),
+                    format!("write `{dest} = copy of {name}` (a copy of your own) or `{dest} = {owner} {name}` (two owners), or use `{name}` before it is handed over"),
                 ),
                 _ => (
                     format!("to keep both, hand over a copy of your own: `copy of {name}`"),
@@ -1957,21 +1962,25 @@ impl Reporter<'_> {
     /// `[CLI-20]` (M4 slice C) — before 0.9.15 `m = n` made a second owner of the class object `n`
     /// held; it hands it over now (`[TYP-45]`). Where `n` is used again, `ember fmt --migrate` writes
     /// each such line `m = shares mut n`, two owners that may both change it, so the program does
-    /// what it did; no message changes.
+    /// what it did; for a name that is an owner already, with that owner's own word. No message changes.
     fn kept_by_sharing(&self, diagnostic: Diagnostic, body: &Body, local: LocalId, instruction: Option<Span>) -> Diagnostic {
         let moves: Vec<Span> = moves_reaching(body, local, self.point).into_iter().chain(instruction).collect();
+        let word = match self.types.kind(body.local(local).ty) {
+            TyKind::Link { kind, .. } => kind.word(),
+            _ => "shares mut",
+        };
         let mut edits: Vec<(Span, Replacement)> = Vec::new();
         for (stored, at) in &body.stored_at {
             let within = moves.iter().any(|moved| moved.file == at.file && moved.start <= at.end && at.start <= moved.end);
             let insert = Span::new(at.file, at.start, at.start);
             if *stored == local && within && !edits.iter().any(|(span, _)| *span == insert) {
-                edits.push((insert, Replacement::Text("shares mut ".to_string())));
+                edits.push((insert, Replacement::Text(format!("{word} "))));
             }
         }
         if edits.is_empty() {
             return diagnostic;
         }
-        diagnostic.migrate_edits("a second owner where 0.9.10 copied the handle (`shares mut`)", edits)
+        diagnostic.migrate_edits(format!("a second owner where 0.9.10 copied the handle (`{word}`)"), edits)
     }
 
     /// `[OWN-3]` — a use after a move is labelled at the move as well; and a collection's, with the

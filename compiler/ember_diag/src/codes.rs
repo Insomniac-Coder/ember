@@ -423,9 +423,9 @@ codes! {
     E6010 = (Error, 6010, Comptime, "[CT-2], [CLI-21], [CT-5], [CT-1a]", "operation not available at compile time, among them a compile-time value a plain name could change (an `Atomic`, lock, `Once`, channel end, `guarded by` field or `@cached` class in a `comptime(e)`), and a `static mut`, or a `static` built on first access, reached by compile-time code; in `unsafe` code at compile time, a read or write through a pointer not at the bytes of a live value the evaluator holds; inline assembly; `comptime.read_file` of a file missing, unreadable or not UTF-8");
 
     // --- concurrency ----------------------------------------------------------
-    E7001 = (Error, 7001, Concurrency, "[THR-1]", "`@sync` class with a field that is not `Sync`, or a non-`@sync` base or derived class");
+    E7001 = (Error, 7001, Concurrency, "[THR-1]", "`@sync` is gone: a value shared between threads is `thread_shared`, its changing fields `guarded by` a lock or `Atomic`");
     E7002 = (Error, 7002, Concurrency, "[STA-1], [THR-20], [THR-9], [CLS-12]", "`static` of a type that is not `ThreadShared`; a `guarded by` `static mut` of a type that is not `Send`; a `static` `Receiver`; a `static` of a class with a `@cached` method that declares nothing saying its objects are shared (its kept result is filled with plain stores)");
-    E7003 = (Error, 7003, Concurrency, "[THR-1]", "write to a field of a `@sync` class after `init`, or a method on one that changes its object");
+    E7003 = (Error, 7003, Concurrency, "[THR-1]", "`@sync` is gone (as `E7001`); a `thread_shared` value changed directly is `E7014`");
     E7004 = (Error, 7004, Concurrency, "[THR-17], [THR-10], [FFI-21]", "an unscoped thread or a kept callback uses a name with no capture word (a loop's name included)");
     E7005 = (Error, 7005, Concurrency, "[THR-11]", "value shared with a task is not `Sync`");
     E7006 = (Error, 7006, Concurrency, "[THR-14]", "memory order an atomic operation does not support");

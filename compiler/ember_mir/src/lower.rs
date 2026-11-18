@@ -7690,10 +7690,10 @@ impl<'a> Builder<'a> {
         found
     }
 
-    /// `Body::stored_at` — a `let` or `=` whose value is a class object a local holds.
+    /// `Body::stored_at` — a `let` or `=` whose value is a class object or an owner a local holds.
     fn note_stored_object(&mut self, value: &hir::Expr) {
         if let hir::ExprKind::Local(source) = value.kind
-            && matches!(self.types.kind(value.ty), TyKind::Class(_) | TyKind::ClassInterface(_))
+            && matches!(self.types.kind(value.ty), TyKind::Class(_) | TyKind::ClassInterface(_) | TyKind::Link { .. })
         {
             let local = self.local_map[source.0 as usize];
             self.stored_at.push((local, value.span));

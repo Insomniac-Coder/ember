@@ -1004,19 +1004,14 @@ pub(crate) fn count_helper(m: &mut Module<'_>, operation: &str, kind: &str) -> S
     if m.helper_defined(&symbol) {
         return global_name(&symbol);
     }
-    let debug = m.profile == Profile::Debug;
     let mut cx = FnCx::glue(m);
     let object = "%p0";
     match (operation, kind) {
         ("retain", "plain") | ("release", "plain") => {
-            // `EMBER_OBJ_CHECK_THREAD` in the debug profile (`[FFI-33a]`), then the count.
             let (live, fast, slow, done) = (cx.label(), cx.label(), cx.label(), cx.label());
             let null = cx.value(format!("icmp eq ptr {object}, null"));
             cx.emit(format!("br i1 {null}, label %{slow}, label %{live}"));
             cx.start(&live);
-            if debug {
-                cx.call_rt("obj_check_thread", vec![Val::Imm(Sc::Ptr, object.to_string())], None);
-            }
             let strong = cx.load(Sc::I(32), object, 8);
             let room = if operation == "retain" {
                 // `[RT-7]` — room below the maximum: `strong - 1 < EMBER_COUNT_MAX - 1`.
