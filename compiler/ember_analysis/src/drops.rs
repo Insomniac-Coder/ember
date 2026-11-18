@@ -629,6 +629,7 @@ fn builtin_publishing_arguments(which: ember_mir::Builtin) -> &'static [usize] {
         ember_mir::Builtin::ArenaMapInsert { .. } => &[2, 3],
         ember_mir::Builtin::BoxNew { .. }
         | ember_mir::Builtin::SharedNew { .. }
+        | ember_mir::Builtin::LinkAdopt { .. }
         | ember_mir::Builtin::IntoRaw { .. } => &[0],
         _ => &[],
     }

@@ -619,6 +619,8 @@ impl Interp<'_, '_> {
                 }
                 object.to_le_bytes().to_vec()
             }
+            // `[RC-1]` — the one owner taken over: the same pointer, no count.
+            Builtin::LinkAdopt { .. } => self.pointer(&args[0])?.to_le_bytes().to_vec(),
             Builtin::LinkTarget { .. } => {
                 let object = self.pointer(&args[0])?;
                 self.retain_object(object)?;

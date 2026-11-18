@@ -3660,6 +3660,7 @@ impl<'a> Builder<'a> {
                     which,
                     hir::Builtin::BoxNew { .. }
                         | hir::Builtin::SharedNew { .. }
+                        | hir::Builtin::LinkAdopt { .. }
                         | hir::Builtin::ArrayFromLiteral
                         | hir::Builtin::ThreadSpawn
                         | hir::Builtin::ThreadJoin

@@ -10715,6 +10715,11 @@ impl Emitter<'_> {
                         };
                         return format!("({count}(({header}*){}), ({link_c}){})", rendered[0], rendered[0]);
                     }
+                    // `[RC-1]` — the one owner taken over: the same pointer, no count.
+                    Builtin::LinkAdopt { link } => {
+                        let link_c = self.c_type(*link);
+                        return format!("(({link_c}){})", rendered[0]);
+                    }
                     Builtin::LinkTarget { class, .. } => {
                         let header = ember_branding::runtime("obj_header");
                         let class_c = self.c_type(*class);

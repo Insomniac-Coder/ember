@@ -2105,6 +2105,10 @@ pub enum Builtin {
     /// its one argument is a reference to the handle or owner `x` names; one more owner (+1) or link
     /// (a weak +1) of the same object, the same pointer.
     LinkMake { kind: ember_types::LinkKind, link: Ty },
+    /// `[RC-1]` (M4 slice C) — a class object's one owner becomes a `shares mut C` owner: its one
+    /// argument, the handle, is handed over; the same pointer, and no count, since the object still has
+    /// one owner. The declaration of a local a line of its function shares.
+    LinkAdopt { link: Ty },
     /// `[RC-1]` — a `shares C` owner read where a `C` is wanted: its one argument is a reference to
     /// the owner; a counted copy of the handle (+1), which the copy's end gives back (until M4's
     /// slice C makes such a read a view).
@@ -2547,6 +2551,7 @@ impl Builtin {
             Builtin::SharedNew { .. } => "Shared",
             Builtin::LinkNone { .. } => "None",
             Builtin::LinkMake { kind, .. } => kind.word(),
+            Builtin::LinkAdopt { .. } => "shares mut",
             Builtin::LinkTarget { .. } => "the owner's object",
             Builtin::LinkOpen { .. } => "exists as",
             Builtin::ArrayPush => "push",

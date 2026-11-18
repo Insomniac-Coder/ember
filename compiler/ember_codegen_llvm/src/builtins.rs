@@ -835,6 +835,11 @@ impl<'a> FnCx<'_, 'a> {
                 }
                 self.store_result(dest, &handle, Sc::Ptr, false)
             }
+            // `[RC-1]` — the one owner taken over: the same pointer, no count.
+            Builtin::LinkAdopt { .. } => {
+                let handle = self.pointer(&args[0])?;
+                self.store_result(dest, &handle, Sc::Ptr, false)
+            }
             Builtin::LinkTarget { class, .. } => {
                 let handle = self.pointer(&args[0])?;
                 self.retain_handle(&handle, *class);

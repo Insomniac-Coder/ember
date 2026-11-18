@@ -3314,6 +3314,10 @@ struct Checker<'a> {
     /// shared type throughout the function. Set while a body is checked; a new one asks for another
     /// pass of the body, which writes the block.
     block_locals: HashSet<Span>,
+    /// `[RC-1]` — the lines of this pass that share a local whose declaration has not made it an
+    /// owner. The next pass makes it one; one still here when the body is settled is a name no line
+    /// gives a value of its own (a loop's, a pattern's).
+    unmade_owners: Vec<(Span, String)>,
     /// `[CLO-2]` — set while a closure body is checked, so that a read of an
     /// enclosing local is seen as a capture rather than as an ordinary read.
     captures: Option<CaptureWatch>,
@@ -4197,6 +4201,7 @@ impl<'a> Checker<'a> {
             generic_paths: HashMap::new(),
             reassigned: HashSet::new(),
             block_locals: HashSet::new(),
+            unmade_owners: Vec::new(),
             lambdas: Vec::new(),
             comptime_answers: ComptimeAnswers::new(),
             comptime_requests: Vec::new(),
@@ -21436,6 +21441,8 @@ impl<'a> Checker<'a> {
                     }
                 } else if self.refuse_owner_of_one_owner_place(kind, written, &source, span) {
                     return error;
+                } else if self.share_from_declaration(kind, written, &source, span) {
+                    return error;
                 }
                 let link = self.link_of(kind, source.ty);
                 Expr { ty: link, kind: ExprKind::Builtin { which: Builtin::LinkMake { kind, link }, args: vec![source] }, span }
@@ -21667,31 +21674,42 @@ impl<'a> Checker<'a> {
         if self.refuse_owner_of_one_owner_place(kind, written, &source, span) {
             return error;
         }
-        // D5 — a local of this function that owns its value, or an `owns` parameter: its block is made
-        // where it is declared, which the next pass of the body writes.
-        if let ExprKind::Local(local) = source.kind
-            && matches!(unparenthesized(written).kind, ast::ExprKind::Path { .. })
-        {
-            let declared = self.locals[local.0 as usize].span;
-            self.block_locals.insert(declared);
+        // D5 — a local of this function that owns its value, or an `owns` parameter.
+        if self.share_from_declaration(kind, written, &source, span) {
             return error;
         }
         self.error(codes::E0900, span, format!("`{}` of `{place}` is not built by this compiler yet", kind.word()));
         error
     }
 
+    /// `[RC-1]` — `shares x` or `shares mut x` of a local of this function that owns its value (or an
+    /// `owns` parameter): it is one of the owners from the line that declares it, which the next pass of
+    /// the body writes. Whether `written` names such a local.
+    fn share_from_declaration(&mut self, kind: ember_types::LinkKind, written: &ast::Expr, source: &Expr, span: Span) -> bool {
+        let ExprKind::Local(local) = source.kind else { return false };
+        if !matches!(unparenthesized(written).kind, ast::ExprKind::Path { .. }) {
+            return false;
+        }
+        self.block_locals.insert(self.locals[local.0 as usize].span);
+        let place = self.written_line(written.span).unwrap_or_else(|| "it".to_string());
+        self.unmade_owners.push((span, format!("`{} {place}` of a name no line gives a value of its own is not built by this compiler yet", kind.word())));
+        true
+    }
+
     /// D5 — a local's value, made in its block (`[RC-1]`): the declaration of a local a line of its
     /// function shares, as if it said `shares`, with the type `shares mut T` throughout the function,
     /// since the name it was first shared from keeps what it could do (`[RC-7]`).
     fn into_block(&mut self, init: Expr) -> Expr {
-        if init.ty == self.common.error
-            || matches!(self.types.kind(init.ty), TyKind::Class(_) | TyKind::Link { .. } | TyKind::Ref { .. } | TyKind::Infer(_))
-        {
+        if init.ty == self.common.error || matches!(self.types.kind(init.ty), TyKind::Link { .. } | TyKind::Ref { .. } | TyKind::Infer(_)) {
             return init;
         }
         let ty = init.ty;
         let span = init.span;
         let link = self.link_of(ember_types::LinkKind::SharesMut, ty);
+        // A class object has its header already: its one owner becomes the first of the owners.
+        if matches!(self.types.kind(ty), TyKind::Class(_)) {
+            return Expr { ty: link, kind: ExprKind::Builtin { which: Builtin::LinkAdopt { link }, args: vec![init] }, span };
+        }
         let block = self.counted_of(ty, false);
         Expr { ty: link, kind: ExprKind::Builtin { which: Builtin::SharedNew { elem: ty, shared: block }, args: vec![init] }, span }
     }
@@ -32542,6 +32560,7 @@ impl<'a> Checker<'a> {
         };
         let outer_copies = std::mem::take(&mut self.copy_captures);
         let outer_copied = std::mem::take(&mut self.copied);
+        let outer_unmade = std::mem::take(&mut self.unmade_owners);
         let outer_body_locals = std::mem::replace(&mut self.body_locals_from, self.locals.len());
         let outer_made = std::mem::take(&mut self.made_must_drop);
         let body = loop {
@@ -32551,6 +32570,7 @@ impl<'a> Checker<'a> {
             self.open.per_use.clear();
             self.copy_captures.clear();
             self.copied = views::CopiedValues::default();
+            self.unmade_owners.clear();
             // D5 — the `owns` parameters a line of the body shares, each in its block from the entry.
             let blocks = self.block_locals.len();
             let entry = self.enter_parameter_blocks();
@@ -32572,6 +32592,12 @@ impl<'a> Checker<'a> {
                 still_open.sort_by_key(|open| (open.declared.start, open.declared.end));
                 for open in still_open {
                     self.report_open_local(&open);
+                }
+                let mut unmade = std::mem::take(&mut self.unmade_owners);
+                unmade.sort_by_key(|(span, _)| (span.start, span.end));
+                unmade.dedup_by_key(|(span, _)| *span);
+                for (span, message) in unmade {
+                    self.error(codes::E0900, span, message);
                 }
                 break body;
             }
@@ -32624,6 +32650,7 @@ impl<'a> Checker<'a> {
         }
         self.report_copied_value_changes();
         self.copied = outer_copied;
+        self.unmade_owners = outer_unmade;
         self.open = outer;
         self.reassigned = outer_reassigned;
         self.body_locals_from = outer_body_locals;
@@ -54151,6 +54178,7 @@ impl<'a> Checker<'a> {
         match which {
             Builtin::BoxNew { .. }
             | Builtin::SharedNew { .. }
+            | Builtin::LinkAdopt { .. }
             | Builtin::IntoRaw { .. }
             | Builtin::FmtSinkClose
             | Builtin::CellIntoInner
