@@ -348,7 +348,9 @@ pub(crate) fn build(mut request: Build<'_>, options: &Options, sink: &mut ember_
     // (`[BLD-13]`: a program database names them), then the objects as they are.
     let (units, objects): (Vec<PathBuf>, Vec<PathBuf>) =
         sources.into_iter().partition(|path| path.extension().is_some_and(|extension| extension == "ll" || extension == "c"));
-    ember_build::ninja::build(
+    let mut kept = None;
+    let command = request.command;
+    ember_build::ninja::build_unless(
         &toolchain,
         &ember_build::ninja::Program {
             units: &units,
@@ -362,6 +364,7 @@ pub(crate) fn build(mut request: Build<'_>, options: &Options, sink: &mut ember_
         },
         &retained,
         &libraries,
+        &mut |key| super::run_cache::consider(key, options, command, &mut kept),
     )
     .map_err(|e| {
         // `[CG-LL-3]` — an instrumented link needs Clang's profile runtime, which some packagings
@@ -394,7 +397,7 @@ pub(crate) fn build(mut request: Build<'_>, options: &Options, sink: &mut ember_
         return super::test_runner::run_tests(&exe, request.tests, options, instrumented.as_ref(), request.map);
     }
     if request.command == "run" {
-        return super::run_program(&exe, options);
+        return super::run_cache::finish(kept, &exe, options);
     }
     eprintln!("built {}", exe.display());
     Ok(ExitCode::SUCCESS)

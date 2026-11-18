@@ -431,6 +431,12 @@ pub fn cache_dir_var() -> String {
     format!("{}_CACHE", SYMBOL_PREFIX.to_uppercase())
 }
 
+/// The environment variable naming the folder `ember run` keeps its results in, for the test runs
+/// between merges (`ember_driver::run_cache`). Nothing is kept without it.
+pub fn run_cache_var() -> String {
+    format!("{}_RUN_CACHE", SYMBOL_PREFIX.to_uppercase())
+}
+
 /// The environment variable that turns off the global cache of linked
 /// programs (ADR-136), for timing the C compiler itself.
 pub fn no_compile_cache_var() -> String {

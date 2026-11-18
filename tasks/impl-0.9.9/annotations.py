@@ -34,6 +34,14 @@ BACKEND = os.environ.get('EMBER_BACKEND') or 'llvm'
 # The default backend's run checks everything; another's, the runs only.
 FULL = BACKEND == 'llvm'
 ALL_PROFILES = os.environ.get('EMBER_PROFILES') == 'all'
+# A run whose program and input have not changed gives its recorded result (`ember_driver::run_cache`):
+# `EMBER_NO_RUN_CACHE=1` runs everything. The merge suite and the push gate never use it. What may print
+# something else from one run to the next is always run: threads, time, chance, the outside world.
+RUN_CACHE = None if os.environ.get('EMBER_NO_RUN_CACHE') else os.path.join(ROOT, 'target', 'run-cache')
+RUN_CACHE_LIMIT = 256 << 20
+ALWAYS_RUN = re.compile(r'\b(thread|Thread|thread_shared|scope|spawn|parallel|run_parallel|Mutex|RwLock|Atomic|channel|Sender|Receiver'
+                        r'|Condvar|Once|job|Job|time|Instant|Duration|clock|sleep|random|rand|fs|File|env|process|net|Socket|args'
+                        r'|extern|ffi|import c|unsafe|@unsafe|reload)\b')
 
 if os.name == 'nt':
     # SEM_NOGPFAULTERRORBOX, inherited by every program this starts: a test program that
@@ -84,14 +92,26 @@ def program_args(text):
     return [line[len('#$ args:'):].strip() for line in text.splitlines() if line.startswith('#$ args:')]
 
 
-def run(args, path, stdin=None, after=()):
+def trim_run_cache():
+    """The recorded runs start again when they pass their limit: stale ones are never read."""
+    if RUN_CACHE and os.path.isdir(RUN_CACHE):
+        files = [entry for entry in os.scandir(RUN_CACHE) if entry.is_file()]
+        if sum(entry.stat().st_size for entry in files) > RUN_CACHE_LIMIT:
+            for entry in files:
+                os.unlink(entry.path)
+
+
+def run(args, path, stdin=None, after=(), keep=False):
     after = ['--', *after] if after else []
     # `[TST-31]` — `#$ count_bits: 8` builds the program and the runtime with 8-bit counts, and the
     # evaluator counts the same way, as the conformance suite does.
     env = None
     with open(path, encoding='utf-8') as source:
-        if re.search(r'^#\$ count_bits:\s*8\s*$', source.read(), re.M):
-            env = dict(os.environ, EMBER_COUNT_BITS='8')
+        text = source.read()
+    if re.search(r'^#\$ count_bits:\s*8\s*$', text, re.M):
+        env = dict(os.environ, EMBER_COUNT_BITS='8')
+    if keep and RUN_CACHE and not ALWAYS_RUN.search(text):
+        env = dict(env or os.environ, EMBER_RUN_CACHE=RUN_CACHE)
     result = subprocess.run([EMBER, *args, path, *after], cwd=ROOT, capture_output=True, text=True,
                             input=stdin if stdin is not None else '',
                             encoding='utf-8', errors='replace', env=env)
@@ -213,7 +233,7 @@ def run_problems(path, text, profile, kind):
     problems = []
     backend = ['--backend', BACKEND]
     code, out, err = run(['run', '--profile', profile, *backend, '--out-dir', out_dir(path)], path,
-                         expected_stdin(text), program_args(text))
+                         expected_stdin(text), program_args(text), keep=True)
     exit_line = re.search(r'^#\$ exit:\s*(-?\d+)\s*$', text, re.M)
     expected_exit = int(exit_line[1]) if exit_line else 0
     stdout = expected_stdout(text)
@@ -312,6 +332,7 @@ def main():
         # (2026-11-13, the laptop at 102 °C): at most 16 at once, and one full run at a time.
         workers = min(int(os.environ.get('RUST_TEST_THREADS') or 0) or os.cpu_count(), 16)
         one_full_run_at_a_time(len(everything))
+        trim_run_cache()
         with ThreadPoolExecutor(max_workers=workers) as pool:
             found = dict(zip(everything, pool.map(check, everything)))
 
