@@ -3427,6 +3427,9 @@ struct Checker<'a> {
     /// `[DIA-22]` — the argument being checked against a declared parameter: its span, and the
     /// parameter's name and declaration, the secondary span of a mismatch on the argument.
     argument_of: Option<(Span, Symbol, Span)>,
+    /// `[TYP-23]` — the name of the function or method of the innermost call being checked, for a message about one
+    /// of its arguments (a lambda's parameter word).
+    callee_named: Option<Symbol>,
     /// `[FN-2a]` — the place a call's `ref mut` argument names, and the parameter it is given to.
     ref_mut_argument: Option<(Span, Span)>,
     /// `[FN-8]` — the names a script's statements bind: locals of the implicit `main`.
@@ -4309,6 +4312,7 @@ impl<'a> Checker<'a> {
             debug_writer_defs: Vec::new(),
             dyn_debug_holders: Vec::new(),
             argument_of: None,
+            callee_named: None,
             ref_mut_argument: None,
             script_locals: HashSet::new(),
             discarded_receiver: None,
@@ -38558,9 +38562,15 @@ impl<'a> Checker<'a> {
         }
         let declared = self.types.display(local.ty);
         let wanted = self.types.display(wanted);
+        // The literal as written (`total = 0`), so the line to write is the whole line.
+        let value = self
+            .written_line(declared_at)
+            .and_then(|text| text.split_once('=').map(|(_, value)| value.trim().to_string()))
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| "...".to_string());
         diagnostic
             .secondary(declared_at, format!("declared from a literal, so `{declared}` [TYP-23]"))
-            .help(format!("declare it as `{name}: {wanted} = ...` to make it `{wanted}`"))
+            .help(format!("declare it as `{name}: {wanted} = {value}` to make it `{wanted}`"))
     }
 
     /// `[FN-6a]`/`[LT-11a]` — callable parameter modes are part of the
@@ -40553,6 +40563,18 @@ impl<'a> Checker<'a> {
     }
 
     fn synth_call(&mut self, callee: &ast::Expr, args: &[ast::Arg], expected: Option<Ty>, span: Span) -> Expr {
+        let name = match &callee.kind {
+            ast::ExprKind::Path { segments } => segments.last().map(|segment| segment.name),
+            ast::ExprKind::Field { name, .. } => Some(name.name),
+            _ => None,
+        };
+        let outer = std::mem::replace(&mut self.callee_named, name);
+        let call = self.synth_call_of(callee, args, expected, span);
+        self.callee_named = outer;
+        call
+    }
+
+    fn synth_call_of(&mut self, callee: &ast::Expr, args: &[ast::Arg], expected: Option<Ty>, span: Span) -> Expr {
         // `[FFI-8]` — C makes a `va_list`; Ember only receives one.
         if matches!(callee.kind, ast::ExprKind::Path { .. } | ast::ExprKind::Field { .. })
             && self.associated_type_named(callee).is_some_and(|ty| matches!(self.types.kind(ty), TyKind::VaList))
@@ -48400,6 +48422,20 @@ impl<'a> Checker<'a> {
         args: &[ast::Arg],
         span: Span,
     ) -> Expr {
+        let outer = self.callee_named.replace(name.name);
+        let call = self.synth_method_call_of(recv, name, generic_args, args, span);
+        self.callee_named = outer;
+        call
+    }
+
+    fn synth_method_call_of(
+        &mut self,
+        recv: &ast::Expr,
+        name: ast::Ident,
+        generic_args: &[ast::GenericArg],
+        args: &[ast::Arg],
+        span: Span,
+    ) -> Expr {
         // `[GRM-38]` — what a generator expression's later `for` clause iterates, as a `for` loop
         // over it would (`iterator_of`): the compiler's own call, which no program can write.
         if name.name.is(ITERATOR_OF) {
@@ -52077,6 +52113,7 @@ impl<'a> Checker<'a> {
             _ => None,
         });
 
+        let expected_callable = expected;
         let mut params: Vec<(Symbol, Ty, Mode, Span)> = Vec::new();
         for (index, param) in lambda.params.iter().enumerate() {
             let ast::ParamKind::Named { name, ty } = &param.kind else {
@@ -52120,18 +52157,26 @@ impl<'a> Checker<'a> {
                     // `[TYP-23]` — a lambda parameter's word is what is written on it, never inferred: where the
                     // callable type hands the value over, the lambda writes `owns`.
                     if resolved != self.common.error {
-                        let written = self.written_line(span).map(|text| {
-                            let word = name.name.to_string();
-                            text.replacen(&format!("({word}"), &format!("(owns {word}"), 1)
+                        let lambda_written = self.written_line(span).and_then(|mut text| {
+                            let at = param.span.start.checked_sub(span.start)? as usize;
+                            text.is_char_boundary(at).then(|| {
+                                text.insert_str(at, "owns ");
+                                text
+                            })
                         });
-                        let mut diagnostic = Diagnostic::error(
+                        // The message gives the line to write, and names the callee and the callable type where the call has them.
+                        let shown = expected_callable.map(|ty| self.types.display(ty)).map(|text| text.strip_suffix(" -> void").map_or(text.clone(), str::to_string));
+                        let handed = match (self.callee_named, &shown) {
+                            (Some(callee), Some(shown)) => format!("`{callee}` hands each value over (`{shown}`)"),
+                            (None, Some(shown)) => format!("the callable type `{shown}` hands each value over"),
+                            _ => "the callable type hands each value over".to_string(),
+                        };
+                        let line = lambda_written.unwrap_or_else(|| format!("owns {}", name.name));
+                        let diagnostic = Diagnostic::error(
                             codes::E2020,
                             param.span,
-                            format!("the callable type hands each value over, so this function receives it as its own: write `owns {}`", name.name),
+                            format!("{handed}, so this function receives it as its own: write `{line}`"),
                         );
-                        if let Some(written) = written {
-                            diagnostic = diagnostic.help(format!("write `{written}`"));
-                        }
                         self.sink.emit(diagnostic);
                     }
                     FnParamMode::Owned
