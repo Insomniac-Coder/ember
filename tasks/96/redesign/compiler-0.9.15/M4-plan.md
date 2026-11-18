@@ -257,6 +257,22 @@ there.
     `copy of` follows a type parameter's bounds and is one more view of a read-only view.
   - **Left in M4:** `TYP-36`'s row for owners (a `shares T` implements `Eq`, `Ord`, `Hash`, `Display`, `Debug` as `T` does), and
     **slice E**: `thread_shared`. These wait for E: ECS-4's two thread tests, THR-2, THR-11's scoped capture and THR-13.
+- **Slice E, the design (the lead, 2026-11-19; nothing built yet):**
+  1. **The word.** `thread_shared x` in `synth_link_expecting`: before a new value (a class object: `LinkAdopt`, no count; any other
+     value: `SharedNew` with the counted block `counted_of(ty, true)`), on a name already `thread_shared` (`LinkMake`), before `this`
+     in a method (pins the class). Anything else is `E7017`, with `[OWN-13]`'s text; `shares`/`shares mut` of a `thread_shared` owner is
+     `E7017` too. Read through as `shares` is (`read_link_through`); a change through one is `E7014` (`reject_change_through_reader`).
+  2. **`@sync` goes** (`E0104`, with the migration that removes it). `ClassDef.is_sync` stays as the compiler's own fact, "counted
+     atomically": set for every class a `thread_shared` type names, with its whole family (`TypeTable::settle_thread_shared`, after the
+     bodies are checked, before MIR): the object header, the type info's `EMBER_TI_SYNC` and `count_function` already follow it.
+  3. **`Send` and `ThreadShared`** (`thread_properties`): a class by its fields, inherited ones included; an `open` or `abstract` class
+     another package may derive from by its promise (`implements Send`, `implements ThreadShared`). `Sync` in a bound is `E1010`;
+     `std.core.ThreadShared` is the marker. A one-thread owner or a lent value reaching another thread is `E7015` (today `E7004`).
+  4. **Making one** checks what it reaches: a part that is not `ThreadShared` is `E7015` at the line, naming the field (`[THR-1]`).
+  5. **`SyncShared[T]`** is `thread_shared T` in `std.sync` and the tests (the migration writes it), then it goes.
+  6. **`weakref thread_shared T`** (`[GRM-3a]`, `[WK-12]`): a link kind of its own; an opening holds a count.
+  7. **Biased counting** (`[RC-4]`: home and away counts, the queue, check points) comes after 1-6, on the header of M6b; until then a
+     `thread_shared` value has one atomic count, which behaves the same and costs more. Measure `counted_sync_handles` then.
 - **Task 15, the suites** (round 6, H2): the quick check (failing 0; the touched folders on the C backend
   too), `cargo test -p` of every crate touched (`ember_types`, `ember_hir`, `ember_typeck`, `ember_mir`,
   `ember_analysis`, `ember_interp`, `ember_codegen_c`, `ember_codegen_llvm`, `ember_driver`; the reload
