@@ -18,21 +18,21 @@ open class Consumer:
     fn init():
         pass
 
-    virtual fn consume(owns token: Token) -> i32:
+    virtual fn consume(owns token: shares Token) -> i32:
         return token.value
 
 class Worker(Consumer):
     fn init():
         super.init()
 
-    override fn consume(owns token: Token) -> i32:
+    override fn consume(owns token: shares Token) -> i32:
         return token.value
 
-fn dispatch(consumer: Consumer, owns tokens: Array[Token]):
+fn dispatch(consumer: Consumer, owns tokens: Array[shares Token]):
     for token in tokens:
-        println(consumer.consume(owns token))
+        println(consumer.consume(shares token))
 
 fn main():
-    tokens: Array[Token] = Array[Token]()
-    tokens.push(owns Token(7))
+    tokens: Array[shares Token] = Array[shares Token]()
+    tokens.push(owns shares Token(7))
     dispatch(Worker(), owns tokens)

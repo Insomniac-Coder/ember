@@ -36,6 +36,8 @@ fn main():
     w.add(b, owns Vel(4))
     w.run_parallel(owns [left, right])
     tally = Tally()
-    counted = system(owns owned fn(ref mut q: Query[Vel]): tally.total.fetch_add(1), "counted")
-    w.run_parallel(owns [counted, system(owns owned fn(ref mut q: Query[Pos]): tally.total.fetch_add(2), "two")])
+    tally_1 = shares tally
+    counted = system(owns owned fn(ref mut q: Query[Vel]): tally_1.total.fetch_add(1), "counted")
+    tally_2 = shares tally
+    w.run_parallel(owns [counted, system(owns owned fn(ref mut q: Query[Pos]): tally_2.total.fetch_add(2), "two")])
     println(tally.total.load())

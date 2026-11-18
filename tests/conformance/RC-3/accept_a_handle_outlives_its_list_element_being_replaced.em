@@ -14,10 +14,10 @@ class Node:
         println("drop", this.v)
 
 fn main():
-    nodes: Array[Node] = []
-    nodes.push(owns Node(1))
-    t = nodes[0]
-    nodes[0] = Node(5)
+    nodes: Array[shares Node] = []
+    nodes.push(owns shares Node(1))
+    t = shares nodes[0]
+    nodes[0] = shares Node(5)
     println(t.v)
     mem.drop(t)
     println("end")

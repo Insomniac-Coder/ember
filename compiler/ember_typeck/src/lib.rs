@@ -14725,10 +14725,10 @@ impl<'a> Checker<'a> {
                 .variants
                 .iter()
                 .all(|variant| variant.fields.iter().all(|field| checker.is_cloneable(field.ty))),
-            // `[OWN-8]` — class handles clone like ordinary handle copies.
-            // Their fields stay in the same object, so a shallow clone has
-            // no field-wise Clone requirements.
-            TyKind::Class(_) => true,
+            // `[TYP-36]` — a class object's `Clone` is a new object, each field cloned.
+            TyKind::Class(id) => (0..checker.types.class_field_count(*id))
+                .filter_map(|index| checker.types.class_field_at(*id, index))
+                .all(|field| checker.is_cloneable(field.ty)),
             _ => false,
         };
         self.assumed_cloneable = pending.iter().map(|(ty, _, _)| *ty).collect();
@@ -25957,10 +25957,20 @@ impl<'a> Checker<'a> {
                             .collect();
                         (Expr { ty, kind: ExprKind::StructLit { struct_id: id, fields }, span }, None)
                     }
-                    TyKind::Class(id) => (
-                        Expr { ty, kind: ExprKind::Local(self_local), span },
-                        Some(id),
-                    ),
+                    // `[TYP-36]` — `@derive(Clone)` on a class makes a new object.
+                    TyKind::Class(id) => {
+                        let fields: Vec<(usize, Ty)> = (0..self.types.class_field_count(id))
+                            .filter_map(|index| self.types.class_field_at(id, index).map(|field| (index, field.ty)))
+                            .collect();
+                        let args = fields
+                            .into_iter()
+                            .map(|(index, field_ty)| {
+                                let field = Expr { ty: field_ty, kind: ExprKind::Field { base: Box::new(self_value()), index }, span };
+                                self.clone_value(field)
+                            })
+                            .collect();
+                        (Expr { ty, kind: ExprKind::Builtin { which: Builtin::ClassNew { class_id: id, init: None }, args }, span }, Some(id))
+                    }
                     TyKind::Enum(id) => {
                         let variants = self.types.enum_def(id).variants.clone();
                         let receiver = self_value;
@@ -61541,9 +61551,9 @@ impl<'a> Checker<'a> {
         };
         if mode == Mode::Owned {
             // `[STD-19]`, ODR-240 (verdict 150) — a function from a variable lent to the standard
-            // library takes no word. (A value made with `shares` or `weakref` takes none either,
-            // verdict 160: such values are not parsed yet, M4.)
-            if owned.is_some() || self.lent_callable_args.contains(&arg.span) {
+            // library takes no word; `[OWN-9]` (verdict 160) — nor does a value made in the call with
+            // a word that makes an owner or a link, which says what is given.
+            if owned.is_some() || self.lent_callable_args.contains(&arg.span) || matches!(unparenthesized(arg).kind, ast::ExprKind::Link { .. }) {
                 return;
             }
             let function = self.declaring_function(declared).unwrap_or_else(|| "the function".to_string());
@@ -61667,6 +61677,10 @@ impl<'a> Checker<'a> {
             return inner;
         }
         if lends_named && matches!(value.kind, ast::ExprKind::Path { .. }) {
+            return value;
+        }
+        // `[OWN-9]` — `ROSTER.push(weakref this)`: the word says what is given.
+        if matches!(unparenthesized(value).kind, ast::ExprKind::Link { .. }) {
             return value;
         }
         if self.written_call && value.id != ast::NodeId::DUMMY && !self.generated_files.contains(&value.span.file) {

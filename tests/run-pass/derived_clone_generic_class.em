@@ -1,8 +1,7 @@
 #$ test: run-pass
 #$ rules: OWN-8, TYP-16, TYP-17, DRP-6
 #$ profiles: debug, development, release
-#$ stdout: 42
-#$ assert-c: contains(ember_retain)
+#$ stdout: 41
 
 @derive(Clone)
 [T]

@@ -1,7 +1,7 @@
 #$ test: run-pass
 #$ rules: OWN-7, RC-1, RC-2e, CTL-1, CTL-2, TYP-14, RNG-4
 #$ profiles: debug, development, release
-#$ assert-c-count: contains("ember_retain_plain((ember_obj_header*)") == 2
+#$ assert-c-count: contains("ember_retain_plain((ember_obj_header*)") == 1
 #$ assert-c-count: contains("ember_retain((ember_obj_header*)") == 0
 #$ stdout: 7
 
@@ -13,15 +13,14 @@
 class Token:
     value: i32
 
-@derive(Copy)
 struct Entry:
-    token: Token
+    token: shares Token
 
-fn consume(owns token: Token) -> i32:
+fn consume(owns token: shares Token) -> i32:
     return token.value
 
 fn main():
     entries: Array[Entry] = Array[Entry]()
-    entries.push(owns Entry(Token(7)))
+    entries.push(owns Entry(shares Token(7)))
     for entry in entries:
-        println(consume(owns entry.token))
+        println(consume(shares entry.token))

@@ -14,9 +14,9 @@ class Node:
         println("drop", this.v)
 
 fn main():
-    nodes: Array[Node] = []
-    nodes.push(owns Node(7))
-    t = nodes[0]
+    nodes: Array[shares Node] = []
+    nodes.push(owns shares Node(7))
+    t = shares nodes[0]
     nodes.clear()
     println("cleared")
     println(t.v)

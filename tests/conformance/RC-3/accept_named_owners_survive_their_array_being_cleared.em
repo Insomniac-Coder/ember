@@ -17,8 +17,8 @@ class Token:
 fn main():
     held = Token(7)
     weak = weakref held
-    tokens: Array[Token] = Array[Token]()
-    tokens.push(owns held)
+    tokens: Array[shares Token] = Array[shares Token]()
+    tokens.push(owns shares held)
     println("before")
     tokens.clear()
     if weak exists as value:
