@@ -9,8 +9,15 @@
 class Counter:
     value: i32
 
+    items: Array[int] = []
+
     fn bump():
-        this.value = this.value + 1
+        this.items.push(owns 1)
+
+    fn held(other: shares mut Counter):
+        view = this.items[..]
+        other.bump()
+        println(view.len())
 
 @no_alias_checks
 fn run(n: int) -> i32:
@@ -22,3 +29,5 @@ fn run(n: int) -> i32:
 
 fn main():
     println(run(3))
+    k = Counter(0)
+    k.held(shares mut k)

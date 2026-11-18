@@ -6663,7 +6663,9 @@ impl<'a> Builder<'a> {
                     && matches!(&inner.kind, hir::ExprKind::Local(_) | hir::ExprKind::Field { .. }
                         | hir::ExprKind::Index { .. } | hir::ExprKind::Deref(_));
                 let lent = std::mem::take(&mut self.lending_upcast) && is_place_expr(inner);
-                let operand = if reads_c_entry || lent {
+                // `[TYP-36]` — a class object's address, as a number, reads the handle where it is.
+                let address = self.counted_handle(inner.ty) && !self.counted_handle(*to) && is_place_expr(inner);
+                let operand = if reads_c_entry || lent || address {
                     self.at(inner.span);
                     Operand::Copy(self.lower_place(inner))
                 } else {

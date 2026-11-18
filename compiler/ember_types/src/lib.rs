@@ -888,6 +888,14 @@ impl TypeTable {
         }
     }
 
+    /// A link of `kind` to `target`, with the pointer type `link_payload` finds for a value in a block.
+    pub fn intern_link(&mut self, kind: LinkKind, target: Ty) -> Ty {
+        if !matches!(self.kind(target), TyKind::Class(_)) {
+            self.intern(TyKind::Ptr { mutable: true, inner: target });
+        }
+        self.intern(TyKind::Link { kind, target })
+    }
+
     /// `[RC-1]` (M4 slice C) — the type of a link's one logical field (`Field(0)`): the pointer to the
     /// value in its block, or, for a link to a class object, the object's handle: the link is the
     /// object's own pointer, so an owner read where the object is wanted is that same place, with no
@@ -1091,6 +1099,10 @@ impl TypeTable {
     pub fn substitute_self(&mut self, ty: Ty, concrete: Ty) -> Ty {
         match self.kind(ty).clone() {
             TyKind::Param { index, .. } if index == SELF_PARAM => concrete,
+            TyKind::Link { kind, target } => {
+                let target = self.substitute_self(target, concrete);
+                self.intern_link(kind, target)
+            }
             TyKind::Ref { mutable, inner } => {
                 let inner = self.substitute_self(inner, concrete);
                 self.intern(TyKind::Ref { mutable, inner })
@@ -1163,6 +1175,10 @@ impl TypeTable {
             },
             TyKind::Param { index, .. } => {
                 args.get(index as usize).copied().unwrap_or(ty)
+            }
+            TyKind::Link { kind, target } => {
+                let target = self.substitute(target, args);
+                self.intern_link(kind, target)
             }
             TyKind::Ref { mutable, inner } => {
                 let inner = self.substitute(inner, args);

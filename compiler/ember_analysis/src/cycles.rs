@@ -14,6 +14,8 @@ use ember_types::{ClassId, Ty, TyKind, TypeTable};
 
 #[derive(Clone)]
 struct StrongEdge {
+    /// `[TYP-45]` — the field holds a counted owner, which is what can close a loop of owners.
+    counted: bool,
     from: usize,
     to: usize,
     field_owner: usize,
@@ -83,7 +85,27 @@ pub fn lint_strong_cycles(types: &TypeTable, sink: &mut Sink) {
         let Some(cycle) = shortest_cycle(&graph, &component) else {
             continue;
         };
-        report_cycle(types, &cycle, sink);
+        // `[TYP-45]` — an object has one owner, so owners alone never close a loop: one needs a field
+        // that holds a counted owner (`shares`, `shares mut`, `thread_shared`).
+        if cycle.iter().any(|edge| edge.counted) {
+            report_cycle(types, &cycle, sink);
+        }
+    }
+}
+
+/// Whether a value of `ty` holds a counted owner.
+fn holds_counted_owner(types: &TypeTable, ty: Ty, seen: &mut Vec<Ty>) -> bool {
+    if seen.contains(&ty) {
+        return false;
+    }
+    seen.push(ty);
+    match types.kind(ty) {
+        TyKind::Link { kind, .. } => *kind != ember_types::LinkKind::Weakref,
+        TyKind::Struct(id) => types.struct_def(*id).fields.iter().any(|field| holds_counted_owner(types, field.ty, seen)),
+        TyKind::Enum(id) => types.enum_def(*id).variants.iter().any(|variant| variant.fields.iter().any(|field| holds_counted_owner(types, field.ty, seen))),
+        TyKind::Tuple(items) => items.iter().any(|&item| holds_counted_owner(types, item, seen)),
+        TyKind::Array { elem, .. } | TyKind::ArrayN { elem, .. } | TyKind::Vec { elem, .. } => holds_counted_owner(types, *elem, seen),
+        _ => false,
     }
 }
 
@@ -158,6 +180,7 @@ fn ownership_graph(types: &TypeTable) -> Vec<Vec<StrongEdge>> {
                     field_owner: field_owner.0 as usize,
                     field: field.name.to_string(),
                     field_type: ownership_type_name(types, field.ty),
+                    counted: holds_counted_owner(types, field.ty, &mut Vec::new()),
                     type_span: field.ty_span,
                     weak_replacement: direct_weak_replacement(types, field_owner, field.ty),
                     span: field.span,

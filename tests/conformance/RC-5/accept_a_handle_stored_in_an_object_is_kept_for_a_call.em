@@ -1,15 +1,15 @@
 #$ test: run-pass
 #$ rules: RC-5, FN-9, EXC-17
 #$ stdout: poke 1
-#$ drop 1
+#$ drop 9
 #$ bump 2
-#$ drop 2
+#$ drop 8
 #$ kept 3
 #$ drop 3
 #$ end
 #$ drop 7
-#$ drop 8
-#$ drop 9
+#$ drop 2
+#$ drop 1
 # `[RC-5]` (ODR-065) — a handle stored in an object (`p.child`) can be
 # overwritten through another handle while a call uses the object. The call
 # is made on a retained copy, so the object lives until the call returns:
