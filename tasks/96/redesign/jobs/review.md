@@ -661,3 +661,15 @@ after each work batch" is the owner's rule from this round.
     2. TYP-17's `needs (Add, Copy)` and 3. TYP-6's `@fp(allow_fma)` go in the message, as the spec says; job W6.
     4. Whether a fixed array is one of TYP-31's standard containers (`[T; N].len()` does not exist), and 5. what `Result`'s
     order is in TYP-36's table (its row is shared with `Option`): for Hardened_15.
+- **W6 (Sonnet), lane c job 4.** Merged below. **Credited 10:** ERR-13, ATT-2, FN-1a, FN-2, FN-4, FN-5, ERR-2, ERR-9, EXP-5, EXP-10.
+  - **The lead's review:** the crate suites W6 had not run found a real bug: `ember fmt` crashed on a script with `?`, since the
+    `return Ok(())` the parser adds has no `placement` entry. The formatter prints only what was written; test added.
+  - **The lead on its questions (each from the spec's text):**
+    1. FN-1/GRM-41: `ref` **and** `ref mut` at the top of a parameter's type are `E0117` (FN-1's last sentence); the word goes on the
+       name, `ref a: T`. Not `Option[ref T]`, which is no mode. 193 lines in `std` and the tests to migrate; next lane c job.
+    2. FN-3/EXP-4: a view of a local or a temporary that is returned or outlives it is `E3063`, as FN-3, EXP-4 and LT say. `E3060` stays
+       for a view used after a change ended what it names. A job for lane a (`borrows.rs`).
+    3. ERR-1: `println(e)` of an `E` with `Debug` and no `Display` compiles: `[STD-9]` and `[LEX-19]` say printing falls back to `Debug`.
+       "Printing one needs `Display`" holds for `main`'s report (`[FN-8]`, built). ERR-1's wording goes to Hardened_15; a test, then credit.
+    4. FN-2a: `heal(ref mut p)` through a name that only reads is `E3027`, as FN-2a says; `E3023` is a change written through the name.
+    5. FN-8's invalid argv bytes: a `#[cfg(unix)]` driver test, run on the Linux box; next lane c job.

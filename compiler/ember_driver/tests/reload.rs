@@ -1483,7 +1483,7 @@ fn a_failing_migration_is_reported_not_fatal() {
         "        limits = [1, 2]\n        return Ok(Particle(limits[old.step + 5], 1))",
     );
     let run = host_run("reload-migrate-check", PARTICLES, &[&bounds], 2);
-    assert!(run.stdout.contains("refused: Migration(Particle, 0, index 6 is out of bounds for a length of 2)"), "{}", run.stdout);
+    assert!(run.stdout.contains("refused: Migration(Particle, 0, index 6 is out of bounds for a length of 2; use .get(i) for an Option)"), "{}", run.stdout);
     assert!(run.stdout.ends_with("6\n"), "the old code did not run on: {}", run.stdout);
     let hungry = MIGRATED.replace(
         "        return Ok(Particle(old.x.load() * 100, old.step * 10))",

@@ -425,6 +425,20 @@ impl Checker<'_> {
                 break;
             }
         }
+        // `[EXP-5]` — a method that changes its object, called on a temporary that ends with the line
+        // as a whole statement, changes nothing anyone can see: `E2140`.
+        for (callee, span) in std::mem::take(&mut self.discarded_temp_calls) {
+            if !changes_object(&changing, callee) {
+                continue;
+            }
+            let method = self.declared_name(callee).unwrap_or_else(|| "the method".to_string());
+            let shown = self.written_line(span).unwrap_or_else(|| "the value".to_string());
+            self.sink.emit(
+                Diagnostic::error(codes::E2140, span, format!("`{method}` changes `{shown}`, a temporary that ends with the line, so the change would be lost"))
+                    .help(format!("keep the value in a name first, `x = {shown}`, then call `x.{method}()`"))
+                    .note("a change needs a place; a call whose result is used stays allowed [EXP-5], [BRW-19]"),
+            );
+        }
         // `[STD-19]` — a method taken to read a relied name's object that changes it.
         let misread: HashSet<Span> = self
             .assumed_object_reads

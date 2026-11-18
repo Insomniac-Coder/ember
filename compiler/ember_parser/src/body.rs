@@ -6,6 +6,7 @@
 
 use ember_ast::*;
 use ember_diag::{Diagnostic, codes};
+use ember_span::Span;
 use ember_lexer::{Kw, Lit, Punct, TokenKind};
 
 use crate::Parser;
@@ -275,7 +276,9 @@ impl Parser<'_> {
                     || self.at_kw(Kw::Extern) && self.at_fn_at(2)
                     || self.at_kw(Kw::Unsafe) && self.at_kw_at(1, Kw::Extern) && self.at_fn_at(3) =>
             {
+                self.script_nesting += 1;
                 let decl = self.parse_fn();
+                self.script_nesting -= 1;
                 if decl.body.is_none() {
                     self.report(
                         Diagnostic::error(codes::E0110, decl.name.span, format!("`{}` is declared without a body", decl.name.name))
@@ -910,7 +913,11 @@ impl Parser<'_> {
         // A bare `yield` yields `()` (`[CORO-2]`, a `Generator[void]`).
         let value = (!self.at_expr_end())
             .then(|| Box::new(self.parse_expr_bp(0, allow_block_lambda)));
-        Expr { id, kind: ExprKind::Yield(value), span: start.to(self.prev_span()) }
+        let span = start.to(self.prev_span());
+        if self.at_script_level() {
+            return self.script_jump("yield", span);
+        }
+        Expr { id, kind: ExprKind::Yield(value), span }
     }
 
     /// `[GRM-29]` (0.9.9) — `expr_list := expression {"," expression} [","]`.
@@ -970,7 +977,27 @@ impl Parser<'_> {
                 Jump::Continue { label: self.at_ident().then(|| self.expect_ident()) }
             }
         };
-        Expr { id, kind: ExprKind::Jump(jump), span: start.to(self.prev_span()) }
+        let span = start.to(self.prev_span());
+        if matches!(jump, Jump::Return(_)) && self.at_script_level() {
+            return self.script_jump("return", span);
+        }
+        Expr { id, kind: ExprKind::Jump(jump), span }
+    }
+
+    /// `[FN-8]` — whether the parse is in a script's own statements, not inside a function or a
+    /// lambda written in them.
+    fn at_script_level(&self) -> bool {
+        self.script_scope && self.script_nesting == 0
+    }
+
+    /// `[FN-8]` — `return` and `yield` at file scope are `E0100`, as in Python: the statements form
+    /// the implicit `main`, which a script ends early with `process.exit(code)`.
+    fn script_jump(&mut self, word: &str, span: Span) -> Expr {
+        self.report(
+            Diagnostic::error(codes::E0100, span, format!("`{word}` outside a function: the statements at file scope are the body of the implicit `main`"))
+                .help("end a script early with `process.exit(code)`, or write the statements in a function"),
+        );
+        Expr { id: self.next_id(), kind: ExprKind::Error, span }
     }
 
     fn parse_expr_bp(&mut self, min_bp: u8, allow_block_lambda: bool) -> Expr {
@@ -1902,6 +1929,8 @@ impl Parser<'_> {
                 }
                 TokenKind::Punct(Punct::Question) if min_bp <= BP_POSTFIX => {
                     self.bump();
+                    // `[FN-8]` — a `?` in a script's own statements makes the implicit `main` fallible.
+                    self.script_try |= self.at_script_level();
                     ExprKind::Try(Box::new(expr))
                 }
                 TokenKind::Keyword(Kw::As) if min_bp <= BP_CAST => {
@@ -2125,6 +2154,13 @@ impl Parser<'_> {
     }
 
     fn parse_lambda(&mut self, allow_block_lambda: bool) -> Lambda {
+        self.script_nesting += 1;
+        let lambda = self.parse_lambda_inner(allow_block_lambda);
+        self.script_nesting -= 1;
+        lambda
+    }
+
+    fn parse_lambda_inner(&mut self, allow_block_lambda: bool) -> Lambda {
         let is_owned = self.eat_kw(Kw::Owned);
         self.expect_kw(Kw::Fn);
         self.expect_punct(Punct::LParen);

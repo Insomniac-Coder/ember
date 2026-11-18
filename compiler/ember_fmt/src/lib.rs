@@ -456,7 +456,9 @@ impl Printer<'_> {
         printed_any: &mut bool,
     ) {
         let start = *next;
-        while *next < statements.len() && placement[*next] <= before {
+        // `placement` has one entry per written statement: what the parser adds after them (`[FN-8]`'s
+        // `return Ok(())`) is not printed.
+        while *next < placement.len() && placement[*next] <= before {
             if *next == start && *printed_any {
                 self.blank();
                 self.blank();

@@ -39,7 +39,7 @@ the tool computes. Work planned for after 1.0 has its own row, outside the overa
 
 | Phase | Scope | Done |
 |---|---|---:|
-| 1 | Core language (Parts II–VI) | 30% |
+| 1 | Core language (Parts II–VI) | 33% |
 | 2 | Ownership, borrowing, regions | 12% |
 | 3 | Classes, reference counting, exclusivity | 0% |
 | 4 | Effects, compile time, reflection, derives | 13% |
@@ -49,7 +49,7 @@ the tool computes. Work planned for after 1.0 has its own row, outside the overa
 | 7a | Iteration, determinism, cost control | 18% |
 | 8 | Hardening and 1.0 | 49% |
 | 9 | The LLVM backend (ODR-223) | 38% |
-| | Overall (1.0) | 18% |
+| | Overall (1.0) | 19% |
 | | After 1.0: the GPU host model (v0.6) | 0% |
 
 The latest language work is the memory-model rework, which makes the language 0.9.15, hardened as
