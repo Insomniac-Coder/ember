@@ -11,5 +11,5 @@ fn size(c: UnsafeCell[shares int]) -> int:
 
 fn main():
     held = UnsafeCell(shares 1)
-    t = thread.spawn(owns owned fn() -> int => size(held))    #$ error[E7004]: the thread's function captures `held`, a `std.mem.UnsafeCell[shares i64]`, which is not Send
+    t = thread.spawn(owns owned fn() -> int => size(held))    #$ error[E7015]: the thread's function captures `held`, a `std.mem.UnsafeCell[shares i64]`, which is not Send
     println(t.join())

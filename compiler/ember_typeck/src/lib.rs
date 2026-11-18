@@ -3441,6 +3441,8 @@ struct Checker<'a> {
     argument_of: Option<(Span, Symbol, Span)>,
     /// `[FN-2a]` — the place a call's `ref mut` argument names, and the parameter it is given to.
     ref_mut_argument: Option<(Span, Span)>,
+    /// `[RC-1]` — the argument being checked, when its parameter only reads it.
+    lent_argument: Option<Span>,
     /// `[FN-8]` — the names a script's statements bind: locals of the implicit `main`.
     script_locals: HashSet<Symbol>,
     /// `[EXP-5]` — the receiver of the method call an expression statement is: its result is not used.
@@ -4320,6 +4322,7 @@ impl<'a> Checker<'a> {
             dyn_debug_holders: Vec::new(),
             argument_of: None,
             ref_mut_argument: None,
+            lent_argument: None,
             script_locals: HashSet::new(),
             discarded_receiver: None,
             discarded_temp_calls: Vec::new(),
@@ -38760,7 +38763,10 @@ impl<'a> Checker<'a> {
         // when `=` copies it, borrowed where a view of it is wanted, and never moved out of its block.
         if let TyKind::Link { kind: ember_types::LinkKind::Shares | ember_types::LinkKind::SharesMut | ember_types::LinkKind::ThreadShared, target } = *self.types.kind(expr.ty) {
             let block = self.types.link_payload(expr.ty).is_some();
-            if target == expected && (!block || (self.types.is_copy(target) && !self.types.needs_drop(target))) {
+            // A new owner of an object stands for it only while it is lent to a call: a place that held
+            // the object would keep it past the owner's end.
+            let lasts = block || is_place(&expr.kind) || self.lent_argument == Some(expr.span);
+            if target == expected && lasts && (!block || (self.types.is_copy(target) && !self.types.needs_drop(target))) {
                 return self.read_link_through(expr);
             }
             if block
@@ -39139,7 +39145,7 @@ impl<'a> Checker<'a> {
                         continue;
                     }
                     let shown = self.types.display(capture_ty);
-                    let mut diagnostic = Diagnostic::error(codes::E7004, span,
+                    let mut diagnostic = Diagnostic::error(self.not_send_code(capture_ty), span,
                         format!("this lambda captures `{capture}`, a `{shown}`, which is not Send, so it may not be a `{wanted_shown}`"))
                         .primary_label("made here")
                         .note("a `fn(…) + Send` value holds only what may move to another thread [CLO-10], [THR-8]");
@@ -44658,6 +44664,7 @@ impl<'a> Checker<'a> {
         }
         match self.types.kind(ty) {
             TyKind::Link { kind, .. } => !matches!(kind, ember_types::LinkKind::ThreadShared | ember_types::LinkKind::WeakrefThreadShared),
+            TyKind::Ref { inner, .. } => self.holds_one_thread_owner(*inner, seen),
             TyKind::Class(id) => (0..self.types.class_field_count(*id)).filter_map(|index| self.types.class_field_at(*id, index)).any(|field| self.holds_one_thread_owner(field.ty, seen)),
             TyKind::Struct(id) => self.types.struct_def(*id).fields.iter().any(|field| self.holds_one_thread_owner(field.ty, seen)),
             TyKind::Enum(id) => self.types.enum_def(*id).variants.iter().flat_map(|variant| &variant.fields).any(|field| self.holds_one_thread_owner(field.ty, seen)),
@@ -57530,7 +57537,7 @@ impl<'a> Checker<'a> {
                     );
                     refused = true;
                 } else if send && !self.is_send(capture_ty) {
-                    let mut diagnostic = Diagnostic::error(codes::E7004, arg_span,
+                    let mut diagnostic = Diagnostic::error(self.not_send_code(capture_ty), arg_span,
                         format!("the callback `{}` captures `{capture}`, a `{shown}`, which is not Send", callback.param))
                         .help(format!("if C calls it on one thread, say so in its contract: `param({}, callback(…), threads(main))` or `threads(creator)`", callback.param))
                         .note("C may call a callback from any thread [FFI-22]");
@@ -62293,6 +62300,14 @@ impl<'a> Checker<'a> {
     /// `check_argument` for a parameter whose passing the callee decides
     /// (`param_by_address`, D-284).
     fn check_argument_by(&mut self, arg: &ast::Expr, param_ty: Ty, mode: Mode, by_address: bool) -> Expr {
+        let lent = (mode == Mode::Borrow).then_some(arg.span);
+        let outer = std::mem::replace(&mut self.lent_argument, lent);
+        let checked = self.check_argument_as(arg, param_ty, mode, by_address);
+        self.lent_argument = outer;
+        checked
+    }
+
+    fn check_argument_as(&mut self, arg: &ast::Expr, param_ty: Ty, mode: Mode, by_address: bool) -> Expr {
         let declared_here = self.word_of.filter(|(argument, _)| *argument == arg.span).map(|(_, declared)| declared);
         if let Some((argument, declared)) = self.word_of
             && argument == arg.span

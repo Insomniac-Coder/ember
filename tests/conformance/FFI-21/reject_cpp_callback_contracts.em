@@ -15,10 +15,10 @@ class Counter:
     count: c_int = 0
 
 fn main():
-    counter = Counter()
-    println(cpp.maybe_hook(Some(owned fn(value: c_int) -> c_int => counter.count + value), 1))    #$ error[E7004]: captures `counter`, a `Counter`, which is not Send
+    counter = shares mut Counter()
+    println(cpp.maybe_hook(Some(owned fn(value: c_int) -> c_int => counter.count + value), 1))    #$ error[E7015]: captures `counter`, a `shares mut Counter`, which is not Send
     panel = cpp.Panel.new()
-    println(panel.on_resize(Some(owned fn(size: c_int) -> c_int => counter.count + size), 2))    #$ error[E7004]: captures `counter`, a `Counter`, which is not Send
+    println(panel.on_resize(Some(owned fn(size: c_int) -> c_int => counter.count + size), 2))    #$ error[E7015]: captures `counter`, a `shares mut Counter`, which is not Send
     println(cpp.maybe_hook(None, 1), panel.on_resize(Some(fn(size: c_int) -> c_int => size), 2))
 #$ error[E5002]: `threads(creator)` is a word of a type's or a result's contract, not a function's
 #$ error[E5002]: `handle` is a word of a type's contract, not a function's

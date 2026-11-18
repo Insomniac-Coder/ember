@@ -21,7 +21,7 @@ struct Label:
     text: String
 
     fn init(text: String):
-        this.text = text.clone()
+        this.text = copy of text
 
 struct Registry:
     n: int

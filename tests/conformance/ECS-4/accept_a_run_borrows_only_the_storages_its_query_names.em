@@ -22,7 +22,7 @@ struct Shield:
 struct Name:
     s: StrView
 
-fn guard(ref mut q: Query[(Entity, Mut[Hp], Name)], w: shares World):
+fn guard(ref mut q: Query[(Entity, Mut[Hp], Name)], w: shares mut World):
     for e, hp, name in q.iter_mut():
         hp.n += 1
         println(name.s, w.has[Name](e), w.has[Shield](e))
@@ -41,5 +41,5 @@ fn main():
         w.add(e, owns Hp(1))
         w.add(e, owns Name(s))
     w.add(w.entities_with[Hp]()[1], owns Shield())
-    w.run(owns guard, shares w)
+    w.run(owns guard, shares mut w)
     w.run(owns report, shares w)

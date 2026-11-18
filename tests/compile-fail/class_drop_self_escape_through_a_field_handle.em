@@ -5,7 +5,7 @@
 # D-562: a store through a class handle held in a field of `self` lands in
 # that other object, which outlives the drop, even wrapped in a value.
 class Keeper:
-    saved: Option[Item] = None #$ warning[L3001]: potential reference cycle
+    saved: Option[Item] = None
 
 class Item:
     keeper: Keeper

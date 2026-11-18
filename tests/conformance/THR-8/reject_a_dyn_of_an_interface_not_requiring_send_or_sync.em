@@ -1,7 +1,7 @@
 #$ test: compile-fail
 #$ rules: THR-8, THR-9, THR-10, THR-11
 # `[THR-8]`, `[THR-9]` (ODR-255) — a `dyn I` whose interface does not require `Send` may hold a
-# value that is not (a class handle), so it does not move to another thread (`E7004`); one whose
+# value that is not (a one-thread owner), so it does not move to another thread (`E7004`); one whose
 # interface requires `Send` but not `Sync` is not read by two threads at once (`E7005`); and a type
 # that is not `Send` does not implement an interface requiring it (`E2040`).
 
@@ -25,9 +25,9 @@ extend Plain implements Sendable:
         return this.n
 
 class Handle:
-    n: int
+    n: shares int
 
-    fn init(n: int):
+    fn init(owns n: shares int):
         this.n = n
 
 extend Handle implements Sendable:  #$ error[E2040]: `Sendable` requires `Send`, which `Handle` does not implement

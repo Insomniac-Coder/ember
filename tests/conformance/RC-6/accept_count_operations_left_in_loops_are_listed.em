@@ -13,12 +13,12 @@ class Node:
     value: int
 
 class Holder:
-    item: Node
+    item: shares mut Node
 
 fn main():
     node = Node(1)
     other = Node(2)
-    holder = Holder(Node(0))
+    holder = Holder(shares mut Node(0))
     nodes: Array[shares mut Node] = Array[shares mut Node]()
     total = 0
     for i in 0..3:
