@@ -287,6 +287,13 @@ there.
   with `SyncShared`: for each `@sync` class, `C(...)` becomes `thread_shared C(...)` and `: C` becomes `: thread_shared C`, then the rest
   by the migrations; pages for `E7014`, `E7015`, `E7017`. Then: `[TYP-36]`'s row for owners; the full quick check (use
   `scratchpad/qc_again.py`-style rechecks between), the suites three ways, the bench; M4 merges to `main`.
+- **Slice E, built (2026-11-19):** steps (a) to (f) of the list above; `[TYP-36]`'s row for owners; `weakref thread_shared T`
+  (`LinkKind::WeakrefThreadShared`, written `weakref x` of a `thread_shared` value; opened as a `thread_shared T`). An object is
+  `Send` and `ThreadShared` by its fields, and the debug check that an object stays on its maker's thread is gone (`[FFI-33a]`).
+  A new owner stands for an object only as an argument lent to a call (`lent_argument`). **Not built:** a class's pin from its methods
+  (`[OWN-13]`: `weakref this` against `thread_shared this`), the across-call summary of `weakref T`, `thread_shared fn()` and capture
+  words (CLO), the two counts of biased counting (M6b). **A limit until M5:** one class may not have both `thread_shared` and
+  `shares mut` objects (`E0900`, `refuse_class_shared_both_ways`), since a `thread_shared` class carries no access words.
 - **Task 15, the suites** (round 6, H2): the quick check (failing 0; the touched folders on the C backend
   too), `cargo test -p` of every crate touched (`ember_types`, `ember_hir`, `ember_typeck`, `ember_mir`,
   `ember_analysis`, `ember_interp`, `ember_codegen_c`, `ember_codegen_llvm`, `ember_driver`; the reload
