@@ -51971,6 +51971,23 @@ impl<'a> Checker<'a> {
             // an unwritten `mut` stays `E2020`.
             let mode = match (param.mode, expected) {
                 (ast::Mode::Borrow, Some(expected)) if expected.mode == FnParamMode::Owned => {
+                    // `[TYP-23]` — a lambda parameter's word is what is written on it, never inferred: where the
+                    // callable type hands the value over, the lambda writes `owns`.
+                    if resolved != self.common.error {
+                        let written = self.written_line(span).map(|text| {
+                            let word = name.name.to_string();
+                            text.replacen(&format!("({word}"), &format!("(owns {word}"), 1)
+                        });
+                        let mut diagnostic = Diagnostic::error(
+                            codes::E2020,
+                            param.span,
+                            format!("the callable type hands each value over, so this function receives it as its own: write `owns {}`", name.name),
+                        );
+                        if let Some(written) = written {
+                            diagnostic = diagnostic.help(format!("write `{written}`"));
+                        }
+                        self.sink.emit(diagnostic);
+                    }
                     FnParamMode::Owned
                 }
                 (written, _) => fn_param_mode(written),
