@@ -29252,6 +29252,63 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// `[TYP-6]` — `T.try_from(x) -> Result[T, RangeError]` for whole numbers: `Ok(x as T)` when `x` is a
+    /// value of `T`, `Err(RangeError)` where `as` would have changed it. The test is the round trip
+    /// (`x as T as S == x`) with the sign checked where the two types differ in signedness.
+    fn synth_int_try_from(&mut self, owner: Ty, args: &[ast::Arg], span: Span) -> Expr {
+        let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        let [arg] = args else {
+            self.error(codes::E2020, span, format!("`{}.try_from` takes 1 argument, found {}", self.types.display(owner), args.len()));
+            return error;
+        };
+        let value = self.synth_committed(&arg.value);
+        if value.ty == self.common.error {
+            return error;
+        }
+        let (Some(to_signed), Some(from_signed)) = (ember_types::is_signed(self.types, owner), ember_types::is_signed(self.types, value.ty)) else {
+            let (from, to) = (self.types.display(value.ty), self.types.display(owner));
+            self.error(codes::E2020, span, format!("`{to}.try_from` takes a whole number, found `{from}`"));
+            return error;
+        };
+        let (source, bool_ty) = (value.ty, self.common.bool_);
+        let held = self.declare(None, source, span);
+        let local = || Expr { ty: source, kind: ExprKind::Local(held), span };
+        let compare = |op, lhs: Expr, rhs: Expr| Expr { ty: bool_ty, kind: ExprKind::Binary { op, lhs: Box::new(lhs), rhs: Box::new(rhs) }, span };
+        let cast = |expr: Expr, to: Ty| Expr { ty: to, kind: ExprKind::Cast { expr: Box::new(expr), to }, span };
+        let zero = |ty: Ty| Expr { ty, kind: ExprKind::Int(0), span };
+        let narrowed = || cast(local(), owner);
+        let mut fits = compare(BinOp::Eq, cast(narrowed(), source), local());
+        if from_signed && !to_signed {
+            fits = compare(BinOp::And, compare(BinOp::Ge, local(), zero(source)), fits);
+        } else if !from_signed && to_signed {
+            fits = compare(BinOp::And, fits, compare(BinOp::Ge, narrowed(), zero(owner)));
+        }
+        let range_error = self.range_error_ty();
+        let result_ty = self.result_of(owner, range_error);
+        let (TyKind::Enum(result_id), TyKind::Enum(error_id)) = (self.types.kind(result_ty).clone(), self.types.kind(range_error).clone()) else {
+            return error;
+        };
+        let ok = Expr { ty: result_ty, kind: ExprKind::EnumLit { enum_id: result_id, variant: 0, fields: vec![narrowed()] }, span };
+        let failed = Expr { ty: range_error, kind: ExprKind::EnumLit { enum_id: error_id, variant: 0, fields: vec![] }, span };
+        let err = Expr { ty: result_ty, kind: ExprKind::EnumLit { enum_id: result_id, variant: 1, fields: vec![failed] }, span };
+        let arm = |kind, body: Expr| hir::MatchArm {
+            pattern: hir::Pattern { ty: bool_ty, kind, span },
+            guard: None,
+            body: hir::MatchArmBody::Expr(body),
+            span,
+        };
+        let chosen = Expr {
+            ty: result_ty,
+            kind: ExprKind::Match { scrutinee: Box::new(fits), arms: vec![arm(hir::PatternKind::Int(1), ok), arm(hir::PatternKind::Wild, err)] },
+            span,
+        };
+        Expr {
+            ty: result_ty,
+            kind: ExprKind::Block { block: Block { stmts: vec![Stmt::Let { local: held, init: Some(value) }], span }, value: Box::new(chosen) },
+            span,
+        }
+    }
+
     /// `[TYP-6]` — `char.from_u32(x) -> Option[char]`: the character whose
     /// scalar value is `x`, or `None` when `x` is not one (past `0x10FFFF`, or
     /// a surrogate, `0xD800` to `0xDFFF`). The one way an integer other than a
@@ -40007,6 +40064,19 @@ impl<'a> Checker<'a> {
                 // since not every integer names a variant.
                 if let TyKind::Enum(id) = *self.types.kind(inner.ty) {
                     if self.types.enum_def(id).is_unit_only() && self.types.is_integral(to) {
+                        // `[TYP-6]` — to an integer type that holds every one of its discriminants.
+                        let (floor, ceiling) = match (ember_types::signed_min_magnitude(self.types, to), ember_types::int_max(self.types, to)) {
+                            (Some(low), Some(high)) => (-(low as i128), high),
+                            (None, Some(high)) => (0, high),
+                            _ => (i128::MIN, u128::MAX),
+                        };
+                        let outside = self.types.enum_def(id).variants.iter().map(|variant| variant.discriminant)
+                            .find(|&d| d < floor || (d >= 0 && d as u128 > ceiling));
+                        if let Some(d) = outside {
+                            let (from, shown) = (self.types.display(inner.ty), self.types.display(to));
+                            self.error(codes::E2020, span, format!("`{from}` has the discriminant `{d}`, which `{shown}` cannot hold: `as` converts a unit-only enum to an integer type that holds every one of them"));
+                            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+                        }
                         return Expr {
                             ty: to,
                             kind: ExprKind::Cast { expr: Box::new(inner), to },
@@ -40019,7 +40089,7 @@ impl<'a> Checker<'a> {
                 let char_cast = matches!(
                     (self.types.kind(inner.ty), self.types.kind(to)),
                     (TyKind::Char, TyKind::Uint(UintTy::U32)) | (TyKind::Uint(UintTy::U8), TyKind::Char)
-                );
+                ) || (matches!(self.types.kind(inner.ty), TyKind::Bool) && self.types.is_integral(to));
                 let pointer_integer_cast =
                     (matches!(self.types.kind(inner.ty), TyKind::Ptr { .. }) && self.types.is_integral(to))
                     || (self.types.is_integral(inner.ty) && matches!(self.types.kind(to), TyKind::Ptr { .. }));
@@ -40078,11 +40148,23 @@ impl<'a> Checker<'a> {
                     && (!self.types.is_numeric(inner.ty) || !self.types.is_numeric(to)) {
                     let from = self.types.display(inner.ty);
                     let shown = self.types.display(to);
-                    self.error(
+                    let written = self.written_line(inner.span);
+                    let mut diagnostic = Diagnostic::error(
                         codes::E2020,
                         span,
                         format!("`{from}` cannot be cast to `{shown}` with `as`"),
                     );
+                    // `[TYP-6]` — where two of the conversions join the types, the help gives the chain.
+                    if matches!(self.types.kind(inner.ty), TyKind::Char) && self.types.is_integral(to) {
+                        let word = written.unwrap_or_else(|| "c".to_string());
+                        diagnostic = diagnostic.help(format!("a `char` converts to a `u32` only; write `({word} as u32) as {shown}`"));
+                    } else if self.types.is_integral(inner.ty) && let TyKind::Enum(id) = *self.types.kind(to) && self.types.enum_def(id).is_unit_only() {
+                        let word = written.unwrap_or_else(|| "7".to_string());
+                        let name = self.types.enum_def(id).name.to_string();
+                        diagnostic = Diagnostic::error(codes::E2020, span,
+                            format!("an integer may be no `{name}`; write `{name}.from_repr({word})`, an `Option[{name}]`, and open it: `if {name}.from_repr({word}) exists as c:`"));
+                    }
+                    self.sink.emit(diagnostic);
                 }
                 Expr { ty: to, kind: ExprKind::Cast { expr: Box::new(inner), to }, span }
             }
@@ -46543,6 +46625,9 @@ impl<'a> Checker<'a> {
         args: &[ast::Arg],
         span: Span,
     ) -> Expr {
+        if matches!(self.types.kind(owner), TyKind::Int(_) | TyKind::Uint(_)) && name.name.is("try_from") && generic_args.is_empty() {
+            return self.synth_int_try_from(owner, args, span);
+        }
         if matches!(self.types.kind(owner), TyKind::Char) && name.name.is("from_u32") && generic_args.is_empty() {
             return self.synth_char_from_u32(args, span);
         }
