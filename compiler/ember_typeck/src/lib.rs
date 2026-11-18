@@ -37625,6 +37625,23 @@ impl<'a> Checker<'a> {
         {
             return self.check_owned_value(inner, expected, expr.span);
         }
+        // `[TYP-5]` rule 11 after the owned block: `slot: Option[owns dyn Weapon] = owns Sword(4)` makes the
+        // block for the `owns` place inside the `Option`, then wraps it as `Some`.
+        if let ast::ExprKind::Owned(inner) = &expr.kind
+            && self.is_option(expected)
+            && let TyKind::Enum(id) = *self.types.kind(expected)
+            && !matches!(inner.kind, ast::ExprKind::Lambda(_))
+        {
+            let payload = self.types.enum_def(id).variants[1].fields[0].ty;
+            if self.box_inner(payload).is_some() {
+                let value = self.check_owned_value(inner, payload, expr.span);
+                let span = value.span;
+                if value.ty == self.common.error {
+                    return value;
+                }
+                return Expr { ty: expected, kind: ExprKind::EnumLit { enum_id: id, variant: 1, fields: vec![value] }, span };
+            }
+        }
         let mut found = self.synth_with_expectation(expr, Some(expected));
         // `[OWN-10]` — a value given to an `owns T` place with no `owns` on the line that makes it:
         // `E2123`, and the block is made, so that one mistake is one error.
@@ -38692,8 +38709,12 @@ impl<'a> Checker<'a> {
     /// `[TYP-5]` — whether `expr` reaches `wanted` by the rules rule 11
     /// composes with: the type itself, a literal that fits, widening (1–2),
     /// range erasure (3), and the two text rules (4).
-    fn coerces_before_option(&self, expr: &Expr, wanted: Ty) -> bool {
-        let string = |ty| matches!(*self.types.kind(ty), TyKind::Vec { text: true, .. });
+    fn coerces_before_option(&mut self, expr: &Expr, wanted: Ty) -> bool {
+        let text = |types: &ember_types::TypeTable, ty| matches!(*types.kind(ty), TyKind::Vec { text: true, .. });
+        if self.fits_by_value(expr, wanted) {
+            return true;
+        }
+        let string = |ty| text(&*self.types, ty);
         expr.ty == wanted
             // ODR-278 — a function, as its shape.
             || self.types.item_shape(expr.ty) == Some(wanted)
