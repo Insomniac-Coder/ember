@@ -5,7 +5,7 @@
 #$ 3
 #$ Some(6)
 # ODR-025 — expected types flow into a lambda (`[TYP-23]`), and so does an
-# `owned` parameter mode: `fn(s) => s` against `fn(owned T) -> U` receives `s`
+# `owns` parameter word (written, `[TYP-23]` 0.9.20): `fn(owns s) => s` against `fn(owns T) -> U` receives `s`
 # owned. Generic inference reads `Option[T]` against `Option[String]`, and a
 # ternary branch `None` takes its type from the other branch.
 
@@ -31,10 +31,10 @@ fn unwrap2(owns o: Option[T]) -> T:
 
 fn main():
     s: Option[String] = Some("abc")
-    println(opt_map(owns s, fn(v) => v.len()))
+    println(opt_map(owns s, fn(owns v) => v.len()))
     suffix: String = "!"
     t: String = "xy"
-    println(apply(owns t, fn(v) => v + suffix))
+    println(apply(owns t, fn(owns v) => v + suffix))
     w: Option[String] = Some("abc")
     println(unwrap2(owns w).len())
     v = 5

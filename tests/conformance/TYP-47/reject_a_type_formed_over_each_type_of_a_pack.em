@@ -34,7 +34,7 @@ fn two(a: int, b: int):
 
 [Ts...]
 fn spread_into_two(values: Ts...):
-    two(values...)    #$ error[E2020]: `values...` passes a pack's values on, to a function whose last positional parameter takes a pack's values
+    two(values...)    #$ error[E2021]: `two(values...)` gives a pack's values, any number of them, and `two` takes two: `fn two(a: int, b: int)`
 
 fn main():
     pass

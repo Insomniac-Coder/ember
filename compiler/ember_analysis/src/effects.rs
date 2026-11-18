@@ -816,6 +816,10 @@ fn contract_diagnostic(
     let mut diagnostic = Diagnostic::error(code, span, format!("{named} function `{}` {what}", display_name(body, types)))
         .primary_label("reached from here")
         .note(chain.join(" -> "));
+    // `[TYP-38]` — a list literal that allocates names the form that does not: the fixed array.
+    if effect == Effects::ALLOC && chain.last().is_some_and(|last| last.ends_with("a new `Array`")) {
+        diagnostic = diagnostic.help("a fixed array allocates nothing: give the place the type `[T; N]` (`xs: [int; 3] = [1, 2, 3]`)");
+    }
     if effect == Effects::PANIC {
         diagnostic = diagnostic.note(
             "`@nopanic(explicit)` forbids only the panics the program writes and allocation failure; \

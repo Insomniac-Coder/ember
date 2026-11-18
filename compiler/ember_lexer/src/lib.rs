@@ -262,8 +262,7 @@ impl<'a> Lexer<'a> {
     }
 
     /// `#! name value` — a directive on an unindented line. The parser checks
-    /// that it precedes imports and declarations. Harness `#! error[...]`
-    /// annotations remain comments (`[TST-1]`).
+    /// that it precedes imports and declarations.
     fn lex_directive(&mut self) {
         if !self.rest().starts_with("#!") {
             return;
@@ -288,6 +287,25 @@ impl<'a> Lexer<'a> {
             self.tokens.push(Token { kind, span });
         }
         self.eat('\n');
+    }
+
+    /// `[LEX-10]`: a line whose first characters after its indentation are `#!` is a directive, never a
+    /// comment, so one that is indented (in a block, or inside brackets) is `E0104`, with the line to
+    /// move it above. Call at the `#`.
+    fn check_indented_directive(&mut self) {
+        if !self.rest().starts_with("#!") {
+            return;
+        }
+        let line_end = self.rest().find('\n').map_or(self.src.len(), |i| self.pos + i);
+        let written = self.src[self.pos..line_end].trim().to_string();
+        let first = self.src.lines().find(|l| {
+            let t = l.trim();
+            !t.is_empty() && !t.starts_with('#')
+        }).unwrap_or("").trim().trim_end_matches(':').to_string();
+        let span = Span::new(self.file, self.pos as u32, line_end as u32);
+        let d = Diagnostic::error(codes::E0104, span, format!(
+            "`{written}` is a directive, and directives come first; move it above `{first}`"));
+        self.sink.emit(d);
     }
 
     /// Handle the indentation of one physical line.
@@ -344,6 +362,7 @@ impl<'a> Lexer<'a> {
                     }
                     self.lex_directive();
                 } else {
+                    self.check_indented_directive();
                     self.lex_comment(true);
                 }
                 return true;
@@ -404,7 +423,14 @@ impl<'a> Lexer<'a> {
                     self.pos += 1;
                 }
             }
-            Some('#') => self.lex_comment(false),
+            Some('#') => {
+                // `[LEX-10]`: a `#!` that starts its (continuation) line is a directive too.
+                let from = self.src[..self.pos].rfind('\n').map_or(0, |at| at + 1);
+                if self.src[from..self.pos].trim().is_empty() {
+                    self.check_indented_directive();
+                }
+                self.lex_comment(false)
+            }
             Some('"') => self.lex_string_like(StringFlavour::Str),
             Some('\'') => self.lex_char_or_lifetime(),
             Some(c) if c.is_ascii_digit() => self.lex_number(),
