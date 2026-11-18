@@ -33,7 +33,7 @@ class Holder:
 fn main():
     m = Mote()
     m.n = 7
-    alias = m
+    alias = shares mut m
     h = Holder(owns alias)
     println(h.s.speak(), m.speak())
     m.n = 8

@@ -2011,6 +2011,7 @@ impl Reporter<'_> {
             .primary_label("used here")
             .note(note);
         let diagnostic = self.kept_by_copy(diagnostic, body, local, None);
+        let diagnostic = self.kept_by_sharing(diagnostic, body, local, None);
         let diagnostic = self.moved_from(diagnostic, body, local, span);
         self.sink.emit_classified(diagnostic);
     }

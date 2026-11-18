@@ -60,7 +60,7 @@ pub fn make_shape() -> Shape:
 fn main():
     counter = make_counter()
     println(bump_twice(counter), counter.total())
-    shared = counter
+    shared = shares mut counter
     shared.bump()
     println(counter.total())
     println(make_square().sides(), make_shape().sides())

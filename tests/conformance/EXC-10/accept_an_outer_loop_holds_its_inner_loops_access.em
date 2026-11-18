@@ -22,7 +22,7 @@ class Counter:
 
 fn main():
     counter = Counter(0, [])
-    alias = counter
+    alias = shares mut counter
     for r in 0..3:
         for i in 0..4:
             counter.bump()

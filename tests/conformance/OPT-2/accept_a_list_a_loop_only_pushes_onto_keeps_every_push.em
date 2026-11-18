@@ -55,7 +55,7 @@ fn main():
     println(evens, odds)
 
     c = Log()
-    same = c
+    same = shares mut c
     for i in 0..4:
         c.items.push(owns i)
         print(len(same.items))

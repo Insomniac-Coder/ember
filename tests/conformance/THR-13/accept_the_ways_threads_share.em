@@ -19,7 +19,7 @@ fn bump(ref mut s: MutSpan[int], at: int, by: int):
 
 fn main():
     stats = Stats()
-    theirs = stats
+    theirs = shares mut stats
     a = thread.spawn(owns owned fn() => theirs.seen.fetch_add(3))
     a.join()
     b = thread.spawn(owns owned fn() => TOTAL.fetch_add(5))

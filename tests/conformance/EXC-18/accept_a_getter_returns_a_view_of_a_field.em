@@ -36,6 +36,6 @@ fn main():
     n = p.get_name()
     t = p.first_tags()
     println(n, t, p.relay(), p.label())
-    q = p
+    q = shares mut p
     q.rename()
     println(p.get_name())

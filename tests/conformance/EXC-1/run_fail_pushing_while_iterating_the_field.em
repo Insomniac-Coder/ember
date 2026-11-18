@@ -18,7 +18,7 @@ class Bag:
 
 fn main():
     b = Bag()
-    c = b
+    c = shares mut b
     for x in b.items:
         c.items.push(owns x)
     println(b.items)

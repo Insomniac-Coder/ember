@@ -26,7 +26,7 @@ fn main():
     p = Person()
     (a, b) = p.names()
     println(a, b)
-    q = p
+    q = shares mut p
     q.rename()
     (c, d) = p.names()
     kept = c

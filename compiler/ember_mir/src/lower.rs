@@ -7709,7 +7709,14 @@ impl<'a> Builder<'a> {
     fn keep_handle_alive(&mut self, handle: &'a hir::Expr) -> Place {
         let temp = self.temp(handle.ty, handle.span);
         self.push(StmtKind::StorageLive(temp));
-        self.lower_into(Place::local(temp), handle);
+        // A handle is not `Copy` (`[TYP-45]`), but this read leaves it where it is: a counted copy the
+        // compiler makes for itself, until `[RC-5]`'s check at compile time replaces it.
+        if is_place_expr(handle) {
+            let stored = self.lower_place(handle);
+            self.push(StmtKind::Assign { place: Place::local(temp), rvalue: Rvalue::Use(Operand::Copy(stored)) });
+        } else {
+            self.lower_into(Place::local(temp), handle);
+        }
         Place::local(temp)
     }
 
@@ -7800,4 +7807,9 @@ fn state_place(place: Place, index: usize, in_cell: bool) -> Place {
 /// ODR-240 — whether `symbol` names a function of the standard library: its module path is `std`'s.
 fn std_symbol(symbol: &str) -> bool {
     symbol.strip_prefix(ember_branding::mangle_prefix().as_str()).is_some_and(|rest| rest.starts_with("3std"))
+}
+
+/// Whether `expr` names a place of the program (a local, a field, an element, what a reference names).
+fn is_place_expr(expr: &hir::Expr) -> bool {
+    matches!(expr.kind, hir::ExprKind::Local(_) | hir::ExprKind::Field { .. } | hir::ExprKind::EnumField { .. } | hir::ExprKind::Index { .. } | hir::ExprKind::Deref(_))
 }

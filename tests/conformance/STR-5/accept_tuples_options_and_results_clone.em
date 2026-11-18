@@ -23,7 +23,7 @@ fn main():
     h = Holder(Some("d"))
     println(x.clone(), r.clone(), t.clone(), h.clone())
     a = Node(name=Some("hello"))
-    b = a
+    b = shares mut a
     kept = a.name.clone()
     match a.name.clone():
         Some(s):

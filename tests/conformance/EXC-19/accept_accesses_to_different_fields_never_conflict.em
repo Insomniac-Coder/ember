@@ -19,7 +19,7 @@ class Bag:
 
 fn main():
     b = Bag()
-    c = b
+    c = shares mut b
     for x in b.items:
         c.log.push(owns x)
     b.copy_items()

@@ -47,6 +47,6 @@ fn main():
     r: ref int = ref n
     println(same(ref n, ref n), same(ref n, ref m), same(ref p.a, ref p.b), r is ref n, r is not ref m)
     first = Node(1)
-    alias = first
+    alias = shares mut first
     other = Node(1)
     println(same_node(ref first, ref alias), same_node(ref first, ref other), first is alias)

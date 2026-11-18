@@ -26,8 +26,8 @@ fn report(ref mut counter: Counter, extra: i32):
 fn main():
     left = Counter(0)
     right = Counter(0)
-    left_alias = left
-    right_alias = right
+    left_alias = shares mut left
+    right_alias = shares mut right
     for i in 0..3:
         left.bump()
         right.bump()

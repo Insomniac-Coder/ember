@@ -29,7 +29,7 @@ class Holder:
 
 fn main():
     p = Person()
-    alias = p
+    alias = shares mut p
     h = Holder(owns alias)
     n = h.named.name()
     println(n)

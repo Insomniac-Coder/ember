@@ -16,7 +16,7 @@ class Counter:
 
 fn main():
     counter = Counter()
-    alias = counter
+    alias = shares mut counter
     counter.hit()
     alias.hit()
     counter.hit()

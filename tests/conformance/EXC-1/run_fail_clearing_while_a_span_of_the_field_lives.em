@@ -18,7 +18,7 @@ class Bag:
 
 fn main():
     b = Bag()
-    c = b
+    c = shares mut b
     v: Span[int] = b.items
     c.items.clear()
     println(v)
