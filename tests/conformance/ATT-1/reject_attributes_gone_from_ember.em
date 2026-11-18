@@ -4,15 +4,15 @@
 ## `@no_alias_checks`, `@fp(contract)` is `@fp(allow_fma)`, `@borrows(p)` is `from p` after the
 ## result type (`[LT-1a]`), and no switch turns a safety check off.
 
-@static_safe    #$ error[E0104]: `@static_safe` is gone
+@static_safe    #$ error[E0104]: `@static_safe` is gone: write `@no_alias_checks`
 fn one() -> int:
     return 1
 
-@fp(contract)    #$ error[E0104]: `@fp(contract)` is gone
+@fp(contract)    #$ error[E0104]: `@fp(contract)` is gone: write `@fp(allow_fma)`
 fn two(a: f64) -> f64:
     return a * 2.0 + 1.0
 
-@borrows(a)    #$ error[E0104]: `@borrows` is gone
+@borrows(a)    #$ error[E0104]: `@borrows(a)` is gone: write `from a` after the result type
 fn pick(a: Span[int], b: Span[int]) -> Span[int]:
     return a
 

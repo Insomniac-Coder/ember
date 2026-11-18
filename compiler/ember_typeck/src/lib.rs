@@ -46221,12 +46221,12 @@ impl<'a> Checker<'a> {
                 ast::AttrArg::Named { .. } => None,
             };
             let gone = match (name, attr.args.as_slice()) {
-                ("static_safe", _) => Some(("`@static_safe` is gone", "write `@no_alias_checks`: a function that keeps no check of who else holds its data".to_string())),
-                ("fp", [arg]) if word(arg).as_deref() == Some("contract") => Some(("`@fp(contract)` is gone", "write `@fp(allow_fma)`".to_string())),
+                ("static_safe", _) => Some(("`@static_safe` is gone: write `@no_alias_checks`".to_string(), "`@no_alias_checks` marks a function that keeps no check of who else holds its data".to_string())),
+                ("fp", [arg]) if word(arg).as_deref() == Some("contract") => Some(("`@fp(contract)` is gone: write `@fp(allow_fma)`".to_string(), "`@fp(allow_fma)` lets a multiply and an add fuse [TYP-9]".to_string())),
                 // `[UNS-11]` — no switch turns a safety check off, in any build: the two ways to write
                 // what such a switch was wanted for.
                 ("no_runtime_checks", _) => Some((
-                    "there is no switch that turns safety checks off, in any build; to forbid run-time alias checks here write `@no_alias_checks`; to skip the bounds check of an index known to be in range, write `xs.get_unchecked(i)` inside `unsafe:` with a `# SAFETY:` note",
+                    "there is no switch that turns safety checks off, in any build; to forbid run-time alias checks here write `@no_alias_checks`; to skip the bounds check of an index known to be in range, write `xs.get_unchecked(i)` inside `unsafe:` with a `# SAFETY:` note".to_string(),
                     "remove `@no_runtime_checks` [UNS-11]".to_string(),
                 )),
                 // `[LT-1a]`, `[LT-22]` — what a result points into is the first line's rule, narrowed by
@@ -46240,7 +46240,14 @@ impl<'a> Checker<'a> {
                         },
                         _ => "remove it: the result points into the sources its body gives it, which callers use (LT-22); `from p` narrows it to one".to_string(),
                     };
-                    Some(("`@borrows` is gone", help))
+                    let message = match args {
+                        [arg] => match word(arg) {
+                            Some(named) if !named.is_empty() => format!("`@borrows({named})` is gone: write `from {named}` after the result type"),
+                            _ => "`@borrows` is gone".to_string(),
+                        },
+                        _ => "`@borrows` is gone".to_string(),
+                    };
+                    Some((message, help))
                 }
                 _ => None,
             };
