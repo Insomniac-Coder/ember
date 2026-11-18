@@ -349,6 +349,9 @@ struct Builder<'a> {
     handed_at: Vec<(LocalId, ember_span::Span)>,
     /// `Body::stored_at`.
     stored_at: Vec<(LocalId, ember_span::Span)>,
+    /// `[TYP-45]` (M4 slice C) — the upcast being lowered lends its object to a parameter that reads
+    /// it: the object stays where it is, read as a counted copy the compiler makes.
+    lending_upcast: bool,
 }
 
 impl<'a> Builder<'a> {
@@ -501,6 +504,7 @@ impl<'a> Builder<'a> {
             class_init_flags: std::collections::HashMap::new(),
             handed_at: Vec::new(),
             stored_at: Vec::new(),
+            lending_upcast: false,
         }
     }
 
@@ -6658,7 +6662,8 @@ impl<'a> Builder<'a> {
                 let reads_c_entry = matches!(self.types.kind(*to), TyKind::Fn { abi: Some(_), .. })
                     && matches!(&inner.kind, hir::ExprKind::Local(_) | hir::ExprKind::Field { .. }
                         | hir::ExprKind::Index { .. } | hir::ExprKind::Deref(_));
-                let operand = if reads_c_entry {
+                let lent = std::mem::take(&mut self.lending_upcast) && is_place_expr(inner);
+                let operand = if reads_c_entry || lent {
                     self.at(inner.span);
                     Operand::Copy(self.lower_place(inner))
                 } else {
@@ -6703,7 +6708,8 @@ impl<'a> Builder<'a> {
                 implementations,
                 expr: inner,
             } => {
-                let operand = self.lower_operand(inner);
+                let lent = std::mem::take(&mut self.lending_upcast) && is_place_expr(inner);
+                let operand = if lent { Operand::Copy(self.lower_place(inner)) } else { self.lower_operand(inner) };
                 let implementations = implementations
                     .iter()
                     .map(|implementation| {
@@ -7556,7 +7562,13 @@ impl<'a> Builder<'a> {
             let temp = self.keep_handle_alive(expr);
             return Operand::Copy(temp);
         }
-        match self.lower_operand(expr) {
+        // `[TYP-45]` — a class object given to a parameter of its base class or of an interface is
+        // lent, as it is given to one of its own class.
+        self.lending_upcast = matches!(&expr.kind, hir::ExprKind::Cast { .. } | hir::ExprKind::InterfaceUpcast { .. })
+            && self.counted_handle(expr.ty);
+        let operand = self.lower_operand(expr);
+        self.lending_upcast = false;
+        match operand {
             Operand::Move(place) => Operand::Copy(place),
             other => other,
         }
