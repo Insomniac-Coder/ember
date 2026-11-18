@@ -19,13 +19,16 @@ class Counter:
         other.bump()
         println(view.len())
 
+fn observe(c: Counter):
+    println(c.value)
+
 @no_alias_checks
 fn run(n: int) -> i32:
     counter = Counter(0)
-    alias = shares mut counter
+    observe(counter)
     for i in 0..n:
         counter.bump()  #$ error[E4030]: the check's reason is `inherent_to_mechanism`
-    return alias.value
+    return counter.value
 
 fn main():
     println(run(3))
