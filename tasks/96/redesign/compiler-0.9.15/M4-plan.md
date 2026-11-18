@@ -238,6 +238,25 @@ there.
     bound to a part, which `[BRW-12]` clause 6 writes `ref mut x = <part>`. So the order is: `[BRW-12]` with its own
     checker migration (`ref mut` where the name is written through, a hand-over word where the part is moved
     out), then slice C on top. The experiment was reverted; C1 and C2 stay on `m4-slice-c-probe`.
+- **Slice C and D, built (2026-11-19, on `m4-slice-c-probe`, with H4's A2-3 merged in):**
+  - **C1-C3:** a class handle is not `Copy`; `m = n` hands the object over, and E3040 migrates a store to `m = shares mut n`;
+    a class local (or `owns` parameter) a line shares is a `shares mut` owner from its declaration, by `LinkAdopt` (no count).
+    A name no line gives a value of its own is `E0900` when the body settles (`unmade_owners`).
+  - **C5:** an owner read where its object is wanted is the owner's own place: `TypeTable::link_field`, `Field(0)` of a link to a
+    class is the same pointer; `LinkTarget` is gone, and no count is taken. A read-only class parameter takes the handle itself
+    (`passed_by_address` is false for a class), so a plain parameter holding an object is a view (`is_part`). A class field holds
+    no access word. `is` reads owners and leaves both operands in place. A class given to a parameter of its base or an interface is
+    lent (`lending_upcast`). A view upcasts (`ref Child` to `ref Base`), an owner too. A generator's frame holds a lent object by a
+    count of its own. Writing through an owner after it was handed over is E3040 (`handles` in the move paths).
+  - **Still counted, until `[RC-5]`'s check when compiling (M6):** `keep_handle_alive`, the copy made for a call that reads a
+    handle out of an object. `uncounted_handles.rs` and `temporary_owners.rs` stay until then.
+  - **L3001** needs a counted owner in the loop: objects with one owner cannot form one.
+  - **C4:** the tests follow (`shares`, `ref`, `owns`, `copy of`); those needing `shares dyn I` wait in `jobs/ahead/M11`. `std.ecs`:
+    `Commands` are counted owners, `World.storage` gives a view.
+  - **D:** `x.clone()` at a use is `E1010`, migrating to `copy of x` (120 sites); `@derive(Clone)` on a class makes a new object;
+    `copy of` follows a type parameter's bounds and is one more view of a read-only view.
+  - **Left in M4:** `TYP-36`'s row for owners (a `shares T` implements `Eq`, `Ord`, `Hash`, `Display`, `Debug` as `T` does), and
+    **slice E**: `thread_shared`. These wait for E: ECS-4's two thread tests, THR-2, THR-11's scoped capture and THR-13.
 - **Task 15, the suites** (round 6, H2): the quick check (failing 0; the touched folders on the C backend
   too), `cargo test -p` of every crate touched (`ember_types`, `ember_hir`, `ember_typeck`, `ember_mir`,
   `ember_analysis`, `ember_interp`, `ember_codegen_c`, `ember_codegen_llvm`, `ember_driver`; the reload
