@@ -41256,7 +41256,28 @@ impl<'a> Checker<'a> {
             && let Some(arg) = args.iter().find(|arg| matches!(arg.value.kind, ast::ExprKind::Spread(_)))
             && let ast::ExprKind::Spread(spread) = arg.value.kind
         {
-            self.refuse_spread(spread, arg.value.span);
+            // `[TYP-47]` — a pack's values, whose number is not known in generic code, fit no parameters of a
+            // fixed number: `E2021`, giving the callee's first line.
+            let holds = self.lookup(spread.name).is_some_and(|local| self.pack_values.contains_key(&local));
+            if holds {
+                let takes = self.signatures[def.0 as usize].params.len();
+                let takes = match takes {
+                    0 => "none".to_string(),
+                    1 => "one".to_string(),
+                    2 => "two".to_string(),
+                    3 => "three".to_string(),
+                    4 => "four".to_string(),
+                    5 => "five".to_string(),
+                    more => more.to_string(),
+                };
+                let callee_name = self.declared_name(def).unwrap_or_else(|| name.to_string());
+                let line = self.declaration_first_line(def);
+                let what = format!("gives a pack's values, any number of them, and `{callee_name}` takes {takes}");
+                let diagnostic = self.argument_misfit(arg.value.span, span, &callee_name, what, line);
+                self.sink.emit(diagnostic);
+            } else {
+                self.refuse_spread(spread, arg.value.span);
+            }
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         }
         // `[TYP-16]`, `[TYP-18]` — a generic callee is instantiated here: the
