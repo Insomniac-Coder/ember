@@ -21060,7 +21060,7 @@ impl<'a> Checker<'a> {
     /// pointer to the value as its one logical field (`TypeTable::link_payload`).
     fn link_of(&mut self, kind: ember_types::LinkKind, target: Ty) -> Ty {
         if !matches!(self.types.kind(target), TyKind::Class(_)) {
-            self.counted_of(target, false);
+            self.counted_of(target, kind == ember_types::LinkKind::ThreadShared);
             self.types.intern(TyKind::Ptr { mutable: true, inner: target });
         }
         self.types.intern(TyKind::Link { kind, target })
@@ -21707,7 +21707,7 @@ impl<'a> Checker<'a> {
         // `[RC-1]` — before a new value: the value is made in its block.
         if new_value {
             let link = self.link_of(kind, ty);
-            let block = self.counted_of(ty, false);
+            let block = self.counted_of(ty, kind == LinkKind::ThreadShared);
             return Expr { ty: link, kind: ExprKind::Builtin { which: Builtin::SharedNew { elem: ty, shared: block }, args: vec![source] }, span };
         }
         if self.refuse_owner_of_one_owner_place(kind, written, &source, span) {
