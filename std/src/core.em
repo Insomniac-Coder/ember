@@ -2370,8 +2370,7 @@ extend String implements Add[StrView]:
 extend String implements AddAssign[StrView]:
     ## It allocates as the `String` grows.
     fn add_assign(rhs: StrView):
-        for c in rhs.chars():
-            this.push(c)
+        this.push_str(rhs)
 
 extend String implements Default:
     ## It allocates the new text (`[STD-1]`).

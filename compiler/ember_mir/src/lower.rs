@@ -1514,7 +1514,16 @@ impl<'a> Builder<'a> {
             return;
         }
         if !self.types.needs_drop(expr.ty) {
-            self.lower_into(place, expr);
+            // `[BRW-2]` — `m = add(m, two)` for a type passed by address: the call reads `m` where it
+            // is, so its result is made apart and stored once the call has ended.
+            if self.types.is_copy(expr.ty) || !self.reads_local(expr, place.local) {
+                self.lower_into(place, expr);
+                return;
+            }
+            let temp = self.temp(expr.ty, expr.span);
+            self.lower_into(Place::local(temp), expr);
+            self.at(expr.span);
+            self.push(StmtKind::Assign { place, rvalue: Rvalue::Use(Operand::Move(Place::local(temp))) });
             return;
         }
         let temp = self.temp(expr.ty, expr.span);
@@ -1525,6 +1534,17 @@ impl<'a> Builder<'a> {
         // into the place. A copy retained a class handle (a `Copy` type with
         // a count) and the temporary's end released it again.
         self.push(StmtKind::Assign { place, rvalue: Rvalue::Use(Operand::Move(Place::local(temp))) });
+    }
+
+    /// Whether `expr` names the MIR local `local` anywhere.
+    fn reads_local(&self, expr: &hir::Expr, local: LocalId) -> bool {
+        let mut found = false;
+        hir::visit_expr(expr, &mut |seen| {
+            if let hir::ExprKind::Local(named) = seen.kind {
+                found |= self.local_map[named.0 as usize] == local;
+            }
+        });
+        found
     }
 
     /// `[CLS-2]` — the flag of a class `init`'s field, false from the body's entry until a write.

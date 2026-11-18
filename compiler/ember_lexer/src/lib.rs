@@ -262,8 +262,7 @@ impl<'a> Lexer<'a> {
     }
 
     /// `#! name value` — a directive on an unindented line. The parser checks
-    /// that it precedes imports and declarations. Harness `#! error[...]`
-    /// annotations remain comments (`[TST-1]`).
+    /// that it precedes imports and declarations.
     fn lex_directive(&mut self) {
         if !self.rest().starts_with("#!") {
             return;
@@ -292,9 +291,9 @@ impl<'a> Lexer<'a> {
 
     /// `[LEX-10]`: a line whose first characters after its indentation are `#!` is a directive, never a
     /// comment, so one that is indented (in a block, or inside brackets) is `E0104`, with the line to
-    /// move it above. A harness `#! error[...]` annotation stays a comment (`[TST-1]`). Call at the `#`.
+    /// move it above. Call at the `#`.
     fn check_indented_directive(&mut self) {
-        if !self.rest().starts_with("#!") || self.rest().starts_with("#! error[") {
+        if !self.rest().starts_with("#!") {
             return;
         }
         let line_end = self.rest().find('\n').map_or(self.src.len(), |i| self.pos + i);

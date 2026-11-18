@@ -62863,9 +62863,8 @@ impl<'a> Checker<'a> {
         if lhs.ty == self.common.error || rhs.ty == self.common.error || self.mentions_error(lhs.ty) || self.mentions_error(rhs.ty) {
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         }
-        // `[TXT-11]` — `a + b` with a `String` on the left consumes it and
-        // returns it extended; `str + str` is `E2040`, whose help is an
-        // f-string.
+        // `[TXT-11]` — `a + b` with a `String` on the left gives a new `String`;
+        // `str + str` is `E2040`, whose help is an f-string.
         if op == ast::BinOp::Add && self.is_text(lhs.ty) && self.is_text(rhs.ty) {
             let str_ty = self.common.str_;
             if lhs.ty == str_ty {
@@ -62880,6 +62879,7 @@ impl<'a> Checker<'a> {
             // `f"{a}{b}"` is, a new `String` of `a`'s text then `b`'s.
             let string_ty = self.common.string;
             let buffer_ref = self.types.intern(TyKind::Ref { mutable: true, inner: string_ty });
+            let (lhs, rhs) = (self.coerce(lhs, str_ty), self.coerce(rhs, str_ty));
             let parts = vec![self.plain_text_piece(lhs), self.plain_text_piece(rhs)];
             return Expr { ty: string_ty, kind: ExprKind::FString { parts, buffer_ref }, span };
         }
