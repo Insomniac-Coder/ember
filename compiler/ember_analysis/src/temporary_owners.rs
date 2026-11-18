@@ -543,7 +543,7 @@ mod tests {
             span: Span::DUMMY, borrows: None, sources: Vec::new(), is_lambda: false, assume_noalloc: Vec::new(),
             emit_if_used: false, borrowed_params: Vec::new(), for_iterators: Vec::new(),
             call_argument_bindings: Vec::new(), callable_regions: None,
-            closure_environment: None, closure_captures_by_move: false,
+            closure_environment: None, closure_captures_by_move: false, stored_at: Vec::new(),
             path: None, class_owner: None, class_virtual_slot: None, borrows_used_fields: false, is_abstract: false,
             is_extern_declaration: false, variadic: false, ffi_counted: None, mut_self: false,
             elided_accesses: Vec::new(), hoisted_accesses: Vec::new(),

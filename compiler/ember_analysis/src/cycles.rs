@@ -668,7 +668,7 @@ fn class_name(types: &TypeTable, class: ClassId) -> String {
 mod tests {
     use super::*;
     use ember_span::{Span, Symbol};
-    use ember_types::{ClassDef, ClassOpenness, FieldDef, FieldVis, StructDef};
+    use ember_types::{ClassDef, ClassOpenness, FieldDef, FieldVis};
 
     fn class(types: &mut TypeTable, name: &str) -> ClassId {
         types.add_class(ClassDef {
