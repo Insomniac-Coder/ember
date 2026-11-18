@@ -4041,9 +4041,18 @@ impl<'a> Builder<'a> {
             | hir::ExprKind::Deref(_)
             | hir::ExprKind::Index { .. } => self.lower_place(scrutinee),
             _ => {
+                let temps = self.statement_temps.len();
                 let temp = self.temp(scrutinee.ty, scrutinee.span);
                 self.push(StmtKind::StorageLive(temp));
                 self.lower_into(Place::local(temp), scrutinee);
+                // `[EXP-4]` — a temporary of the subject (`match mk().val():`) is dropped before the
+                // chosen arm runs, when the value the subject gives is plain data: it points at nothing
+                // the temporaries own, so no pattern can name a part of them. Any other value keeps them
+                // until the statement ends (a value that owns heap storage may share it with a temporary
+                // that is dropped, and a view may name it): `match owns JOBS.lock().pop():` needs more.
+                if is_plain_data(self.types, scrutinee.ty) {
+                    self.emit_statement_temps(temps);
+                }
                 Place::local(temp)
             }
         };

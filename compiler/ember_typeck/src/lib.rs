@@ -470,6 +470,33 @@ fn check_round(
     let modules: &[LoadedModule] = expanded_foreign.as_deref().unwrap_or(modules);
     let mut checker = Checker::new(types, common, sink);
     checker.object_changers = object_changers.clone();
+    // `[FN-8]` — the names the entry file's statements bind.
+    for loaded in modules {
+        if let Some(script) = &loaded.module.script
+            && let ast::ItemKind::Fn(main) = &loaded.module.items[script.main].kind
+            && let Some(body) = &main.body
+        {
+            for stmt in &body.stmts {
+                match &stmt.kind {
+                    ast::StmtKind::Assign { targets, .. } => {
+                        for target in targets {
+                            if let ast::ExprKind::Path { segments } = &target.kind
+                                && let [name] = segments.as_slice()
+                            {
+                                checker.script_locals.insert(name.name);
+                            }
+                        }
+                    }
+                    ast::StmtKind::Decl { pattern, .. } | ast::StmtKind::For { pattern, .. } => {
+                        if let ast::PatternKind::Bind { name, .. } = &pattern.kind {
+                            checker.script_locals.insert(name.name);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
     checker.module_asts = modules.iter().map(|loaded| loaded.module.clone()).collect();
     checker.runtime_written = modules.iter().flat_map(|loaded| loaded.module.runtime_params.iter().map(move |id| (loaded.module.span.file, *id))).collect();
     checker.generated_files = modules.iter().filter(|loaded| loaded.foreign.is_some()).map(|loaded| loaded.module.span.file).collect();
@@ -3400,6 +3427,15 @@ struct Checker<'a> {
     /// `[DIA-22]` — the argument being checked against a declared parameter: its span, and the
     /// parameter's name and declaration, the secondary span of a mismatch on the argument.
     argument_of: Option<(Span, Symbol, Span)>,
+    /// `[FN-2a]` — the place a call's `ref mut` argument names, and the parameter it is given to.
+    ref_mut_argument: Option<(Span, Span)>,
+    /// `[FN-8]` — the names a script's statements bind: locals of the implicit `main`.
+    script_locals: HashSet<Symbol>,
+    /// `[EXP-5]` — the receiver of the method call an expression statement is: its result is not used.
+    discarded_receiver: Option<Span>,
+    /// `[EXP-5]` — a method called on a temporary as a whole statement: refused (`E2140`) once the method is
+    /// known to change its object (`decide_implicit_objects`).
+    discarded_temp_calls: Vec<(DefId, Span)>,
     /// `[FN-2a]` — the argument being checked against a declared parameter, and that parameter's
     /// declaration, for the word the call writes before it (`check_call_word`).
     word_of: Option<(Span, Span)>,
@@ -4036,6 +4072,8 @@ struct Checker<'a> {
     /// `[OWN-9]`, `[FN-2a]` (verdict 159) — the type whose constructor's arguments the next
     /// `check_bound_call_arguments` checks: they are given as `=` gives a value (`given_as_equals`).
     constructing: Option<Symbol>,
+    /// `[FN-2a]` — the argument being checked is a constructor's (`constructing` is taken for the call's own arguments).
+    constructor_arg: Option<Symbol>,
     /// `[OWN-10]` — the value a memberwise constructor is checking, and the field it is for.
     filling: Option<(Span, Symbol)>,
     /// `[GRM-15]` — a built-in `push` is checking the value it takes over.
@@ -4051,6 +4089,8 @@ struct Checker<'a> {
     /// `[FN-4]` — the function whose body is being checked, and whether it is a `static fn` (it has no
     /// object): what `this` where there is none names in its `E1010`.
     body_fn: Option<(Symbol, bool)>,
+    /// `[FN-4]` — the line that builds the value a `static fn` set through `this`, for its `E1010`.
+    static_this_help: Option<String>,
     /// The default `[TYP-8]` policy when a module has no overflow attribute.
     default_overflow: OverflowPolicy,
     /// Each source module's lexical default, selected before checking bodies.
@@ -4269,6 +4309,10 @@ impl<'a> Checker<'a> {
             debug_writer_defs: Vec::new(),
             dyn_debug_holders: Vec::new(),
             argument_of: None,
+            ref_mut_argument: None,
+            script_locals: HashSet::new(),
+            discarded_receiver: None,
+            discarded_temp_calls: Vec::new(),
             word_of: None,
             inline_fns: HashMap::new(),
             module_asts: Vec::new(),
@@ -4487,6 +4531,7 @@ impl<'a> Checker<'a> {
             static_safe_unsafe_cell_reported: false,
             ret_ty,
             constructing: None,
+            constructor_arg: None,
             filling: None,
             pushing: false,
             fn_decl: Span::DUMMY,
@@ -4512,6 +4557,7 @@ impl<'a> Checker<'a> {
             reported_defaults: HashSet::new(),
             open: OpenState::default(),
             body_fn: None,
+            static_this_help: None,
         }
     }
 
@@ -25705,10 +25751,54 @@ impl<'a> Checker<'a> {
         let saved = std::mem::replace(&mut self.some_checking, wrappers);
         let is_static = !decl.params.iter().any(|param| matches!(param.kind, ast::ParamKind::Receiver { .. }));
         let outer_fn = self.body_fn.replace((decl.name.name, is_static));
+        let built = if is_static { self.static_build_help(owner, decl, block) } else { None };
+        let outer_help = std::mem::replace(&mut self.static_this_help, built);
         let function = self.check_one_method_inner(owner, decl, block, def, attrs, span);
+        self.static_this_help = outer_help;
         self.body_fn = outer_fn;
         self.some_checking = saved;
         function
+    }
+
+    /// `[FN-4]` — "the help that builds the value is given where the function returns its own type
+    /// and sets each field it names through `this` from its parameters": `build the counter from
+    /// `k`: `return Counter(n=k)``.
+    fn static_build_help(&self, owner: Ty, decl: &ast::FnDecl, block: &ast::Block) -> Option<String> {
+        let own = self.types.display(owner);
+        let own = own.rsplit('.').next().unwrap_or(&own).to_string();
+        let returns_own = matches!(&decl.ret, Some(ast::TypeExpr { kind: ast::TypeKind::Path { segments, .. }, .. }) if segments.last().is_some_and(|last| last.name.as_str() == own));
+        if !returns_own {
+            return None;
+        }
+        let params: Vec<Symbol> = decl.params.iter().filter_map(|param| match &param.kind {
+            ast::ParamKind::Named { name, .. } => Some(name.name),
+            _ => None,
+        }).collect();
+        let mut sets: Vec<(Symbol, Symbol)> = Vec::new();
+        for stmt in &block.stmts {
+            if let ast::StmtKind::Assign { targets, op: None, value } = &stmt.kind
+                && let [target] = targets.as_slice()
+                && let ast::ExprKind::Field { base, name } = &target.kind
+                && matches!(base.kind, ast::ExprKind::SelfExpr)
+                && let ast::ExprKind::Path { segments } = &value.kind
+                && let [from] = segments.as_slice()
+                && params.contains(&from.name)
+            {
+                sets.push((name.name, from.name));
+            }
+        }
+        if sets.is_empty() {
+            return None;
+        }
+        let mut used: Vec<String> = Vec::new();
+        for (_, from) in &sets {
+            let shown = format!("`{from}`");
+            if !used.contains(&shown) {
+                used.push(shown);
+            }
+        }
+        let arguments: Vec<String> = sets.iter().map(|(field, from)| format!("{field}={from}")).collect();
+        Some(format!("build the {} from {}: `return {own}({})`", own.to_lowercase(), used.join(" and "), arguments.join(", ")))
     }
 
     fn check_one_method_inner(
@@ -27729,7 +27819,12 @@ impl<'a> Checker<'a> {
                     self.lower_jump(jump, expr.span, out);
                     return;
                 }
+                let outer_discarded = self.discarded_receiver.take();
+                if let ast::ExprKind::MethodCall { recv: receiver, .. } = &expr.kind {
+                    self.discarded_receiver = Some(receiver.span);
+                }
                 let expr = self.synth(expr);
+                self.discarded_receiver = outer_discarded;
                 // `[ERR-5]` — a `Result` is `@must_use`: one an expression statement drops is unused.
                 if self.is_result(expr.ty) {
                     self.sink.emit(
@@ -38996,11 +39091,17 @@ impl<'a> Checker<'a> {
                                     span,
                                     format!("`this` can only be used in a method, and a field default runs before `init`, when there is no object yet; set `{field}` in `init`: write `this.{field} = ...` in `fn init(...):`"),
                                 ),
-                                Some((name, true)) => Diagnostic::error(
-                                    codes::E1010,
-                                    span,
-                                    format!("`this` can only be used in a method, and `{name}` is a `static fn`, not a method"),
-                                ),
+                                Some((name, true)) => {
+                                    let static_error = Diagnostic::error(
+                                        codes::E1010,
+                                        span,
+                                        format!("`this` can only be used in a method, and `{name}` is a `static fn`, not a method"),
+                                    );
+                                    match &self.static_this_help {
+                                        Some(help) => static_error.help(help.clone()),
+                                        None => static_error,
+                                    }
+                                }
                                 Some((name, false)) => Diagnostic::error(
                                     codes::E1010,
                                     span,
@@ -39149,6 +39250,13 @@ impl<'a> Checker<'a> {
                     span,
                     format!("cannot find `{name}` in this scope"),
                 );
+                // `[FN-8]` — a script's names are locals of its implicit `main`: a function that uses one
+                // does not read a global, unlike Python.
+                if self.script_locals.contains(&name) {
+                    diagnostic = diagnostic
+                        .help(format!("`{name}` is a local of the script's implicit `main`, which no function reads: take it as a parameter, make it a `const` if it never changes, a `static`, or a `static mut` for a module variable that functions change"))
+                        .note("the statements at file scope form the body of an implicit `fn main()`, so the names they bind are its locals, not module variables [FN-8], [STA-1]");
+                }
                 for candidate in self.name_suggestions(name, segments[0].span, true) {
                     diagnostic = diagnostic.suggest(
                         format!("did you mean `{candidate}`?"),
@@ -46221,12 +46329,12 @@ impl<'a> Checker<'a> {
                 ast::AttrArg::Named { .. } => None,
             };
             let gone = match (name, attr.args.as_slice()) {
-                ("static_safe", _) => Some(("`@static_safe` is gone", "write `@no_alias_checks`: a function that keeps no check of who else holds its data".to_string())),
-                ("fp", [arg]) if word(arg).as_deref() == Some("contract") => Some(("`@fp(contract)` is gone", "write `@fp(allow_fma)`".to_string())),
+                ("static_safe", _) => Some(("`@static_safe` is gone: write `@no_alias_checks`".to_string(), "`@no_alias_checks` marks a function that keeps no check of who else holds its data".to_string())),
+                ("fp", [arg]) if word(arg).as_deref() == Some("contract") => Some(("`@fp(contract)` is gone: write `@fp(allow_fma)`".to_string(), "`@fp(allow_fma)` lets a multiply and an add fuse [TYP-9]".to_string())),
                 // `[UNS-11]` — no switch turns a safety check off, in any build: the two ways to write
                 // what such a switch was wanted for.
                 ("no_runtime_checks", _) => Some((
-                    "there is no switch that turns safety checks off, in any build; to forbid run-time alias checks here write `@no_alias_checks`; to skip the bounds check of an index known to be in range, write `xs.get_unchecked(i)` inside `unsafe:` with a `# SAFETY:` note",
+                    "there is no switch that turns safety checks off, in any build; to forbid run-time alias checks here write `@no_alias_checks`; to skip the bounds check of an index known to be in range, write `xs.get_unchecked(i)` inside `unsafe:` with a `# SAFETY:` note".to_string(),
                     "remove `@no_runtime_checks` [UNS-11]".to_string(),
                 )),
                 // `[LT-1a]`, `[LT-22]` — what a result points into is the first line's rule, narrowed by
@@ -46240,7 +46348,14 @@ impl<'a> Checker<'a> {
                         },
                         _ => "remove it: the result points into the sources its body gives it, which callers use (LT-22); `from p` narrows it to one".to_string(),
                     };
-                    Some(("`@borrows` is gone", help))
+                    let message = match args {
+                        [arg] => match word(arg) {
+                            Some(named) if !named.is_empty() => format!("`@borrows({named})` is gone: write `from {named}` after the result type"),
+                            _ => "`@borrows` is gone".to_string(),
+                        },
+                        _ => "`@borrows` is gone".to_string(),
+                    };
+                    Some((message, help))
                 }
                 _ => None,
             };
@@ -47537,6 +47652,37 @@ impl<'a> Checker<'a> {
             _ => decl.ty,
         };
         let shown = self.types.display(ty);
+        // `[FN-2a]` — `ref mut` before a name that only reads is `E3027`: the name does not say it
+        // may change what it names, so it cannot be given on as `ref mut`.
+        if let Some((at, callee_param)) = self.ref_mut_argument
+            && at == span
+            && let Some(callee) = self.declaring_function(callee_param)
+        {
+            let noun = self.value_noun(ty);
+            let own = self
+                .sources
+                .get(&self.fn_decl.file)
+                .and_then(|source| source.text.get(self.fn_decl.start as usize..self.fn_decl.end as usize))
+                .map(|written| written.trim().trim_start_matches("fn ").split('(').next().unwrap_or("").trim().to_string())
+                .filter(|written| !written.is_empty());
+            let written = self
+                .sources
+                .get(&declaration.file)
+                .and_then(|source| source.text.get(declaration.start as usize..declaration.end as usize))
+                .filter(|text| !text.is_empty())
+                .map_or_else(|| format!("{name}: {shown}"), str::to_string);
+            let help = match own {
+                Some(own) => format!("take it as `ref mut {written}` on `{own}`'s first line"),
+                None => format!("take it as `ref mut {written}`"),
+            };
+            self.sink.emit_classified(
+                Diagnostic::error(codes::E3027, span, format!("`{name}` only reads the caller's {noun}, so it cannot be given to `{callee}` as `ref mut`"))
+                    .secondary(declaration, format!("`{name}` is declared here"))
+                    .help(help)
+                    .note("a name that does not say `ref mut` never changes what it names [FN-2a], [BRW-15]"),
+            );
+            return true;
+        }
         // D-823 (B2) — the whole parameter given a new value is Python's rebinding of a name: the
         // value it means is a new local's, and the caller's stays as it was.
         let rebinding = match &place.kind {
@@ -52608,7 +52754,16 @@ impl<'a> Checker<'a> {
             return;
         }
         if let Some(error) = error {
-            self.check_formattable(error, name, "reporting `main`'s error");
+            // `[FN-8]` — an `Err` returned from `main` is printed with `Display`: an `E` without
+            // one is `E2040`, an unmet bound (ODR-101), whatever else it implements.
+            if !self.has_display(error) {
+                let shown = self.types.display(error);
+                self.sink.emit(
+                    Diagnostic::error(codes::E2040, name, format!("`{shown}` does not implement `Display`, which reporting `main`'s error needs"))
+                        .help(format!("implement `Display` for `{shown}`: `extend {shown} implements Display:`"))
+                        .note("an `Err` returned from `main` is printed with `Display` to standard error [FN-8]"),
+                );
+            }
         }
     }
 
@@ -60081,6 +60236,17 @@ impl<'a> Checker<'a> {
                 return receiver;
             }
             if !is_place(&receiver.kind) && !matches!(self.types.kind(receiver.ty), TyKind::Span { mutable: true, .. }) {
+                // `[EXP-5]` — a method that may change its object, called on a temporary that ends with
+                // the line, is `E2140` when that change is the call's only effect (its result unused).
+                // A temporary that holds a view or a handle (`q.commands()`, whose `add` records into the queue it
+                // views) changes what it points at: the change is not lost.
+                if self.discarded_receiver == Some(span)
+                    && matches!(receiver.kind, ExprKind::Call { .. })
+                    && !self.types.may_be_view(receiver.ty)
+                    && !matches!(self.types.kind(receiver.ty), TyKind::Class(_) | TyKind::ClassInterface(_) | TyKind::Ref { .. })
+                {
+                    self.discarded_temp_calls.push((callee, span));
+                }
                 let ty = self.types.intern(TyKind::Ref { mutable: true, inner: receiver.ty });
                 return Expr { ty, kind: ExprKind::Ref { place: Box::new(receiver), mutable: true }, span };
             }
@@ -60571,9 +60737,33 @@ impl<'a> Checker<'a> {
                 // A generic body is checked once per instance; report once.
                 && self.reported_defaults.insert(default.span)
             {
+                let mode = params.iter().find(|(n, ..)| *n == name).map_or(Mode::Borrow, |(_, _, mode, _)| *mode);
+                // `[FN-5]` — a default is the argument the caller did not write, and it takes no word:
+                // on a `ref mut` parameter it would be a temporary that ends with the call (`E3027`).
+                if mode == Mode::Mut {
+                    let function = decl.name.name;
+                    let noun = self.value_noun(ty);
+                    let written = self.written_line(param.span).unwrap_or_default();
+                    let plain = written.trim_start_matches("const ").trim_start_matches("ref mut ").to_string();
+                    self.sink.emit(
+                        Diagnostic::error(codes::E3027, default.span, format!("`ref mut {name}` names the caller's place, and a default would be a temporary that ends with the call"))
+                            .help(format!("take the {noun} over, `owns {plain}`, or let the caller pass one: `{function}(ref mut {name})`"))
+                            .note("a default is written only for a plain or an `owns` parameter [FN-5]"),
+                    );
+                    if let Some(local) = self.lookup(name) {
+                        earlier.insert(name, local);
+                    }
+                    continue;
+                }
                 let scopes = std::mem::replace(&mut self.scopes, vec![earlier.clone()]);
                 let locals = self.locals.len();
-                self.check_expr(default, ty);
+                // An `owns` parameter's default is handed over as an argument is: reading an earlier
+                // parameter there is a hand-over of what the function only reads (`E3013`).
+                if mode == Mode::Owned {
+                    self.check_argument_by(default, ty, Mode::Owned, false);
+                } else {
+                    self.check_expr(default, ty);
+                }
                 self.locals.truncate(locals);
                 self.scopes = scopes;
             }
@@ -60777,7 +60967,9 @@ impl<'a> Checker<'a> {
             // `[DIA-22]` — a mismatch points at the parameter too.
             let outer = self.argument_of.replace((arg.value.span, name, declared));
             let word = self.word_of.replace((arg.value.span, declared));
+            let constructor_arg = std::mem::replace(&mut self.constructor_arg, constructing);
             let value = self.check_argument_by(&arg.value, param_ty, mode, by_address);
+            self.constructor_arg = constructor_arg;
             let value = match constructing {
                 Some(type_name) if mode == Mode::Owned => self.given_as_equals(type_name, &arg.value, value),
                 _ => value,
@@ -60833,7 +61025,10 @@ impl<'a> Checker<'a> {
             self.note_plain_argument(declared, arg.span);
         }
         // The words are the program's: a call or an argument the compiler makes itself has none.
-        if !self.written_call || arg.id == ast::NodeId::DUMMY || self.generated_files.contains(&arg.span.file) {
+        // `[FN-2a]` — a constructor's argument takes no `owns` (`[OWN-9]`), but `ref mut` is written
+        // before one for an `init`'s `ref mut` parameter, as at every call.
+        let constructor_ref_mut = self.constructor_arg.is_some() && mode == Mode::Mut;
+        if !(self.written_call || constructor_ref_mut) || arg.id == ast::NodeId::DUMMY || self.generated_files.contains(&arg.span.file) {
             return;
         }
         let written = match &arg.kind {
@@ -60879,6 +61074,11 @@ impl<'a> Checker<'a> {
         let diagnostic = match (mode, written) {
             (Mode::Mut, None) if a_place => {
                 let (Some(function), Some(name), Some(first)) = (self.declaring_function(declared), self.written_line(arg.span), self.written_line(declared)) else { return };
+                // A constructor's `init` is called by the type's name.
+                let function = match self.constructor_arg {
+                    Some(type_name) if function == "init" => type_name.to_string(),
+                    _ => function,
+                };
                 let Some(line) = self.line_with(arg.span, &format!("ref mut {name}")) else { return };
                 // `[CLI-20]` — a 0.9.10 `mut x: T` parameter is `ref mut x: T` "with `ref mut` written
                 // before each argument given to it".
@@ -60934,14 +61134,21 @@ impl<'a> Checker<'a> {
         // An argument written over several lines (a long lambda) is named by its place in the call.
         let mut diagnostic = match self.written_line(given) {
             Some(name) => {
-                let mut diagnostic = Diagnostic::error(codes::E3028, arg.span, format!("`{function}` takes `{name}` over{first}"));
+                // `[FN-2a]` — a computed argument is named "this argument", and the help says why
+                // the brackets.
+                let mut diagnostic = if compound {
+                    Diagnostic::error(codes::E3028, arg.span, format!("`{function}` takes this argument over{first}"))
+                } else {
+                    Diagnostic::error(codes::E3028, arg.span, format!("`{function}` takes `{name}` over{first}"))
+                };
                 let fixed = match name.strip_prefix("owns ") {
                     Some(rest) if compound => format!("owns ({rest})"),
                     _ if compound => format!("owns ({name})"),
                     _ => format!("owns {name}"),
                 };
                 if let Some(line) = self.line_with(arg.span, &fixed) {
-                    diagnostic = diagnostic.help(format!("say so at the call: `{line}`"));
+                    let how = if compound { "write `owns` before it, in brackets: " } else { "" };
+                    diagnostic = diagnostic.help(format!("say so at the call: {how}`{line}`"));
                 }
                 if (a_place || written.is_some()) && let Some(copy) = self.line_with(arg.span, &format!("owns copy of {name}")) {
                     diagnostic = diagnostic.help(format!("to keep `{name}`, give it a copy: `{copy}`"));
@@ -61066,6 +61273,7 @@ impl<'a> Checker<'a> {
     /// `check_argument` for a parameter whose passing the callee decides
     /// (`param_by_address`, D-284).
     fn check_argument_by(&mut self, arg: &ast::Expr, param_ty: Ty, mode: Mode, by_address: bool) -> Expr {
+        let declared_here = self.word_of.filter(|(argument, _)| *argument == arg.span).map(|(_, declared)| declared);
         if let Some((argument, declared)) = self.word_of
             && argument == arg.span
         {
@@ -61128,7 +61336,10 @@ impl<'a> Checker<'a> {
         // `[FN-2a]` — the call's `ref mut` says how the argument is passed; what a `ref mut`
         // parameter borrows is the place under it.
         let arg = match &arg.kind {
-            ast::ExprKind::RefOf { mutable: true, place, .. } => &**place,
+            ast::ExprKind::RefOf { mutable: true, place, .. } => {
+                self.ref_mut_argument = declared_here.map(|declared| (place.span, declared));
+                &**place
+            }
             _ => arg,
         };
         // `[SPN-1]`/`[SPN-3]` — a `MutSpan[T]` **is** the mutable access: it

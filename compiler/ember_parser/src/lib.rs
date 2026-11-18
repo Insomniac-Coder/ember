@@ -5,7 +5,7 @@
 //! than three for the same region, so a single typo cannot bury the real
 //! error under a cascade.
 
-use ember_ast::{Attribute, Block, Dispatch, FnDecl, Ident, Item, ItemKind, Module, NodeId, NodeIds, Script, Stmt, Visibility};
+use ember_ast::{Arg, Attribute, Block, Dispatch, Expr, ExprKind, FnDecl, GenericArg, Ident, Item, ItemKind, Jump, Module, NodeId, NodeIds, Script, Stmt, StmtKind, TypeExpr, TypeKind, Visibility};
 use ember_diag::{Code, Diagnostic, Sink, codes};
 use ember_lexer::{Kw, Punct, Token, TokenKind};
 use ember_span::{FileId, Span, Symbol};
@@ -64,6 +64,11 @@ pub(crate) struct Parser<'a> {
     carried_attrs: Vec<Attribute>,
     /// `[GRM-28]` — see `Module::local_generators`.
     local_generators: bool,
+    /// `[FN-8]` — a file-scope statement is being parsed (a script's), how deep in lambdas and local
+    /// functions inside it, and whether a `?` stood in the implicit `main` itself.
+    script_scope: bool,
+    script_nesting: u32,
+    script_try: bool,
     /// `[DIA-21]` P11 — whether the module imports `std.fs`, and where an import line goes: after
     /// the last import (`true`) or before the first statement or item (`false`).
     fs_imported: bool,
@@ -113,6 +118,9 @@ impl<'a> Parser<'a> {
             safety_attribute: false,
             carried_attrs: Vec::new(),
             local_generators: false,
+            script_scope: false,
+            script_nesting: 0,
+            script_try: false,
             fs_imported: false,
             import_at: None,
             no_send_suffix: false,
@@ -721,7 +729,10 @@ impl<'a> Parser<'a> {
             self.python_def();
             if !self.at_item_start() {
                 let before = self.pos;
-                match self.parse_statement() {
+                self.script_scope = true;
+                let parsed = self.parse_statement();
+                self.script_scope = false;
+                match parsed {
                     Some(stmt) => {
                         placement.push(items.len());
                         script.push(stmt);
@@ -739,7 +750,12 @@ impl<'a> Parser<'a> {
             match self.parse_item() {
                 Some(item) => items.push(item),
                 // `[GRM-20]` — attributes before a file-scope statement, which is not an item.
-                None if !self.carried_attrs.is_empty() => match self.parse_statement() {
+                None if !self.carried_attrs.is_empty() => match {
+                    self.script_scope = true;
+                    let parsed = self.parse_statement();
+                    self.script_scope = false;
+                    parsed
+                } {
                     Some(stmt) => {
                         placement.push(items.len());
                         script.push(stmt);
@@ -765,6 +781,25 @@ impl<'a> Parser<'a> {
             let span = first.to(last);
             let name = Ident { name: Symbol::intern("main"), span: first };
             let body = Block { id: self.next_id(), stmts: script, span };
+            // `[FN-8]` — a statement that uses `?` makes the implicit `main` return
+            // `Result[void, AnyError]`, which ends with `Ok(())`.
+            let mut body = body;
+            let ret = self.script_try.then(|| {
+                let ident = |name: &str| Ident { name: Symbol::intern(name), span };
+                let path_type = |this: &mut Self, name: &str, args: Vec<GenericArg>| TypeExpr {
+                    id: this.next_id(),
+                    kind: TypeKind::Path { segments: vec![ident(name)], args },
+                    span,
+                };
+                let void = path_type(self, "void", Vec::new());
+                let any = path_type(self, "AnyError", Vec::new());
+                let unit = Expr { id: self.next_id(), kind: ExprKind::Tuple(Vec::new()), span };
+                let ok = Expr { id: self.next_id(), kind: ExprKind::Path { segments: vec![ident("Ok")] }, span };
+                let call = Expr { id: self.next_id(), kind: ExprKind::Call { callee: Box::new(ok), args: vec![Arg { name: None, value: unit, span }] }, span };
+                let done = Expr { id: self.next_id(), kind: ExprKind::Jump(Jump::Return(Some(Box::new(call)))), span };
+                body.stmts.push(Stmt { id: self.next_id(), attrs: Vec::new(), kind: StmtKind::Expr(done), span });
+                path_type(self, "Result", vec![GenericArg::Type(void), GenericArg::Type(any)])
+            });
             let decl = FnDecl {
                 name,
                 is_unsafe: false,
@@ -776,7 +811,7 @@ impl<'a> Parser<'a> {
                 dispatch: Dispatch::Static,
                 generics: Vec::new(),
                 params: Vec::new(),
-                ret: None,
+                ret,
                 from: None,
                 where_clause: Vec::new(),
                 body: Some(body),

@@ -142,9 +142,9 @@ pub(crate) type R<T> = Result<T, Stop>;
 /// signed.
 pub(crate) fn bounds_message(index: u64, len: u64) -> String {
     if index > i64::MAX as u64 {
-        format!("index {} is out of bounds for a length of {len}", index as i64)
+        format!("index {} is out of bounds for a length of {len}; use .get(i) for an Option", index as i64)
     } else {
-        format!("index {index} is out of bounds for a length of {len}")
+        format!("index {index} is out of bounds for a length of {len}; use .get(i) for an Option")
     }
 }
 

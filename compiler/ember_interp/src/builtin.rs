@@ -356,7 +356,7 @@ impl Interp<'_, '_> {
                 let c = u64_of(&self.operand(&args[2], Some(self.common.char_))?) as u32;
                 let len = self.mem.read_u64(vec + 8)?;
                 if at > len {
-                    return self.panic(&format!("index {at} is out of bounds for a length of {len}"), span);
+                    return self.panic(&format!("index {at} is out of bounds for a length of {len}; use .get(i) for an Option"), span);
                 }
                 self.string_boundary(vec, at, span)?;
                 let bytes = crate::text::encode_char(c);
@@ -373,7 +373,7 @@ impl Interp<'_, '_> {
                 let at = self.word(&args[1])?;
                 let (ptr, len) = (self.mem.read_u64(vec)?, self.mem.read_u64(vec + 8)?);
                 if at >= len {
-                    return self.panic(&format!("index {at} is out of bounds for a length of {len}"), span);
+                    return self.panic(&format!("index {at} is out of bounds for a length of {len}; use .get(i) for an Option"), span);
                 }
                 self.string_boundary(vec, at, span)?;
                 let rest = self.mem.read(ptr + at, len - at)?.to_vec();
