@@ -72,7 +72,7 @@ impl<'a> FnCx<'_, 'a> {
                 self.visit(&target, field, STRONG, None, false);
             }
             // `[RC-1]`, `[WK-11]` — an owner is a strong edge to the block it points at, a link a weak one.
-            TyKind::Link { kind: ember_types::LinkKind::Weakref, .. } => {
+            TyKind::Link { kind: ember_types::LinkKind::Weakref | ember_types::LinkKind::WeakrefThreadShared, .. } => {
                 let target = self.load(Sc::Ptr, at, 8);
                 self.visit(&target, field, WEAK, None, true);
             }

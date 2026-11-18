@@ -566,7 +566,7 @@ impl<'a> FnCx<'_, 'a> {
             TyKind::Class(_) | TyKind::ClassInterface(_) => self.drop_at(ptr, align, ty)?,
             // `[WK-11]` — a link's end subtracts one from its target's weak count; `[RC-1]` an owner's
             // end one from its count.
-            TyKind::Link { kind: ember_types::LinkKind::Weakref, .. } => {
+            TyKind::Link { kind: ember_types::LinkKind::Weakref | ember_types::LinkKind::WeakrefThreadShared, .. } => {
                 let handle = self.load(Sc::Ptr, ptr, align.min(8));
                 self.call_rt("weak_release", vec![Val::Imm(Sc::Ptr, handle)], None);
             }

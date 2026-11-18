@@ -830,7 +830,7 @@ impl<'a> FnCx<'_, 'a> {
                 let handle = self.pointer(&args[0])?;
                 let TyKind::Link { target, .. } = self.m.ty.kind(*link).clone() else { return unsupported("a link builtin without a link") };
                 match kind {
-                    ember_types::LinkKind::Weakref => self.call_rt("weak_retain", vec![Val::Imm(Sc::Ptr, handle.clone())], None),
+                    ember_types::LinkKind::Weakref | ember_types::LinkKind::WeakrefThreadShared => self.call_rt("weak_retain", vec![Val::Imm(Sc::Ptr, handle.clone())], None),
                     _ => self.retain_handle(&handle, target),
                 }
                 self.store_result(dest, &handle, Sc::Ptr, false)

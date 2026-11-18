@@ -596,7 +596,7 @@ impl Checker<'_> {
         loop {
             match *self.types.kind(ty) {
                 TyKind::Ref { inner, .. } => ty = inner,
-                TyKind::Link { kind, target } if kind != ember_types::LinkKind::Weakref => ty = target,
+                TyKind::Link { kind, target } if !kind.is_weak() => ty = target,
                 _ => return ty,
             }
         }

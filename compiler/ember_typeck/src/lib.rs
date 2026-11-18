@@ -15633,6 +15633,11 @@ impl<'a> Checker<'a> {
             // `[TYP-45]`, `[RC-1]`, `[WK-11]` — M4 slice A: owners and links on one thread
             // (`M4-plan.md`), of a class object or of a value in a block of its own (D4, D5).
             ast::TypeKind::Link { kind, inner } => {
+                // `[WK-11]` — `weakref thread_shared T` is a type of its own.
+                let (shared_link, inner): (bool, &ast::TypeExpr) = match (kind, &inner.kind) {
+                    (ast::LinkKind::Weakref, ast::TypeKind::Link { kind: ast::LinkKind::ThreadShared, inner: held }) => (true, held),
+                    _ => (false, inner),
+                };
                 let target = self.resolve_type(inner);
                 if target == self.common.error {
                     return target;
@@ -15640,6 +15645,7 @@ impl<'a> Checker<'a> {
                 let kind = match kind {
                     ast::LinkKind::Shares => ember_types::LinkKind::Shares,
                     ast::LinkKind::SharesMut => ember_types::LinkKind::SharesMut,
+                    ast::LinkKind::Weakref if shared_link => ember_types::LinkKind::WeakrefThreadShared,
                     ast::LinkKind::Weakref => ember_types::LinkKind::Weakref,
                     ast::LinkKind::ThreadShared => ember_types::LinkKind::ThreadShared,
                     other => {
@@ -15649,7 +15655,7 @@ impl<'a> Checker<'a> {
                 };
                 if matches!(self.types.kind(target), TyKind::Dyn { .. }) {
                     // `[WK-16]` — the kind of the object is known only while the program runs.
-                    if kind == ember_types::LinkKind::Weakref {
+                    if kind.is_weak() {
                         self.refuse_link_to_a_kind_known_at_run_time(target, ty.span, None);
                     } else {
                         self.error(codes::E0900, ty.span, format!("`{} dyn` is not built by this compiler yet", kind.word()));
@@ -21060,7 +21066,7 @@ impl<'a> Checker<'a> {
     /// pointer to the value as its one logical field (`TypeTable::link_payload`).
     fn link_of(&mut self, kind: ember_types::LinkKind, target: Ty) -> Ty {
         if !matches!(self.types.kind(target), TyKind::Class(_)) {
-            self.counted_of(target, kind == ember_types::LinkKind::ThreadShared);
+            self.counted_of(target, matches!(kind, ember_types::LinkKind::ThreadShared | ember_types::LinkKind::WeakrefThreadShared));
             self.types.intern(TyKind::Ptr { mutable: true, inner: target });
         }
         self.types.intern(TyKind::Link { kind, target })
@@ -21411,9 +21417,24 @@ impl<'a> Checker<'a> {
     fn synth_link_expecting(&mut self, kind: ast::LinkKind, value: &ast::Expr, wanted: Option<Ty>, span: Span) -> Expr {
         use ember_types::LinkKind;
         let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        // `[OWN-13]` — `weakref thread_shared this` is the one place the two words stand before a value:
+        // anywhere else the link's type comes from what `x` is.
+        let mut shared_this = false;
+        let mut value = value;
+        if matches!(kind, ast::LinkKind::Weakref)
+            && let ast::ExprKind::Link { kind: ast::LinkKind::ThreadShared, value: held } = &unparenthesized(value).kind
+        {
+            if !matches!(unparenthesized(held).kind, ast::ExprKind::SelfExpr) {
+                self.refuse_both_link_words(held, span);
+                return error;
+            }
+            shared_this = true;
+            value = held;
+        }
         let kind = match kind {
             ast::LinkKind::Shares => LinkKind::Shares,
             ast::LinkKind::SharesMut => LinkKind::SharesMut,
+            ast::LinkKind::Weakref if shared_this => LinkKind::WeakrefThreadShared,
             ast::LinkKind::Weakref => LinkKind::Weakref,
             ast::LinkKind::ThreadShared => LinkKind::ThreadShared,
             other => {
@@ -21450,38 +21471,44 @@ impl<'a> Checker<'a> {
         };
         let place = self.written_line(written.span).unwrap_or_else(|| "it".to_string());
         let new_value = !is_place(&source.kind);
+        // `[OWN-13]` — a `weakref T` link counts on this thread alone, so it is made only to what no
+        // `thread_shared` value reaches.
+        if kind == LinkKind::Weakref
+            && !matches!(self.types.kind(source.ty), TyKind::Link { kind: LinkKind::ThreadShared | LinkKind::WeakrefThreadShared, .. })
+            && self.reached_through_thread_shared(&source)
+        {
+            self.error(codes::E7015, span, format!("`{place}` is reached through a value threads share, so another thread may end it, and `weakref {place}` would count its links on this thread alone; hold it `thread_shared`"));
+            return error;
+        }
         match *self.types.kind(source.ty) {
-            // An owner makes another owner or a link; a link makes only another link.
-            TyKind::Link { kind: LinkKind::Weakref, target } => {
-                if kind != LinkKind::Weakref {
+            // An owner makes another owner or a link; a link makes only another link, of its own kind.
+            TyKind::Link { kind: held @ (LinkKind::Weakref | LinkKind::WeakrefThreadShared), target } => {
+                if !kind.is_weak() {
                     // `[WK-16]` — an owner of a link's target is made from the opened name.
                     let short = self.link_short_name(target);
                     self.error(codes::E2020, written.span, format!("`{place}` may be gone; open it: `if {place} exists as {short}:`"));
                     return error;
                 }
-                let link = self.link_of(kind, target);
-                Expr { ty: link, kind: ExprKind::Builtin { which: Builtin::LinkMake { kind, link }, args: vec![source] }, span }
+                let link = self.link_of(held, target);
+                Expr { ty: link, kind: ExprKind::Builtin { which: Builtin::LinkMake { kind: held, link }, args: vec![source] }, span }
             }
             TyKind::Link { kind: owner, target } => {
                 if kind == LinkKind::SharesMut && !self.may_change_through_owner(&source, owner) {
                     self.refuse_changing_owner_of_reader(written, &source, target, span);
                     return error;
                 }
-                // `[WK-11]` — a link to a `thread_shared` value is a type of its own, not built yet.
-                if kind == LinkKind::Weakref && owner == LinkKind::ThreadShared {
-                    self.error(codes::E0900, span, "`weakref` of a `thread_shared` value (`weakref thread_shared T`) is not built by this compiler yet");
-                    return error;
-                }
                 // `[RC-1]`, `[THR-1]` — one kind of counting for one value.
-                if (kind == LinkKind::ThreadShared) != (owner == LinkKind::ThreadShared) && kind != LinkKind::Weakref {
+                if (kind == LinkKind::ThreadShared) != (owner == LinkKind::ThreadShared) && !kind.is_weak() {
                     self.refuse_mixed_counting(kind, &place, &source, span);
                     return error;
                 }
+                // `[WK-11]` — `weakref x` of a `thread_shared` value is a `weakref thread_shared T`.
+                let kind = if kind == LinkKind::Weakref && owner == LinkKind::ThreadShared { LinkKind::WeakrefThreadShared } else { kind };
                 let link = self.link_of(kind, target);
                 Expr { ty: link, kind: ExprKind::Builtin { which: Builtin::LinkMake { kind, link }, args: vec![source] }, span }
             }
             TyKind::Class(_) => {
-                if kind == LinkKind::Weakref {
+                if kind.is_weak() {
                     if new_value {
                         self.refuse_link_to_a_new_value(written, source.ty, span);
                         return error;
@@ -21517,6 +21544,37 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// `[OWN-13]` — `weakref thread_shared x` of anything but `this`: `E0109` where `x` says it already,
+    /// `E7017` where `x` was not made so.
+    fn refuse_both_link_words(&mut self, value: &ast::Expr, span: Span) {
+        let place = self.written_line(value.span).unwrap_or_else(|| "it".to_string());
+        let ty = self.synth_quiet_type(value);
+        let shared = matches!(self.types.kind(ty), TyKind::Link { kind: ember_types::LinkKind::ThreadShared, .. });
+        if shared {
+            self.error(codes::E0109, span, format!("`{place}` is `thread_shared`, so a link to it is a `weakref thread_shared` link without the word; write `w = weakref {place}`"));
+        } else {
+            self.error(codes::E7017, span, format!("`{place}` was not created `thread_shared`, so no link to a shared value can name it; write `w = weakref {place}`, or create it shared: `{place} = thread_shared ...`"));
+        }
+    }
+
+    /// Whether the place is reached through a `thread_shared` owner.
+    fn reached_through_thread_shared(&self, place: &Expr) -> bool {
+        let mut current = place;
+        loop {
+            current = match &current.kind {
+                ExprKind::Field { base, .. } | ExprKind::Index { base, .. } => {
+                    if matches!(self.types.kind(base.ty), TyKind::Link { kind: ember_types::LinkKind::ThreadShared, .. }) {
+                        return true;
+                    }
+                    base
+                }
+                ExprKind::Deref(inner) => inner,
+                ExprKind::Ref { place, .. } => place,
+                _ => return false,
+            };
+        }
+    }
+
     /// `[THR-1]` (`E7015`) — a `thread_shared` value is `Send` and `ThreadShared`, since any thread may hold
     /// it and several may read it at once: refused where it is made, naming the part that is not.
     fn refuse_unshareable(&mut self, ty: Ty, span: Span) -> bool {
@@ -21530,7 +21588,7 @@ impl<'a> Checker<'a> {
             Some((owner, field, part)) => {
                 let named = self.types.display(part);
                 match *self.types.kind(part) {
-                    TyKind::Link { kind: LinkKind::Weakref, .. } => format!("`{owner}.{field}` is a `{named}` link, which stays on one thread, and a `thread_shared {shown}` may be reached from any thread; keep what it needs as a copy"),
+                    TyKind::Link { kind: LinkKind::Weakref | LinkKind::WeakrefThreadShared, .. } => format!("`{owner}.{field}` is a `{named}` link, which stays on one thread, and a `thread_shared {shown}` may be reached from any thread; keep what it needs as a copy"),
                     TyKind::Link { target, .. } => format!("`{owner}.{field}` is a `{named}` owner, which stays on one thread, and a `thread_shared {shown}` may be reached from any thread; write `{field}: thread_shared {}` in `{owner}`, or keep a copy of what it needs", self.types.display(target)),
                     _ if self.is_send(part) => format!("`{owner}.{field}` is a `{named}`, which several threads may not read at once, and a `thread_shared {shown}` may be read from any thread; write `{field}: Mutex[{named}]` in `{owner}`"),
                     _ => format!("`{owner}.{field}` is a `{named}`, which stays on one thread, and a `thread_shared {shown}` may be reached from any thread; keep what it needs as a copy"),
@@ -21630,7 +21688,7 @@ impl<'a> Checker<'a> {
             return None;
         }
         let link_ty = self.synth_quiet_type(recv);
-        let TyKind::Link { kind: ember_types::LinkKind::Weakref, target } = *self.types.kind(link_ty) else { return None };
+        let TyKind::Link { kind: ember_types::LinkKind::Weakref | ember_types::LinkKind::WeakrefThreadShared, target } = *self.types.kind(link_ty) else { return None };
         let place = self.written_line(recv.span).unwrap_or_else(|| "the link".to_string());
         let text = self.sources.get(&span.file).map(|source| source.text.clone())?;
         let is_match = text.get(span.start as usize..).is_some_and(|rest| rest.starts_with("match"));
@@ -21888,16 +21946,23 @@ impl<'a> Checker<'a> {
     fn open_link(&mut self, link: Expr) -> Expr {
         // A view of a link (a loop's name over a list of links, a `ref` parameter) opens the link.
         let link = match *self.types.kind(link.ty) {
-            TyKind::Ref { inner, .. } if matches!(self.types.kind(inner), TyKind::Link { kind: ember_types::LinkKind::Weakref, .. }) => {
+            TyKind::Ref { inner, .. } if matches!(self.types.kind(inner), TyKind::Link { kind: ember_types::LinkKind::Weakref | ember_types::LinkKind::WeakrefThreadShared, .. }) => {
                 let span = link.span;
                 Expr { ty: inner, kind: ExprKind::Deref(Box::new(link)), span }
             }
             _ => link,
         };
-        let TyKind::Link { kind: ember_types::LinkKind::Weakref, target } = *self.types.kind(link.ty) else {
+        let TyKind::Link { kind: weak @ (ember_types::LinkKind::Weakref | ember_types::LinkKind::WeakrefThreadShared), target } = *self.types.kind(link.ty) else {
             return link;
         };
-        let opened = if self.types.link_payload(link.ty).is_some() { self.link_of(ember_types::LinkKind::Shares, target) } else { target };
+        // `[WK-11]` — the name opened from a `weakref thread_shared T` reads as a `thread_shared T`.
+        let opened = if weak == ember_types::LinkKind::WeakrefThreadShared {
+            self.link_of(ember_types::LinkKind::ThreadShared, target)
+        } else if self.types.link_payload(link.ty).is_some() {
+            self.link_of(ember_types::LinkKind::Shares, target)
+        } else {
+            target
+        };
         let option = self.option_of(opened);
         let TyKind::Enum(option_id) = *self.types.kind(option) else { return link };
         let span = link.span;
@@ -38712,7 +38777,7 @@ impl<'a> Checker<'a> {
             }
         }
         // `[WK-16]`, `[TYP-45]` — a link used as its target without opening it.
-        if let TyKind::Link { kind: ember_types::LinkKind::Weakref, target } = *self.types.kind(expr.ty)
+        if let TyKind::Link { kind: ember_types::LinkKind::Weakref | ember_types::LinkKind::WeakrefThreadShared, target } = *self.types.kind(expr.ty)
             && (target == expected || matches!(*self.types.kind(expected), TyKind::Ref { inner, .. } if inner == target))
         {
             let place = self.written_line(expr.span).unwrap_or_else(|| "the link".to_string());
@@ -38721,7 +38786,7 @@ impl<'a> Checker<'a> {
             return Expr { ty: self.common.error, kind: ExprKind::Error, span: expr.span };
         }
         // `[WK-16]`, `[TYP-45]` — an object stored into a `weakref` place without the word.
-        if let TyKind::Link { kind: ember_types::LinkKind::Weakref, target } = *self.types.kind(expected)
+        if let TyKind::Link { kind: ember_types::LinkKind::Weakref | ember_types::LinkKind::WeakrefThreadShared, target } = *self.types.kind(expected)
             && (expr.ty == target || matches!(*self.types.kind(expr.ty), TyKind::Link { kind: ember_types::LinkKind::Shares | ember_types::LinkKind::SharesMut | ember_types::LinkKind::ThreadShared, target: held } if held == target))
         {
             let value = self.written_line(expr.span).unwrap_or_else(|| "it".to_string());
@@ -40059,7 +40124,7 @@ impl<'a> Checker<'a> {
                     // `[WK-11]` — a link may hold no target (`parent: weakref Node = None`): a null
                     // pointer, which its end gives back nothing for.
                     if let Some(wanted) = expected
-                        && matches!(self.types.kind(wanted), TyKind::Link { kind: ember_types::LinkKind::Weakref, .. })
+                        && matches!(self.types.kind(wanted), TyKind::Link { kind: ember_types::LinkKind::Weakref | ember_types::LinkKind::WeakrefThreadShared, .. })
                     {
                         return Expr { ty: wanted, kind: ExprKind::Builtin { which: Builtin::LinkNone { link: wanted }, args: Vec::new() }, span };
                     }
@@ -40819,7 +40884,7 @@ impl<'a> Checker<'a> {
             {
                 // `[TYP-45]` — a link that holds no target is `None`, of the link type the place
                 // has; D-434 — an `Option[weakref T]` place's is the `Option`'s `None`.
-                let link = |checker: &Self, ty: Ty| matches!(checker.types.kind(ty), TyKind::Link { kind: ember_types::LinkKind::Weakref, .. });
+                let link = |checker: &Self, ty: Ty| matches!(checker.types.kind(ty), TyKind::Link { kind: ember_types::LinkKind::Weakref | ember_types::LinkKind::WeakrefThreadShared, .. });
                 let weak = expected.and_then(|ty| match link(self, ty) {
                     true => Some(ty),
                     false => self
@@ -42373,10 +42438,15 @@ impl<'a> Checker<'a> {
             // `[TYP-45]` — and so do `shares T`, `shares mut T` and `weakref T` (`Array[shares mut
             // Token]()`).
             ast::ExprKind::Link { kind, value } => {
+                let (shared_link, value): (bool, &ast::Expr) = match (kind, &value.kind) {
+                    (ast::LinkKind::Weakref, ast::ExprKind::Link { kind: ast::LinkKind::ThreadShared, value: held }) => (true, held),
+                    _ => (false, value),
+                };
                 let target = self.type_from_expr(value);
                 let kind = match kind {
                     ast::LinkKind::Shares => ember_types::LinkKind::Shares,
                     ast::LinkKind::SharesMut => ember_types::LinkKind::SharesMut,
+                    ast::LinkKind::Weakref if shared_link => ember_types::LinkKind::WeakrefThreadShared,
                     ast::LinkKind::Weakref => ember_types::LinkKind::Weakref,
                     ast::LinkKind::ThreadShared => ember_types::LinkKind::ThreadShared,
                     other => {
@@ -44587,7 +44657,7 @@ impl<'a> Checker<'a> {
             return false;
         }
         match self.types.kind(ty) {
-            TyKind::Link { kind, .. } => *kind != ember_types::LinkKind::ThreadShared,
+            TyKind::Link { kind, .. } => !matches!(kind, ember_types::LinkKind::ThreadShared | ember_types::LinkKind::WeakrefThreadShared),
             TyKind::Class(id) => (0..self.types.class_field_count(*id)).filter_map(|index| self.types.class_field_at(*id, index)).any(|field| self.holds_one_thread_owner(field.ty, seen)),
             TyKind::Struct(id) => self.types.struct_def(*id).fields.iter().any(|field| self.holds_one_thread_owner(field.ty, seen)),
             TyKind::Enum(id) => self.types.enum_def(*id).variants.iter().flat_map(|variant| &variant.fields).any(|field| self.holds_one_thread_owner(field.ty, seen)),
@@ -45646,7 +45716,7 @@ impl<'a> Checker<'a> {
         // and `Debug` as `T` does.
         let viewed = match *self.types.kind(ty) {
             TyKind::Ref { mutable: false, inner } => Some(inner),
-            TyKind::Link { kind, target } if kind != ember_types::LinkKind::Weakref => Some(target),
+            TyKind::Link { kind, target } if !kind.is_weak() => Some(target),
             _ => None,
         };
         if let Some(inner) = viewed
@@ -50741,7 +50811,7 @@ impl<'a> Checker<'a> {
         // `[RC-1]` — an owner's methods are its object's.
         receiver = self.read_link_through(receiver);
         // `[WK-12]`, `[WK-16]` — a link is opened before its target is used; `upgrade` is gone.
-        if let TyKind::Link { kind: ember_types::LinkKind::Weakref, target } = *self.types.kind(receiver.ty) {
+        if let TyKind::Link { kind: ember_types::LinkKind::Weakref | ember_types::LinkKind::WeakrefThreadShared, target } = *self.types.kind(receiver.ty) {
             let place = self.written_line(receiver.span).unwrap_or_else(|| "the link".to_string());
             let short = self.link_short_name(target);
             let open = format!("if {place} exists as {short}:");
@@ -52384,7 +52454,7 @@ impl<'a> Checker<'a> {
         // `[RC-1]` — an owner reads as its object.
         base = self.read_link_through(base);
         // `[WK-16]` — a link is opened before its target is used.
-        if let TyKind::Link { kind: ember_types::LinkKind::Weakref, target } = *self.types.kind(base.ty) {
+        if let TyKind::Link { kind: ember_types::LinkKind::Weakref | ember_types::LinkKind::WeakrefThreadShared, target } = *self.types.kind(base.ty) {
             let place = self.written_line(base.span).unwrap_or_else(|| "the link".to_string());
             let short = self.link_short_name(target);
             self.error(codes::E2020, base.span, format!("`{place}` may be gone; open it: `if {place} exists as {short}:`"));

@@ -444,7 +444,7 @@ pub fn storage_mechanism(types: &TypeTable, ty: Ty) -> &'static str {
         TyKind::Dyn { .. } => "owns T",
         TyKind::Link { kind: LinkKind::Shares | LinkKind::SharesMut, .. } => "shares T, shares mut T",
         TyKind::Link { kind: LinkKind::ThreadShared, .. } => "thread_shared T",
-        TyKind::Link { kind: LinkKind::Weakref, .. } => "weakref T",
+        TyKind::Link { kind: LinkKind::Weakref | LinkKind::WeakrefThreadShared, .. } => "weakref T",
         // `[SEL-1]` — the compiler's block of one owner, `owns T`, by the type itself.
         TyKind::Struct(id) if types.compiler_box_inner(*id).is_some() => "owns T",
         TyKind::Struct(_) => {

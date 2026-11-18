@@ -5223,7 +5223,7 @@ impl Emitter<'_> {
             )),
             // `[RC-1]`, `[WK-11]` — an owner is a strong edge to the object it points at, a link a
             // weak one.
-            TyKind::Link { kind: ember_types::LinkKind::Weakref, .. } => out.push(format!(
+            TyKind::Link { kind: ember_types::LinkKind::Weakref | ember_types::LinkKind::WeakrefThreadShared, .. } => out.push(format!(
                 "visitor(context, ({header}*)({access}), {field_c}, EMBER_OWNERSHIP_EDGE_WEAK, NULL, true);"
             )),
             TyKind::Link { .. } => out.push(format!(
@@ -5752,7 +5752,7 @@ impl Emitter<'_> {
             }
             // `[WK-11]` — a link's end subtracts one from its target's weak count; `[RC-1]` an owner's
             // end one from its count, and the subtraction that reaches zero ends the value.
-            TyKind::Link { kind: ember_types::LinkKind::Weakref, .. } => {
+            TyKind::Link { kind: ember_types::LinkKind::Weakref | ember_types::LinkKind::WeakrefThreadShared, .. } => {
                 out.push(format!("{}(({}*){access});", ember_branding::runtime("weak_release"), ember_branding::runtime("obj_header")));
             }
             TyKind::Link { target, .. } => {
@@ -10720,7 +10720,7 @@ impl Emitter<'_> {
                         let link_c = self.c_type(*link);
                         let TyKind::Link { target, .. } = self.types.kind(*link) else { unreachable!("a link's type") };
                         let count = match kind {
-                            ember_types::LinkKind::Weakref => ember_branding::runtime("weak_retain"),
+                            ember_types::LinkKind::Weakref | ember_types::LinkKind::WeakrefThreadShared => ember_branding::runtime("weak_retain"),
                             _ => self.count_function("retain", *target),
                         };
                         return format!("({count}(({header}*){}), ({link_c}){})", rendered[0], rendered[0]);

@@ -100,7 +100,7 @@ fn holds_counted_owner(types: &TypeTable, ty: Ty, seen: &mut Vec<Ty>) -> bool {
     }
     seen.push(ty);
     match types.kind(ty) {
-        TyKind::Link { kind, .. } => *kind != ember_types::LinkKind::Weakref,
+        TyKind::Link { kind, .. } => !kind.is_weak(),
         TyKind::Struct(id) => types.struct_def(*id).fields.iter().any(|field| holds_counted_owner(types, field.ty, seen)),
         TyKind::Enum(id) => types.enum_def(*id).variants.iter().any(|variant| variant.fields.iter().any(|field| holds_counted_owner(types, field.ty, seen))),
         TyKind::Tuple(items) => items.iter().any(|&item| holds_counted_owner(types, item, seen)),
@@ -267,7 +267,7 @@ fn collect_strong_targets(
             targets.insert(*class);
         }
         // `[RC-1]` — another owner is an owner edge to its target; `[WK-11]` a link is none.
-        TyKind::Link { kind: ember_types::LinkKind::Weakref, .. } => {}
+        TyKind::Link { kind: ember_types::LinkKind::Weakref | ember_types::LinkKind::WeakrefThreadShared, .. } => {}
         TyKind::Link { target, .. } => collect_strong_targets(types, *target, seen, targets),
         // An `[OBJ-2]` class-interface handle owns a real class object, but
         // its erased declaration cannot name one statically. Keep it out of
@@ -355,7 +355,7 @@ fn collect_weak_targets(
     }
     match types.kind(ty) {
         // `[WK-11]` — a link's target, by its owners.
-        TyKind::Link { kind: ember_types::LinkKind::Weakref, target } => targets.extend(strong_targets(types, *target)),
+        TyKind::Link { kind: ember_types::LinkKind::Weakref | ember_types::LinkKind::WeakrefThreadShared, target } => targets.extend(strong_targets(types, *target)),
         TyKind::Link { target, .. } => collect_weak_targets(types, *target, seen, targets),
         TyKind::Struct(id) => {
             let def = types.struct_def(*id);
@@ -430,7 +430,7 @@ fn contains_unknown_owner_inner(types: &TypeTable, ty: Ty, seen: &mut HashSet<Ty
         | TyKind::Param { .. }
         | TyKind::Pack(_)
         | TyKind::Assoc { .. } => true,
-        TyKind::Link { kind: ember_types::LinkKind::Weakref, .. } => false,
+        TyKind::Link { kind: ember_types::LinkKind::Weakref | ember_types::LinkKind::WeakrefThreadShared, .. } => false,
         TyKind::Link { target, .. } => contains_unknown_owner_inner(types, *target, seen),
         TyKind::Struct(id) => {
             let def = types.struct_def(*id);

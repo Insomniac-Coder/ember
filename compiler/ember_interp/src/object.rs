@@ -441,7 +441,7 @@ impl Interp<'_, '_> {
                 self.release_object(object)
             }
             // `[WK-11]`, `[RC-1]` — a link's or an owner's end.
-            TyKind::Link { kind: ember_types::LinkKind::Weakref, .. } => {
+            TyKind::Link { kind: ember_types::LinkKind::Weakref | ember_types::LinkKind::WeakrefThreadShared, .. } => {
                 let object = self.mem.read_u64(addr)?;
                 self.weak_release(object)
             }

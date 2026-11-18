@@ -614,7 +614,7 @@ impl Interp<'_, '_> {
             Builtin::LinkMake { kind, .. } => {
                 let object = self.pointer(&args[0])?;
                 match kind {
-                    ember_types::LinkKind::Weakref => self.weak_retain(object)?,
+                    ember_types::LinkKind::Weakref | ember_types::LinkKind::WeakrefThreadShared => self.weak_retain(object)?,
                     _ => self.retain_object(object)?,
                 }
                 object.to_le_bytes().to_vec()

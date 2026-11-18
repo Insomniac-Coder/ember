@@ -900,7 +900,7 @@ impl<'a> Planner<'a> {
                 TyKind::Enum(id) if this.types.option_niche(*id).is_some_and(|niche| matches!(this.types.kind(niche.payload), TyKind::Class(_))) => {
                     ("EMBER_RL_KIND_OPTION_HANDLE", String::new())
                 }
-                TyKind::Link { kind: ember_types::LinkKind::Weakref, .. } => ("EMBER_RL_KIND_WEAK", String::new()),
+                TyKind::Link { kind: ember_types::LinkKind::Weakref | ember_types::LinkKind::WeakrefThreadShared, .. } => ("EMBER_RL_KIND_WEAK", String::new()),
                 TyKind::Link { .. } => ("EMBER_RL_KIND_HANDLE", String::new()),
                 TyKind::Struct(id) if this.shared_inner_id(*id).is_some() => ("EMBER_RL_KIND_HANDLE", String::new()),
                 TyKind::Struct(id) if this.has_schema(elem) => ("EMBER_RL_KIND_STRUCT", this.types.struct_def(*id).name.to_string()),
@@ -1091,7 +1091,7 @@ impl<'a> Planner<'a> {
                     shape.layout = Some(self.layout_table(ty, w));
                 }
             },
-            TyKind::Link { kind: ember_types::LinkKind::Weakref, .. } => shape.kind = "EMBER_RL_KIND_WEAK",
+            TyKind::Link { kind: ember_types::LinkKind::Weakref | ember_types::LinkKind::WeakrefThreadShared, .. } => shape.kind = "EMBER_RL_KIND_WEAK",
             TyKind::Link { .. } => shape.kind = "EMBER_RL_KIND_HANDLE",
             TyKind::Struct(id) if self.shared_inner_id(id).is_some() => shape.kind = "EMBER_RL_KIND_HANDLE",
             TyKind::Struct(id) if self.box_inner_id(id).is_none() => {

@@ -137,9 +137,16 @@ pub enum LinkKind {
     SharesMut,
     ThreadShared,
     Weakref,
+    /// A link to a `thread_shared` value (`[WK-11]`), whose weak count is atomic.
+    WeakrefThreadShared,
 }
 
 impl LinkKind {
+    /// Whether this is a link, which keeps nothing alive, and not an owner.
+    pub fn is_weak(self) -> bool {
+        matches!(self, LinkKind::Weakref | LinkKind::WeakrefThreadShared)
+    }
+
     /// The word as the program writes it.
     pub fn word(self) -> &'static str {
         match self {
@@ -147,6 +154,7 @@ impl LinkKind {
             LinkKind::SharesMut => "shares mut",
             LinkKind::ThreadShared => "thread_shared",
             LinkKind::Weakref => "weakref",
+            LinkKind::WeakrefThreadShared => "weakref thread_shared",
         }
     }
 }
@@ -2041,7 +2049,7 @@ impl TypeTable {
         let result = match self.kind(ty) {
             // `[RC-1]`, `[THR-8]` — a one-thread owner or link is neither `Send` nor `ThreadShared`; a
             // `thread_shared` owner is both when its target is.
-            TyKind::Link { kind: LinkKind::ThreadShared, target } => {
+            TyKind::Link { kind: LinkKind::ThreadShared | LinkKind::WeakrefThreadShared, target } => {
                 let (send, sync) = both(*target, visiting);
                 (send && sync, send && sync)
             }
@@ -2296,7 +2304,7 @@ impl TypeTable {
     pub fn printed_as(&self, ty: Ty) -> Option<Ty> {
         // `[TYP-36]` — an owner prints as the value it owns.
         if let TyKind::Link { kind, target } = *self.kind(ty)
-            && kind != LinkKind::Weakref
+            && !kind.is_weak()
         {
             return Some(target);
         }

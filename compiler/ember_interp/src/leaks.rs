@@ -41,7 +41,7 @@ impl Interp<'_, '_> {
             TyKind::Class(_) => out.push((Some(self.mem.read_u64(addr)?), Kind::Strong, top)),
             TyKind::ClassInterface(_) => out.push((Some(self.mem.read_u64(addr)?), Kind::Strong, false)),
             // `[RC-1]`, `[WK-11]` — an owner is a strong edge to the block it points at, a link a weak one.
-            TyKind::Link { kind: ember_types::LinkKind::Weakref, .. } => out.push((Some(self.mem.read_u64(addr)?), Kind::Weak, true)),
+            TyKind::Link { kind: ember_types::LinkKind::Weakref | ember_types::LinkKind::WeakrefThreadShared, .. } => out.push((Some(self.mem.read_u64(addr)?), Kind::Weak, true)),
             TyKind::Link { .. } => out.push((Some(self.mem.read_u64(addr)?), Kind::Strong, top)),
             TyKind::Vec { elem, .. } => {
                 let (ptr, len) = (self.mem.read_u64(addr)?, self.mem.read_u64(addr + 8)?);
