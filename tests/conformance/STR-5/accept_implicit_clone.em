@@ -34,16 +34,16 @@ struct Holder:
 
 fn main():
     p = Point(x=1, tags=["a"])
-    q = p.clone()
+    q = copy of p
     q.tags.push(owns "b")
     println(p.tags, q.tags)
     s = Shape.Named("n")
-    match s.clone():
+    match copy of s:
         Shape.Named(name):
             println(name)
         Shape.Circle(r):
             println(r)
     c = Custom(n=1)
-    println(c.clone().n)
+    println((copy of c).n)
     h = Holder(r=Resource(1))
     println(h.r.id)

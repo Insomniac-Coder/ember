@@ -21,11 +21,11 @@ fn main():
     r: Result[String, int] = Ok("b")
     t = (String.from("c"), 1)
     h = Holder(Some("d"))
-    println(x.clone(), r.clone(), t.clone(), h.clone())
+    println(copy of x, copy of r, copy of t, copy of h)
     a = Node(name=Some("hello"))
     b = shares mut a
-    kept = a.name.clone()
-    match a.name.clone():
+    kept = copy of a.name
+    match copy of a.name:
         Some(s):
             b.clear()
             println(s)

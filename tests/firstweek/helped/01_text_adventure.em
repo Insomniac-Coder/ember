@@ -52,7 +52,7 @@ class Game:
             if next == "vault" and "key" not in this.inventory:
                 println("The vault door is locked. You need a key.")
                 return
-            this.current = next.clone()
+            this.current = copy of next
             this.look()
             if next == "vault":
                 println("You open the vault. You win!")

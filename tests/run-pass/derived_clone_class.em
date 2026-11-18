@@ -12,6 +12,6 @@ class Counter:
 
 fn main():
     original = Counter(41)
-    copy = original.clone()
+    copy = copy of original
     copy.bump()
     println(original.value)

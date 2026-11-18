@@ -11898,17 +11898,6 @@ impl<'a> Checker<'a> {
             "cloned" => false,
             _ => self.types.is_copy(inner) || self.implements(inner, Symbol::intern("std.core.Copy")),
         };
-        // `copy of` makes a new object of a class: as there (`copy_refused`), a copy of a handle,
-        // naming the same object, is no copy.
-        if name.name.is("copy_each") && self.holds_class_object(inner, &mut HashSet::new()) {
-            let shown = self.types.display(inner);
-            let message = format!("`copy_each` of `{shown}` items, which hold a class object, is not built by this compiler yet");
-            self.sink.emit(
-                Diagnostic::error(codes::E0900, name.span, message)
-                    .note("`copy_each` makes what `copy of` makes of each item, a new object of a class [OWN-8]; this compiler's `Clone` of a class object keeps the same one"),
-            );
-            return error;
-        }
         // D-735 — a parameter is `Copy` or `Clone` by its bounds (`T: Copy`), which the type table
         // does not know.
         let fits = if copied {
@@ -25828,6 +25817,8 @@ impl<'a> Checker<'a> {
         self.types.is_copy(ty)
             || self.clone_method(ty).is_some()
             || self.assumed_cloneable.contains(&ty)
+            // A type parameter by its bounds (`[T: needs Clone]`).
+            || (matches!(self.types.kind(ty), TyKind::Param { .. }) && self.implements(ty, Symbol::intern("std.core.Clone")))
             // IX.1 (ODR-237) — `Box[T]` when `T` is; `Box[dyn I]` when `I` requires `Clone`.
             || self.box_inner(ty).is_some_and(|inner| match self.types.kind(inner) {
                 TyKind::Dyn { interfaces } => interfaces.iter().any(|interface| self.requires_clone(*interface)),
@@ -35049,7 +35040,7 @@ impl<'a> Checker<'a> {
                         ))
                         .note("over a borrowed collection the items are references [GRM-27]");
                     if self.is_cloneable(inner) {
-                        diagnostic = diagnostic.help(format!("or copy each item, `{name}.clone()`, `{collection}` staying as it was"));
+                        diagnostic = diagnostic.help(format!("or copy each item, `copy of {name}`, `{collection}` staying as it was"));
                     }
                     self.sink.emit(diagnostic);
                     return None;
@@ -49956,11 +49947,11 @@ impl<'a> Checker<'a> {
     }
 
     /// `[OWN-8]` — `E2116` when `copy of` cannot copy a `ty` as itself, `text` the value as written:
-    /// a view, whose text or items are another's, or a type with no `Clone`. A value holding a class
-    /// object is `E0900` until a class object's `Clone` makes a new object (M4).
+    /// a view, whose text or items are another's, or a type with no `Clone`.
     fn copy_refused(&mut self, ty: Ty, text: &str, span: Span) -> bool {
         let shown = self.types.display(ty);
-        if self.types.is_view(ty) {
+        // A read-only view is `Copy`: its copy is one more view of the same thing (verdict 68).
+        if self.types.is_view(ty) && !self.types.is_copy(ty) {
             let help = if self.is_text(ty) {
                 format!("to make your own copy write `String({text})`")
             } else {
@@ -49968,16 +49959,6 @@ impl<'a> Checker<'a> {
             };
             let message = format!("`{text}` is a view of what another value holds, so `copy of` cannot copy it");
             self.sink.emit(Diagnostic::error(codes::E2116, span, message).help(help));
-            return true;
-        }
-        // `copy of player` makes a new object; this compiler's `Clone` of a class object is still
-        // 0.9.10's, a copy of its handle naming the same object, which would be no copy at all.
-        if self.holds_class_object(ty, &mut HashSet::new()) {
-            let message = format!("`copy of` a `{shown}`, which holds a class object, is not built by this compiler yet");
-            self.sink.emit(
-                Diagnostic::error(codes::E0900, span, message)
-                    .note("`copy of` makes a new object [OWN-8]; this compiler's `Clone` of a class object keeps the same one"),
-            );
             return true;
         }
         if let Some(inner) = self.foreign_owner_inner(ty) {
@@ -50004,32 +49985,6 @@ impl<'a> Checker<'a> {
         !has_clone
     }
 
-    /// Whether a value of `ty` holds a class object as its own part: one itself, or a field, an
-    /// element or a payload that is one (not through a view or a pointer).
-    fn holds_class_object(&self, ty: Ty, seen: &mut HashSet<Ty>) -> bool {
-        if !seen.insert(ty) {
-            return false;
-        }
-        match self.types.kind(ty) {
-            TyKind::Class(_) | TyKind::ClassInterface(_) => true,
-            TyKind::Struct(id) => {
-                let fields: Vec<Ty> = self.types.struct_def(*id).fields.iter().map(|field| field.ty).collect();
-                self.box_inner(ty).is_some_and(|inner| self.holds_class_object(inner, seen))
-                    || fields.into_iter().any(|field| self.holds_class_object(field, seen))
-            }
-            TyKind::Enum(id) => {
-                let fields: Vec<Ty> = self.types.enum_def(*id).variants.iter().flat_map(|variant| variant.fields.iter().map(|field| field.ty)).collect();
-                fields.into_iter().any(|field| self.holds_class_object(field, seen))
-            }
-            TyKind::Tuple(items) => items.clone().into_iter().any(|item| self.holds_class_object(item, seen)),
-            TyKind::Vec { elem, .. } | TyKind::Array { elem, .. } | TyKind::ArrayN { elem, .. } => {
-                let elem = *elem;
-                self.holds_class_object(elem, seen)
-            }
-            _ => false,
-        }
-    }
-
     /// `[GRM-43]`, `[OWN-8]` — `copy of e` is `e`'s clone: a `Copy` value itself, a type with `Clone`
     /// its `clone`. What it cannot copy as itself is refused (`copy_refused`).
     fn synth_copy_of(&mut self, operand: &ast::Expr, span: Span) -> Expr {
@@ -50051,6 +50006,37 @@ impl<'a> Checker<'a> {
         // `[OWN-9]`, `[OWN-8]` — a copy of the program's own, never the place itself: a `Copy` type's
         // `clone` is the place, which an `owns` argument would hand over (`f(copy of n)` keeps `n`).
         Self::a_value(copy)
+    }
+
+    /// `[OWN-8]`, `[CLI-20]` (`E1010`) — `x.clone()` written at a use is `copy of x`, the one way a copy
+    /// is asked for; `fn clone` stays what `copy of` runs. A method of that name that is no `Clone` is
+    /// the program's own. The compiler's own calls of `clone` carry no such name in the source.
+    fn refuse_written_clone(&mut self, receiver: &Expr, recv_span: Span, name: ast::Ident, generic_args: &[ast::GenericArg], args: &[ast::Arg], span: Span) {
+        if !name.name.is("clone") || !args.is_empty() || !generic_args.is_empty() || self.generated_files.contains(&span.file) {
+            return;
+        }
+        if self.written_line(name.span).as_deref() != Some("clone") {
+            return;
+        }
+        let ty = match *self.types.kind(receiver.ty) {
+            TyKind::Ref { inner, .. } => inner,
+            _ => receiver.ty,
+        };
+        if !self.is_cloneable(ty) && !self.implements(ty, Symbol::intern("std.core.Clone")) {
+            return;
+        }
+        let Some(written) = self.written_line(recv_span) else {
+            self.error(codes::E1010, name.span, "`.clone()` is not Ember: a copy is written `copy of` before the value");
+            return;
+        };
+        // `copy of` binds as `-` does, so a call or a field after the copy needs brackets round it.
+        let next = self.sources.get(&span.file).and_then(|source| source.text.get(span.end as usize..)).and_then(|rest| rest.chars().next());
+        let line = if matches!(next, Some('.' | '[' | '(')) { format!("(copy of {written})") } else { format!("copy of {written}") };
+        self.sink.emit(
+            Diagnostic::error(codes::E1010, name.span, format!("`.clone()` is not Ember: a copy is written `copy of {written}`"))
+                .help(format!("write `{line}`"))
+                .migrate("`x.clone()` is `copy of x`", span, line),
+        );
     }
 
     /// `[OWN-9]` — `m[k] = v` is an `=` line: `v` is given to `index_set` as `=` gives it, a number
@@ -50272,6 +50258,7 @@ impl<'a> Checker<'a> {
         expected: Option<Ty>,
         span: Span,
     ) -> Expr {
+        self.refuse_written_clone(&receiver, recv_span, name, generic_args, args, span);
         // `[CELL-7]` — a guard reads through to its contents, so a method on
         // `T` is found through `Ref[T]`/`RefMut[T]`. Unwrap first; the
         // unwrapped receiver derefs through the guard's field, keeping the

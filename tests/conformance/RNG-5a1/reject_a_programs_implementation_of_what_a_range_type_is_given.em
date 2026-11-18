@@ -29,4 +29,4 @@ extend i32 implements Mul[Level]:    #$ error[E2041]: `i32` already implements `
 
 fn main():
     l: Level = 3
-    println(l + l, l == l, l.clone())
+    println(l + l, l == l, copy of l)

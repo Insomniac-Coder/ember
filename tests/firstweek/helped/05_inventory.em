@@ -32,7 +32,7 @@ class Inventory:
         return sum(item.price * item.quantity as float for item in this.items.values())
 
     fn low_stock(threshold: int) -> Array[String]:
-        return [name.clone() for name, item in this.items.items() if item.quantity < threshold]
+        return [copy of name for name, item in this.items.items() if item.quantity < threshold]
 
     fn report():
         println("stock:")

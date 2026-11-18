@@ -26,7 +26,7 @@ struct T:
 extend T implements Shower:
     type Item = String
     fn get() -> String:
-        return this.s.clone()
+        return copy of this.s
 
 fn main():
     println(N(n = 3).shown(), T(s = "x".to_string()).shown())

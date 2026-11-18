@@ -7,7 +7,7 @@
 from std.ffi import CppShared
 
 fn read_through_cpp(pointer: ref CppShared[i32]) -> i32:
-    copy: CppShared[i32] = pointer.clone()
+    copy: CppShared[i32] = copy of pointer
     return copy.get()
 
 fn read_through_ember(pointer: shares mut i32) -> i32:

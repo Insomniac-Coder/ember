@@ -14,7 +14,7 @@ struct Pair:
 
 fn main():
     a = [1, 2, 3]
-    b = a.clone()
+    b = copy of a
     p = Pair(2, 1)
     q = p
     println(a.len() + b.len() - 3, p.v, q.v)

@@ -26,7 +26,7 @@ fn insert_into(node: TreeNode, key: StrView) -> bool:
 fn in_order(node: Option[TreeNode], ref mut out: Array[String]):
     if node exists as n:
         in_order(n.left, ref mut out)
-        out.push(owns n.key.clone())
+        out.push(owns copy of n.key)
         in_order(n.right, ref mut out)
 
 fn height(node: Option[TreeNode]) -> int:

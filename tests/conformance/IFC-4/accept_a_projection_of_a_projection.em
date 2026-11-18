@@ -14,7 +14,7 @@ struct Nums:
 extend Nums implements Source:
     type Item = Array[int]
     fn get() -> Array[int]:
-        return this.xs.clone()
+        return copy of this.xs
 
 [S: needs Source]
 fn first_of(s: S) -> Option[S.Item.Item]:

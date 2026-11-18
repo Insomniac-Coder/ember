@@ -22,7 +22,7 @@ class Account:
         if amount <= 0:
             return Err(BankError.InvalidAmount(amount))
         if this.frozen:
-            return Err(BankError.AccountFrozen(this.owner.clone()))
+            return Err(BankError.AccountFrozen(copy of this.owner))
         this.balance += amount
         this.history.push(owns f"deposit {amount}")
         return Ok(this.balance)
@@ -31,7 +31,7 @@ class Account:
         if amount <= 0:
             return Err(BankError.InvalidAmount(amount))
         if this.frozen:
-            return Err(BankError.AccountFrozen(this.owner.clone()))
+            return Err(BankError.AccountFrozen(copy of this.owner))
         if amount > this.balance:
             return Err(BankError.InsufficientFunds(this.balance, amount))
         this.balance -= amount

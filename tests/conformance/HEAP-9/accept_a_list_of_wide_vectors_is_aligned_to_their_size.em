@@ -24,6 +24,6 @@ fn main():
     first = off8(xs.as_span())
     for i in 0..300:
         xs.push(owns f32x8.splat(i as f32))
-    copy = xs.clone()
+    copy = copy of xs
     ys = [f64x8.splat(1.0), f64x8.splat(2.0)]
     println(align_of[f32x8](), align_of[f64x8](), first, off8(xs.as_span()), off8(copy.as_span()), off64(ys.as_span()))

@@ -10,6 +10,6 @@ from generic_enum_derived_clone_noncopy_imported_support.model import Token
 
 fn main():
     original = Entry[Token].Value(Token(7))
-    cloned = original.clone()
+    cloned = copy of original
     match cloned:
         Entry.Value(token): println(token.value)

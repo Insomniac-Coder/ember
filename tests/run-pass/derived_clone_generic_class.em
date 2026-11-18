@@ -14,7 +14,7 @@ class Counter:
 
 [T: needs Clone]
 fn duplicate(value: T) -> T:
-    return value.clone()
+    return copy of value
 
 struct Marker:
     value: i32

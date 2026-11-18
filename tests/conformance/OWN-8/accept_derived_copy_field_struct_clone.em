@@ -11,6 +11,6 @@ struct Pair:
 
 fn main():
     original = Pair(42)
-    copied = original.clone()
+    copied = copy of original
     println(original.value)
     println(copied.value)

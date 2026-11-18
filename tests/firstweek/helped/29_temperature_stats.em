@@ -51,10 +51,10 @@ fn main():
     for r in readings:
         if r.day not in by_day:
             by_day[r.day] = []
-            days.push(owns r.day.clone())
+            days.push(owns copy of r.day)
         by_day[r.day].push(owns r.celsius)
     for day in days:
-        values = by_day[day].clone()
+        values = copy of by_day[day]
         high = values.iter().max().unwrap()
         println(f"{day}: high {high:5.1f}C / {to_fahrenheit(high):5.1f}F  low {values.iter().min().unwrap():5.1f}C")
 
@@ -66,8 +66,8 @@ fn main():
         best = max(best, streak)
     println(f"longest run of readings above 18C: {best}")
 
-    hottest = readings[0].clone()
+    hottest = copy of readings[0]
     for r in readings:
         if r.celsius > hottest.celsius:
-            hottest = r.clone()
+            hottest = copy of r
     println(f"hottest: {hottest.day} at {hottest.hour}:00 ({hottest.celsius}C)")

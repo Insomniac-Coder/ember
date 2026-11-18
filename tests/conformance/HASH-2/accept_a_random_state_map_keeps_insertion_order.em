@@ -21,7 +21,7 @@ fn main():
     keys: Array[String] = []
     total = 0
     for (k, v) in m.items():
-        keys.push(owns k.clone())
+        keys.push(owns copy of k)
         total += v
     println(keys.join(" "))
     println(total, m["k3"] == 3, seeded("key") == seeded("key"), seeded("key") != seeded("kez"))

@@ -14,9 +14,9 @@ fn both(owns x: String, owns y: String) -> int:
 
 fn main():
     s = "a".to_string()
-    t = (s.clone(), s)
+    t = (copy of s, s)
     u = "bb".to_string()
-    n = both(owns u.clone(), owns "c".to_string()) + 0 * u.len()
+    n = both(owns copy of u, owns "c".to_string()) + 0 * u.len()
     p = Pair("b".to_string(), "c".to_string())
     halves = (p.a, p.b)
     k = 7

@@ -8,6 +8,6 @@ from generic_enum_derived_clone_imported_support.model import Entry
 
 fn main():
     original = Entry[i32].Value(9)
-    cloned = original.clone()
+    cloned = copy of original
     match cloned:
         Entry.Value(value): println(value)

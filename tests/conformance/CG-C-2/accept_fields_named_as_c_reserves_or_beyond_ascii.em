@@ -28,7 +28,7 @@ struct Größe:
 
 fn main():
     s = Settings(1, String.from("x"), 3)
-    t = s.clone()
+    t = copy of s
     println(s.default + s.errno, s.inline, s == t)
     println(f"{s!r}")
     match Mode.switch(4):

@@ -51,13 +51,13 @@ extend Tile implements Shape:
 
 fn main():
     a: owns dyn Shape = owns Square(2)
-    b = a.clone()
+    b = copy of a
     t: owns dyn Shape = owns Tile(5)
     println(a.scaled(3), b.scaled(6), b.sides(), a == b, a == t)
     u: owns dyn Shape = owns Tile(5)
     v: owns dyn Shape = owns Tile(6)
-    w = t.clone()
+    w = copy of t
     println(w.scaled(2), w.sides(), t == u, w == t, t == v)
-    shapes: Array[owns dyn Shape] = [a.clone(), t.clone()]
-    copies = shapes.clone()
+    shapes: Array[owns dyn Shape] = [copy of a, copy of t]
+    copies = copy of shapes
     println(copies[1].scaled(1), copies == shapes)

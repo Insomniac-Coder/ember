@@ -317,7 +317,7 @@ pub class World:
     pub fn entities_with() -> Array[Entity]:
         match this.storages.get(T.component_hash()):
             Some(found):
-                return found.entities.clone()
+                return copy of found.entities
             None:
                 return []
 

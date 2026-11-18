@@ -31,17 +31,17 @@ fn total(t: Tree) -> int:
 
 fn main():
     b: owns Point = owns Point(7, "a")
-    c: owns Point = b.clone()
+    c: owns Point = copy of b
     println(b.x, c.x)
     h = Holder(owns Point(1, "b"), 1)
-    k = h.clone()
+    k = copy of h
     h.p.x = 2
     println(h.p.x, k.p.x)
     t = Tree.Node(owns Tree.Leaf(1), owns Tree.Node(owns Tree.Leaf(2), owns Tree.Leaf(3)))
-    u = t.clone()
+    u = copy of t
     t = Tree.Leaf(10)
     println(total(t), total(u))
     nested: owns owns Point = owns owns Point(1, "c")
-    copy = nested.clone()
+    copy = copy of nested
     nested.x = 3
     println(copy.x, nested.x)

@@ -30,7 +30,7 @@ struct S:
 extend S implements Src:
     type Item = int
     fn all() -> Array[int]:
-        return this.xs.clone()
+        return copy of this.xs
 
 fn main():
     b: Bag = S(xs = [1, 2, 3]).gather()

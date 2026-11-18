@@ -19,7 +19,7 @@ fn bigger(owns a: T, owns b: T) -> T:
 
 [T: needs Clone]
 fn twice(x: T) -> (T, T):
-    return (x.clone(), x.clone())
+    return (copy of x, copy of x)
 
 [T: needs Eq]
 fn same(a: T, b: T) -> bool:

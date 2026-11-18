@@ -24,7 +24,7 @@ println(xs.swap_remove(0), xs)
 xs.swap(0, 1)
 println(xs)
 xs.truncate(2)
-kept = xs.clone()
+kept = copy of xs
 xs.truncate(9)
 println(kept, xs)
 match xs.get_mut(1):

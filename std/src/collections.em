@@ -877,7 +877,7 @@ extend[K: needs (Eq, Hash, Ord, Clone), V, H: needs (Hasher, Default)] Map[K, V,
         for i in range(this.entries.len()):
             match this.entries[i]:
                 Some(e):
-                    out.push(owns e.key.clone())
+                    out.push(owns copy of e.key)
                 None:
                     pass
         out.sort()
@@ -1155,30 +1155,30 @@ extend[T: needs (Eq, Hash, Clone), H: needs (Hasher, Default)] Set[T, H]:
     pub fn union(other: Set[T, H]) -> Set[T, H]:
         out = Set[T, H]()
         for x in this.iter():
-            out.add(owns x.clone())
+            out.add(owns copy of x)
         for x in other.iter():
-            out.add(owns x.clone())
+            out.add(owns copy of x)
         return out
 
     pub fn intersection(other: Set[T, H]) -> Set[T, H]:
         out = Set[T, H]()
         for x in this.iter():
             if other.contains(x):
-                out.add(owns x.clone())
+                out.add(owns copy of x)
         return out
 
     pub fn difference(other: Set[T, H]) -> Set[T, H]:
         out = Set[T, H]()
         for x in this.iter():
             if not other.contains(x):
-                out.add(owns x.clone())
+                out.add(owns copy of x)
         return out
 
     pub fn symmetric_difference(other: Set[T, H]) -> Set[T, H]:
         out = this.difference(other)
         for x in other.iter():
             if not this.contains(x):
-                out.add(owns x.clone())
+                out.add(owns copy of x)
         return out
 
 ## `s | t`, `s & t`, `s - t` and `s ^ t` are those operations (`[STD-16]`): a
@@ -1202,7 +1202,7 @@ extend[T: needs (Eq, Hash, Ord, Clone), H: needs (Hasher, Default)] Set[T, H]:
     pub fn sorted_elements() -> Array[T]:
         out: Array[T] = []
         for x in this.iter():
-            out.push(owns x.clone())
+            out.push(owns copy of x)
         out.sort()
         return out
 

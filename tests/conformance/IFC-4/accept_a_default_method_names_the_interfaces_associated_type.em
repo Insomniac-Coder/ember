@@ -40,7 +40,7 @@ extend Words implements Source:
     type Item = String
 
     fn get(i: int) -> String:
-        return this.words[i].clone()
+        return copy of this.words[i]
 
     fn size() -> int:
         return this.words.len()

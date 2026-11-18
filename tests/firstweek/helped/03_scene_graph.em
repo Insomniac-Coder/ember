@@ -35,7 +35,7 @@ class Node:
     fn path() -> String:
         if this.parent exists as p:
             return f"{p.path()}/{this.name}"
-        return this.name.clone()
+        return copy of this.name
 
 fn print_tree(node: Node):
     indent = "  ".repeat(node.depth())

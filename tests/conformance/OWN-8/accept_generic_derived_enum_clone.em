@@ -8,6 +8,6 @@ enum Entry[T]:
 
 fn main():
     original = Entry[i32].Value(9)
-    cloned = original.clone()
+    cloned = copy of original
     match cloned:
         Entry.Value(value): println(value)

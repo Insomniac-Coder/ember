@@ -22,7 +22,7 @@ fn main():
     tx, rx = channel[String](capacity=2)
     workers: Array[thread.JoinHandle[void]] = []
     for who in range(4):
-        mine = tx.clone()
+        mine = copy of tx
         workers.push(owns thread.spawn(owns owned fn() => produce(mine, who, 2500)))
     mem.drop(tx)
     count = 0

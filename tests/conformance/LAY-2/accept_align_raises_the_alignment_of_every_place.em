@@ -65,7 +65,7 @@ fn main():
     literal.insert(1, Line(a = 3, b = 3))
     literal.extend(xs.as_span())
     drained = literal.drain(0..2)
-    copy = xs.clone()
+    copy = copy of xs
     built = [Line(a = 1, b = i as u64) for i in 0..20]
     println(first, grown, listed(reserved.as_span()), listed(literal.as_span()), listed(drained.as_span()), listed(copy.as_span()), listed(built.as_span()), len(xs) - 101, len(literal) - 102, len(drained) - 2)
     local = Line(a = 5, b = 6)
