@@ -168,6 +168,33 @@ impl Checker<'_> {
         )
     }
 
+    /// A call of the first method the interfaces declare, as the line to write in place of a whole-value `=`:
+    /// `v.scale(2.0)`. Each argument is an example value of its parameter's type.
+    fn dyn_change_example(&self, name: &str, interfaces: &[Symbol]) -> String {
+        for interface in interfaces {
+            let Some(def) = self.interfaces.get(interface) else { continue };
+            let Some(&(method, declaration, ..)) = def.methods.iter().find(|(_, _, receiver, _)| receiver.is_some()) else { continue };
+            let arguments: Vec<String> = self.signatures[declaration.0 as usize]
+                .params
+                .iter()
+                .filter(|(parameter, ..)| !parameter.is("this"))
+                .map(|(parameter, ty, ..)| {
+                    if self.types.is_float(*ty) {
+                        "2.0".to_string()
+                    } else if self.types.is_integral(*ty) {
+                        "1".to_string()
+                    } else if matches!(self.types.kind(*ty), TyKind::Bool) {
+                        "true".to_string()
+                    } else {
+                        parameter.to_string()
+                    }
+                })
+                .collect();
+            return format!("{name}.{method}({})", arguments.join(", "));
+        }
+        format!("{name}.method()")
+    }
+
     /// `[BRW-14]` — a `const ref mut` parameter is never given another ref.
     pub(crate) fn note_const_parameter(&mut self, local: LocalId, span: Span) {
         self.view_names.insert(local, ViewName { kind: ViewKind::ConstParam, line: span, target: span, value: span, changeable: true });
@@ -205,6 +232,18 @@ impl Checker<'_> {
             return false;
         }
         let TyKind::Ref { mutable, inner } = *self.types.kind(decl_ty) else { return false };
+        // `[TYP-14]` — `=` on a `ref mut` name of a `dyn I` type never gives the place a whole value: its own
+        // kind is known only while running, and its size is the kind's.
+        if mutable && matches!(self.types.kind(inner), TyKind::Dyn { .. }) && given.is_none() {
+            let TyKind::Dyn { interfaces } = self.types.kind(inner).clone() else { return false };
+            let call = self.dyn_change_example(&name.to_string(), &interfaces);
+            let boxed = self.types.display(inner);
+            let message = format!(
+                "`{name}` views a value of a kind known only while running; change it through its methods, `{call}`, or take the value over, `owns {name}: owns {boxed}`, and return the new one"
+            );
+            self.sink.emit(Diagnostic::error(codes::E3023, span, message).note("the place's own kind is known only while running, and its size is the kind's [TYP-14]"));
+            return true;
+        }
         // A plain parameter keeps what the caller gave (`[BRW-14]`): the line is refused there.
         if self.borrowed_params.contains(&local) {
             return false;

@@ -85,3 +85,28 @@ Read first by every job in this lane; updated last by each.
     tests, RC-2e, rely on it) while the spec says a class object is not (lane a's A1-9), so `@derive(Copy)` over a class field is accepted.
   - CTL-7: a view a `defer` uses that a later reshape ends is `E3021`, the spec says `E3060` (question below).
   - CTL-11: `weakref` (M4), the kind test `is C as c` (M11), a plain `exists as p` name is read-only (`p += 1`, GRM-44, unbuilt).
+
+## W5, job 3 (the types of Part III and LEX-10), 2026-11-18
+
+- **Credited (built_for_0915):** LEX-10 (reading B), TYP-1, TYP-6, TYP-9, TYP-9b, TYP-12, TYP-19, TYP-21, TYP-24, TYP-25, TYP-26,
+  TYP-31, TYP-35, TYP-39, TYP-47.
+- **Where things are:** LEX-10: `check_indented_directive` (`ember_lexer/src/lib.rs`, called at an own-line or in-bracket `#!`).
+  TYP-14's E2200: `ember_typeck/src/infinite_size.rs` (`check_infinite_size`, run after `check_view_attributes`; the refused field
+  becomes an error type, or later passes overflow the stack on `struct T: a: T`); the `ref mut` name of a `dyn I` type is in
+  `views.rs::repoint`. TYP-6: `synth_int_try_from` (`T.try_from`, a round trip plus the sign), the bool-to-integer cast (and
+  the LLVM `bool` constant in `cast`), the enum-discriminant check and the E2020 chains in the `Cast` arm. TYP-5 rule 11 now composes
+  with rule 12 (`coerces_before_option`) and an `owns` block (`check_expr_through`). TYP-21: `String` implements `Add[StrView]` and
+  `AddAssign[StrView]` in `std/src/core.em` (the built-in `+`/`+=` still win: no `add_assign` in the C). TYP-25: the first
+  parameter no other argument gives (`call_argument_slots`, `constructor_slots`). TYP-47: E2021 for a pack's values given to
+  fixed parameters (the call site before `synth_generic_call`). TYP-23: a lambda parameter without `owns` where the callable
+  type hands over is E2020 (`synth_lambda_fresh`).
+- **Traps:** `owned` is a gone word (E1010), use another name for a local; a `#$` line's backslashes are read, write them with
+  care; a heredoc through Bash eats `\n` in Rust, use the Edit tool; the shell's `$EMBER` does not persist between calls.
+  `m = f(m, other)` for a non-Copy struct is E3021 on this base (see the report).
+- **Not credited, and why:** TYP-5 (rule 7 `shares`, rule 8 class upcast and `dyn I` read in place need M4/M11), TYP-10 (the
+  panic text "`shift out of range`: `1 << n` on line 9 shifts an `int` by 70; use `wrapping_shl`" is unbuilt: `AssertKind::ShiftTooLarge`
+  has no operands in five backends), TYP-13 (`shares`, `thread_shared`, `sharedref mut` niches, M4), TYP-14 (`shares` owners, M4),
+  TYP-17 (bound inference for a non-`pub` generic, the `pub` E2040 message, E2072, `dyn (A, B)` and `+` after `dyn`/`some`),
+  TYP-22 (`dyn (A, B)`, E2050 messages, M11), TYP-23 (wording), TYP-32 (`some (A, B, Send)` is not parsed), TYP-34 (`from static`,
+  M5), TYP-36 (cells: tuple and array `Default`, `Option` `Ord`, `Map`/`Set` `Display` as a bound, a class's `Clone`), TYP-38 (a literal
+  followed by `using m`, TYP-46), TYP-43 (`ThreadShared` does not exist: M4), TYP-44a (type indices at link: M11).

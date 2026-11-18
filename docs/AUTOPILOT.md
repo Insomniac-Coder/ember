@@ -150,6 +150,14 @@ test run at a time, each at most 16 threads; builds `CARGO_BUILD_JOBS=4` each. T
 cases or more waits for a lock on `%TEMP%\ember-suite.lock`, which every worktree's runs share. A helper runs the full
 quick check once, at the end of its job, at `RUST_TEST_THREADS=8`; between rules, only the folders it changed.
 
+**The heat guard.** The owner, 2026-11-19, verbatim: "if the CPU temp hits 102 more than 3 times you pause all
+things and wait for it to get down to a reasonable temperature and then you resume". `tools/heat_guard.ps1` does it
+and runs whenever work runs: each climb to 102 °C counts once (again only after falling below 100 °C), the fourth
+suspends every build and test process of the repository, and they resume after 80 °C has held for 30 s (85 °C once
+10 minutes have passed, since this laptop idles in the 70s and low 80s). The count starts again after each pause. Its
+log is `target/heat-guard.log`; a command that seems stuck may be paused there. If the guard dies during a pause:
+`powershell -File tools\heat_guard.ps1 -ResumeAll`. A test that fails on a time limit just after a pause is run again.
+
 **How many agents at once: ONE helper beside the lead.** The owner, 2026-11-18, verbatim: "resume the work
 autonomously and at most you can use one more agent to help you out". This replaces the cap of three below; the
 three lanes and their notes stay, and the lead works one lane while the helper works another.

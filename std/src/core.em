@@ -2357,6 +2357,21 @@ extend String implements FromIterator[String]:
             out += s
         return out
 
+## `[TYP-21]`, `[TXT-11]` - `String + StrView` makes a new `String`, and `+=` adds the text to the `String`
+## it is written on, so a `String` meets `T: needs Add[StrView, Output = T]`. The operators on a `String`
+## are the built-in ones; these methods are what a bound reaches.
+extend String implements Add[StrView]:
+    type Output = String
+
+    ## It allocates the new text (`[STD-1]`).
+    fn add(rhs: StrView) -> String:
+        return f"{this}{rhs}"
+
+extend String implements AddAssign[StrView]:
+    ## It allocates as the `String` grows.
+    fn add_assign(rhs: StrView):
+        this.push_str(rhs)
+
 extend String implements Default:
     ## It allocates the new text (`[STD-1]`).
     static fn default() -> String:

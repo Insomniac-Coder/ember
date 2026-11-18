@@ -26,6 +26,7 @@ mod objects;
 mod views;
 mod ffi;
 mod packs;
+mod infinite_size;
 
 pub use comptime::{ComptimeAnswer, ComptimeAnswers, ComptimeRequest};
 pub use derives::component_registry_key;
@@ -668,6 +669,7 @@ fn check_round(
     // D-761 — an `SoA[T]` a signature named above `T`'s declaration was made before `T` had fields.
     checker.refresh_soa_columns();
     checker.check_view_attributes();
+    checker.check_infinite_size();
     // `[FFI-5]` — each struct `import c` wrote, laid out as Clang lays it out.
     for (index, loaded) in modules.iter().enumerate() {
         if let Some(foreign) = &loaded.foreign {
@@ -19279,7 +19281,13 @@ impl<'a> Checker<'a> {
         let mut given = vec![false; fields.len()];
         let mut named_seen = false;
         let callee = name.to_string();
+        // `[TYP-25]` — a positional argument after a named one takes the first field no other argument gives.
+        let named_anywhere: Vec<bool> = fields
+            .iter()
+            .map(|field| args.iter().any(|arg| arg.name.is_some_and(|name| name.name == *field)))
+            .collect();
         let positional = args.iter().filter(|a| a.name.is_none()).count();
+        let mut too_many_said = positional > fields.len();
         if positional > fields.len() {
             let what = format!("gives {positional} arguments, and `{name}` takes {}", fields.len());
             let diagnostic = self.argument_misfit(span, span, &callee, what, line.clone());
@@ -19289,7 +19297,7 @@ impl<'a> Checker<'a> {
             let field = match arg.name {
                 None if named_seen => {
                     let earlier = args[..index].iter().rev().find(|earlier| earlier.name.is_some()).and_then(|earlier| self.written_line(earlier.span));
-                    let free_slot = given.iter().position(|taken| !taken);
+                    let free_slot = (0..fields.len()).find(|&slot| !given[slot] && !named_anywhere[slot]);
                     let free = free_slot.map(|slot| fields[slot]);
                     let mut what = match (self.written_line(span).and(self.written_line(arg.span)), &earlier) {
                         (Some(this), Some(earlier)) => format!("gives `{this}` after the named `{earlier}`, and positional arguments come first"),
@@ -19298,12 +19306,20 @@ impl<'a> Checker<'a> {
                     if let Some(fixed) = free.and_then(|free| self.call_with_argument_named(span, arg.span, free)) {
                         what.push_str(&format!("; write `{fixed}`"));
                     }
-                    let diagnostic = self.argument_misfit(arg.span, span, &callee, what, None);
+                    let diagnostic = self.argument_misfit(arg.span, span, &callee, what, if free_slot.is_some() { None } else { line.clone() });
                     self.sink.emit(diagnostic);
                     // The argument fills the field the line names, so the field is not reported missing too.
                     match free_slot {
                         Some(slot) => slot,
-                        None => continue,
+                        None => {
+                            // Nothing is left for it: the call also gives more arguments than parameters.
+                            if !std::mem::replace(&mut too_many_said, true) {
+                                let what = format!("gives {} arguments, and `{name}` takes {}", args.len(), fields.len());
+                                let diagnostic = self.argument_misfit(span, span, &callee, what, line.clone());
+                                self.sink.emit(diagnostic);
+                            }
+                            continue;
+                        }
                     }
                 }
                 None if index < fields.len() => index,
@@ -29988,6 +30004,63 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// `[TYP-6]` — `T.try_from(x) -> Result[T, RangeError]` for whole numbers: `Ok(x as T)` when `x` is a
+    /// value of `T`, `Err(RangeError)` where `as` would have changed it. The test is the round trip
+    /// (`x as T as S == x`) with the sign checked where the two types differ in signedness.
+    fn synth_int_try_from(&mut self, owner: Ty, args: &[ast::Arg], span: Span) -> Expr {
+        let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        let [arg] = args else {
+            self.error(codes::E2020, span, format!("`{}.try_from` takes 1 argument, found {}", self.types.display(owner), args.len()));
+            return error;
+        };
+        let value = self.synth_committed(&arg.value);
+        if value.ty == self.common.error {
+            return error;
+        }
+        let (Some(to_signed), Some(from_signed)) = (ember_types::is_signed(self.types, owner), ember_types::is_signed(self.types, value.ty)) else {
+            let (from, to) = (self.types.display(value.ty), self.types.display(owner));
+            self.error(codes::E2020, span, format!("`{to}.try_from` takes a whole number, found `{from}`"));
+            return error;
+        };
+        let (source, bool_ty) = (value.ty, self.common.bool_);
+        let held = self.declare(None, source, span);
+        let local = || Expr { ty: source, kind: ExprKind::Local(held), span };
+        let compare = |op, lhs: Expr, rhs: Expr| Expr { ty: bool_ty, kind: ExprKind::Binary { op, lhs: Box::new(lhs), rhs: Box::new(rhs) }, span };
+        let cast = |expr: Expr, to: Ty| Expr { ty: to, kind: ExprKind::Cast { expr: Box::new(expr), to }, span };
+        let zero = |ty: Ty| Expr { ty, kind: ExprKind::Int(0), span };
+        let narrowed = || cast(local(), owner);
+        let mut fits = compare(BinOp::Eq, cast(narrowed(), source), local());
+        if from_signed && !to_signed {
+            fits = compare(BinOp::And, compare(BinOp::Ge, local(), zero(source)), fits);
+        } else if !from_signed && to_signed {
+            fits = compare(BinOp::And, fits, compare(BinOp::Ge, narrowed(), zero(owner)));
+        }
+        let range_error = self.range_error_ty();
+        let result_ty = self.result_of(owner, range_error);
+        let (TyKind::Enum(result_id), TyKind::Enum(error_id)) = (self.types.kind(result_ty).clone(), self.types.kind(range_error).clone()) else {
+            return error;
+        };
+        let ok = Expr { ty: result_ty, kind: ExprKind::EnumLit { enum_id: result_id, variant: 0, fields: vec![narrowed()] }, span };
+        let failed = Expr { ty: range_error, kind: ExprKind::EnumLit { enum_id: error_id, variant: 0, fields: vec![] }, span };
+        let err = Expr { ty: result_ty, kind: ExprKind::EnumLit { enum_id: result_id, variant: 1, fields: vec![failed] }, span };
+        let arm = |kind, body: Expr| hir::MatchArm {
+            pattern: hir::Pattern { ty: bool_ty, kind, span },
+            guard: None,
+            body: hir::MatchArmBody::Expr(body),
+            span,
+        };
+        let chosen = Expr {
+            ty: result_ty,
+            kind: ExprKind::Match { scrutinee: Box::new(fits), arms: vec![arm(hir::PatternKind::Int(1), ok), arm(hir::PatternKind::Wild, err)] },
+            span,
+        };
+        Expr {
+            ty: result_ty,
+            kind: ExprKind::Block { block: Block { stmts: vec![Stmt::Let { local: held, init: Some(value) }], span }, value: Box::new(chosen) },
+            span,
+        }
+    }
+
     /// `[TYP-6]` — `char.from_u32(x) -> Option[char]`: the character whose
     /// scalar value is `x`, or `None` when `x` is not one (past `0x10FFFF`, or
     /// a surrogate, `0xD800` to `0xDFFF`). The one way an integer other than a
@@ -38380,6 +38453,23 @@ impl<'a> Checker<'a> {
         {
             return self.check_owned_value(inner, expected, expr.span);
         }
+        // `[TYP-5]` rule 11 after the owned block: `slot: Option[owns dyn Weapon] = owns Sword(4)` makes the
+        // block for the `owns` place inside the `Option`, then wraps it as `Some`.
+        if let ast::ExprKind::Owned(inner) = &expr.kind
+            && self.is_option(expected)
+            && let TyKind::Enum(id) = *self.types.kind(expected)
+            && !matches!(inner.kind, ast::ExprKind::Lambda(_))
+        {
+            let payload = self.types.enum_def(id).variants[1].fields[0].ty;
+            if self.box_inner(payload).is_some() {
+                let value = self.check_owned_value(inner, payload, expr.span);
+                let span = value.span;
+                if value.ty == self.common.error {
+                    return value;
+                }
+                return Expr { ty: expected, kind: ExprKind::EnumLit { enum_id: id, variant: 1, fields: vec![value] }, span };
+            }
+        }
         let mut found = self.synth_with_expectation(expr, Some(expected));
         // `[OWN-10]` — a value given to an `owns T` place with no `owns` on the line that makes it:
         // `E2123`, and the block is made, so that one mistake is one error.
@@ -39518,8 +39608,12 @@ impl<'a> Checker<'a> {
     /// `[TYP-5]` — whether `expr` reaches `wanted` by the rules rule 11
     /// composes with: the type itself, a literal that fits, widening (1–2),
     /// range erasure (3), and the two text rules (4).
-    fn coerces_before_option(&self, expr: &Expr, wanted: Ty) -> bool {
-        let string = |ty| matches!(*self.types.kind(ty), TyKind::Vec { text: true, .. });
+    fn coerces_before_option(&mut self, expr: &Expr, wanted: Ty) -> bool {
+        let text = |types: &ember_types::TypeTable, ty| matches!(*types.kind(ty), TyKind::Vec { text: true, .. });
+        if self.fits_by_value(expr, wanted) {
+            return true;
+        }
+        let string = |ty| text(&*self.types, ty);
         expr.ty == wanted
             // ODR-278 — a function, as its shape.
             || self.types.item_shape(expr.ty) == Some(wanted)
@@ -40829,6 +40923,19 @@ impl<'a> Checker<'a> {
                 // since not every integer names a variant.
                 if let TyKind::Enum(id) = *self.types.kind(inner.ty) {
                     if self.types.enum_def(id).is_unit_only() && self.types.is_integral(to) {
+                        // `[TYP-6]` — to an integer type that holds every one of its discriminants.
+                        let (floor, ceiling) = match (ember_types::signed_min_magnitude(self.types, to), ember_types::int_max(self.types, to)) {
+                            (Some(low), Some(high)) => (-(low as i128), high),
+                            (None, Some(high)) => (0, high),
+                            _ => (i128::MIN, u128::MAX),
+                        };
+                        let outside = self.types.enum_def(id).variants.iter().map(|variant| variant.discriminant)
+                            .find(|&d| d < floor || (d >= 0 && d as u128 > ceiling));
+                        if let Some(d) = outside {
+                            let (from, shown) = (self.types.display(inner.ty), self.types.display(to));
+                            self.error(codes::E2020, span, format!("`{from}` has the discriminant `{d}`, which `{shown}` cannot hold: `as` converts a unit-only enum to an integer type that holds every one of them"));
+                            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+                        }
                         return Expr {
                             ty: to,
                             kind: ExprKind::Cast { expr: Box::new(inner), to },
@@ -40841,7 +40948,7 @@ impl<'a> Checker<'a> {
                 let char_cast = matches!(
                     (self.types.kind(inner.ty), self.types.kind(to)),
                     (TyKind::Char, TyKind::Uint(UintTy::U32)) | (TyKind::Uint(UintTy::U8), TyKind::Char)
-                );
+                ) || (matches!(self.types.kind(inner.ty), TyKind::Bool) && self.types.is_integral(to));
                 let pointer_integer_cast =
                     (matches!(self.types.kind(inner.ty), TyKind::Ptr { .. }) && self.types.is_integral(to))
                     || (self.types.is_integral(inner.ty) && matches!(self.types.kind(to), TyKind::Ptr { .. }));
@@ -40900,11 +41007,23 @@ impl<'a> Checker<'a> {
                     && (!self.types.is_numeric(inner.ty) || !self.types.is_numeric(to)) {
                     let from = self.types.display(inner.ty);
                     let shown = self.types.display(to);
-                    self.error(
+                    let written = self.written_line(inner.span);
+                    let mut diagnostic = Diagnostic::error(
                         codes::E2020,
                         span,
                         format!("`{from}` cannot be cast to `{shown}` with `as`"),
                     );
+                    // `[TYP-6]` — where two of the conversions join the types, the help gives the chain.
+                    if matches!(self.types.kind(inner.ty), TyKind::Char) && self.types.is_integral(to) {
+                        let word = written.unwrap_or_else(|| "c".to_string());
+                        diagnostic = diagnostic.help(format!("a `char` converts to a `u32` only; write `({word} as u32) as {shown}`"));
+                    } else if self.types.is_integral(inner.ty) && let TyKind::Enum(id) = *self.types.kind(to) && self.types.enum_def(id).is_unit_only() {
+                        let word = written.unwrap_or_else(|| "7".to_string());
+                        let name = self.types.enum_def(id).name.to_string();
+                        diagnostic = Diagnostic::error(codes::E2020, span,
+                            format!("an integer may be no `{name}`; write `{name}.from_repr({word})`, an `Option[{name}]`, and open it: `if {name}.from_repr({word}) exists as c:`"));
+                    }
+                    self.sink.emit(diagnostic);
                 }
                 Expr { ty: to, kind: ExprKind::Cast { expr: Box::new(inner), to }, span }
             }
@@ -41982,7 +42101,28 @@ impl<'a> Checker<'a> {
             && let Some(arg) = args.iter().find(|arg| matches!(arg.value.kind, ast::ExprKind::Spread(_)))
             && let ast::ExprKind::Spread(spread) = arg.value.kind
         {
-            self.refuse_spread(spread, arg.value.span);
+            // `[TYP-47]` — a pack's values, whose number is not known in generic code, fit no parameters of a
+            // fixed number: `E2021`, giving the callee's first line.
+            let holds = self.lookup(spread.name).is_some_and(|local| self.pack_values.contains_key(&local));
+            if holds {
+                let takes = self.signatures[def.0 as usize].params.len();
+                let takes = match takes {
+                    0 => "none".to_string(),
+                    1 => "one".to_string(),
+                    2 => "two".to_string(),
+                    3 => "three".to_string(),
+                    4 => "four".to_string(),
+                    5 => "five".to_string(),
+                    more => more.to_string(),
+                };
+                let callee_name = self.declared_name(def).unwrap_or_else(|| name.to_string());
+                let line = self.declaration_first_line(def);
+                let what = format!("gives a pack's values, any number of them, and `{callee_name}` takes {takes}");
+                let diagnostic = self.argument_misfit(arg.value.span, span, &callee_name, what, line);
+                self.sink.emit(diagnostic);
+            } else {
+                self.refuse_spread(spread, arg.value.span);
+            }
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         }
         // `[TYP-16]`, `[TYP-18]` — a generic callee is instantiated here: the
@@ -47392,6 +47532,9 @@ impl<'a> Checker<'a> {
         args: &[ast::Arg],
         span: Span,
     ) -> Expr {
+        if matches!(self.types.kind(owner), TyKind::Int(_) | TyKind::Uint(_)) && name.name.is("try_from") && generic_args.is_empty() {
+            return self.synth_int_try_from(owner, args, span);
+        }
         if matches!(self.types.kind(owner), TyKind::Char) && name.name.is("from_u32") && generic_args.is_empty() {
             return self.synth_char_from_u32(args, span);
         }
@@ -51777,8 +51920,14 @@ impl<'a> Checker<'a> {
                     Some(entry) => Some(entry),
                     None => {
                         let (a, b) = (self.interface_shown(first.2), self.interface_shown(second.2));
+                        // `[TYP-24]` — the message names both bounds and the call to write with each.
+                        let mut written = Vec::new();
+                        written.extend(self.written_line(receiver.span));
+                        written.extend(args.iter().filter_map(|arg| self.written_line(arg.span)));
+                        let call = |interface: &str| format!("`{interface}.{}({})`", name.name, written.join(", "));
+                        let line = if written.is_empty() { String::new() } else { format!(": write {} or {}", call(&a), call(&b)) };
                         self.sink.emit(
-                            Diagnostic::error(codes::E2070, name.span, format!("`{}` is offered by both `{a}` and `{b}`", name.name))
+                            Diagnostic::error(codes::E2070, name.span, format!("`{}` is offered by both `{a}` and `{b}`{line}", name.name))
                                 .help(format!("name the one to call: `{b}.{}(…)` with the receiver first", name.name))
                                 .note("two of the parameter's bounds offer this method [TYP-24]"),
                         );
@@ -52782,6 +52931,23 @@ impl<'a> Checker<'a> {
             // an unwritten `mut` stays `E2020`.
             let mode = match (param.mode, expected) {
                 (ast::Mode::Borrow, Some(expected)) if expected.mode == FnParamMode::Owned => {
+                    // `[TYP-23]` — a lambda parameter's word is what is written on it, never inferred: where the
+                    // callable type hands the value over, the lambda writes `owns`.
+                    if resolved != self.common.error {
+                        let written = self.written_line(span).map(|text| {
+                            let word = name.name.to_string();
+                            text.replacen(&format!("({word}"), &format!("(owns {word}"), 1)
+                        });
+                        let mut diagnostic = Diagnostic::error(
+                            codes::E2020,
+                            param.span,
+                            format!("the callable type hands each value over, so this function receives it as its own: write `owns {}`", name.name),
+                        );
+                        if let Some(written) = written {
+                            diagnostic = diagnostic.help(format!("write `{written}`"));
+                        }
+                        self.sink.emit(diagnostic);
+                    }
                     FnParamMode::Owned
                 }
                 (written, _) => fn_param_mode(written),
@@ -61188,6 +61354,12 @@ impl<'a> Checker<'a> {
         let mut assigned = vec![false; params.len()];
         let mut next_positional = 0usize;
         let mut named_seen = false;
+        // `[TYP-25]` — the parameters the call names anywhere: a positional argument after a named one takes
+        // the first parameter no other argument of the call gives, before it or after it.
+        let named_anywhere: Vec<bool> = params
+            .iter()
+            .map(|(param, ..)| args.iter().any(|arg| arg.name.is_some_and(|name| name.name == *param)))
+            .collect();
 
         for (arg_index, arg) in args.iter().enumerate() {
             let slot = if let Some(name) = arg.name {
@@ -61209,7 +61381,8 @@ impl<'a> Checker<'a> {
                 if named_seen {
                     // The line to write names this argument with the first parameter no argument before it gives.
                     let earlier = args[..arg_index].iter().rev().find(|earlier| earlier.name.is_some()).and_then(|earlier| self.written_line(earlier.span));
-                    let free = assigned.iter().position(|taken| !taken).map(|slot| params[slot].0);
+                    let mut misplaced_slot = (0..params.len()).find(|&slot| !assigned[slot] && !named_anywhere[slot]);
+                    let free = misplaced_slot.map(|slot| params[slot].0);
                     let written = self.written_line(call).and(self.written_line(arg.span));
                     let mut what = match (&written, &earlier) {
                         (Some(this), Some(earlier)) => format!("gives `{this}` after the named `{earlier}`, and positional arguments come first"),
@@ -61218,15 +61391,23 @@ impl<'a> Checker<'a> {
                     if let Some(fixed) = free.and_then(|free| self.call_with_argument_named(call, arg.span, free)) {
                         what.push_str(&format!("; write `{fixed}`"));
                     }
-                    let diagnostic = self.argument_misfit(arg.span, call, &callee_shown, what, None);
+                    // Where no parameter is left, the message gives the callee's first line alone.
+                    let diagnostic = self.argument_misfit(arg.span, call, &callee_shown, what, if misplaced_slot.is_some() { None } else { line.clone() });
                     self.sink.emit(diagnostic);
+                    let taken = misplaced_slot.take();
+                    if taken.is_some() {
+                        taken
+                    } else {
+                        continue;
+                    }
+                } else {
+                    while next_positional < assigned.len() && assigned[next_positional] {
+                        next_positional += 1;
+                    }
+                    let slot = (next_positional < params.len()).then_some(next_positional);
+                    next_positional = next_positional.saturating_add(1);
+                    slot
                 }
-                while next_positional < assigned.len() && assigned[next_positional] {
-                    next_positional += 1;
-                }
-                let slot = (next_positional < params.len()).then_some(next_positional);
-                next_positional = next_positional.saturating_add(1);
-                slot
             };
 
             let Some(slot) = slot else { continue };
@@ -63585,9 +63766,8 @@ impl<'a> Checker<'a> {
         if lhs.ty == self.common.error || rhs.ty == self.common.error || self.mentions_error(lhs.ty) || self.mentions_error(rhs.ty) {
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         }
-        // `[TXT-11]` — `a + b` with a `String` on the left consumes it and
-        // returns it extended; `str + str` is `E2040`, whose help is an
-        // f-string.
+        // `[TXT-11]` — `a + b` with a `String` on the left gives a new `String`;
+        // `str + str` is `E2040`, whose help is an f-string.
         if op == ast::BinOp::Add && self.is_text(lhs.ty) && self.is_text(rhs.ty) {
             let str_ty = self.common.str_;
             if lhs.ty == str_ty {
@@ -63602,6 +63782,7 @@ impl<'a> Checker<'a> {
             // `f"{a}{b}"` is, a new `String` of `a`'s text then `b`'s.
             let string_ty = self.common.string;
             let buffer_ref = self.types.intern(TyKind::Ref { mutable: true, inner: string_ty });
+            let (lhs, rhs) = (self.coerce(lhs, str_ty), self.coerce(rhs, str_ty));
             let parts = vec![self.plain_text_piece(lhs), self.plain_text_piece(rhs)];
             return Expr { ty: string_ty, kind: ExprKind::FString { parts, buffer_ref }, span };
         }

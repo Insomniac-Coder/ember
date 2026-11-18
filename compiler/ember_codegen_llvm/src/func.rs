@@ -2370,13 +2370,15 @@ impl<'m, 'a> FnCx<'m, 'a> {
                 return self.fn_to_c(operand, span);
             }
         }
-        let Some(from) = from else { return unsupported("a cast of an untyped operand") };
+        // `[TYP-6]` — `true as int`: a `bool` constant has no type of its own here, and is an `i1`.
+        let bool_constant = matches!(operand, Operand::Const(Const::Bool(_)));
+        let Some(from) = from.or_else(|| bool_constant.then_some(to)) else { return unsupported("a cast of an untyped operand") };
         let types = &self.m.ty;
-        if types.is_f16(from) || types.is_f16(to) {
+        if !bool_constant && (types.is_f16(from) || types.is_f16(to)) {
             return self.half_cast(operand, from, to);
         }
         let to_repr = types.repr(to);
-        let signed = types.is_signed(from);
+        let signed = !bool_constant && types.is_signed(from);
         let (value, sc) = self.scalar(operand)?;
         let Repr::Scalar(to_sc) = to_repr else { return unsupported("a cast to a non-scalar") };
         let result = match (sc, to_sc) {
