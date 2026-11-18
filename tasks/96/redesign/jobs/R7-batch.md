@@ -181,3 +181,27 @@ ERR-9, ERR-13, EXP-4, EXP-5, EXP-10, IFC-3, IFC-4, IFC-5, IFC-6, ATT-1, ATT-2; a
   Hardened_14 and that ruling agree on, and report any clause they do not.
 - `tasks/96/redesign/jobs/review.md`, round 7, holds the rulings on W3's, W4's and W5's questions.
 
+
+## W7 (Sonnet), lane c, job 5: the mode in a parameter's type, what W6 left, diagnostics (28 tasks) (rolling slot)
+
+In this order, each a task:
+
+1. **`E0117` for `ref` too (the lead's ruling on W6's question 1).** `[FN-1]`'s last sentence: "`ref` or `ref mut` written in a
+   parameter's type is `E0117`". Today only `ref mut` is refused (`decls.rs`, about line 1263). It covers the top of a parameter's
+   type only (`a: ref T`, `a: ref mut T`), never a `ref` inside one (`Option[ref T]`). The message gives the line with the word on the
+   name, `ref a: T`, and the diagnostic carries a migration, so that the 17 lines in `std/src` and about 176 in `tests/` are changed by
+   the compiler's own fix (`tasks/96/redesign/jobs/lanes/a_migrate_views.py` shows how migrations are applied). A plain `a: T` is **not**
+   the same migration: `[LT-*]` may return a view of `ref a`.
+2. **ERR-1 (ruling 3):** `println(e)` of an `E` with `Debug` and no `Display` compiles (`[STD-9]`, `[LEX-19]`); with neither it is refused as
+   printing refuses; `main`'s report needs `Display` (`[FN-8]`, built). Tests for every clause, then credit.
+3. **FN-8 (ruling 5):** the `args` clause, invalid bytes decode as U+FFFD: a `#[cfg(unix)]` test in `ember_driver/tests/`. Credit it only if
+   the test has run on Linux (WSL; say if WSL cannot build the compiler, and do not credit it then).
+4. **TYP-10, TYP-17, TYP-23** (as W6's section says). 5. **IFC-3, IFC-4, IFC-5, IFC-6.** 6. **ERR-3, ERR-4, ERR-8.**
+7. **Diagnostics:** DIA-2, DIA-3, DIA-6a, DIA-7, DIA-8, DIA-9, DIA-10, DIA-11, DIA-16, DIA-18, DIA-21, DIA-22, DIA-23, DIA-24, DIA-25.
+
+- **Not this job:** anything of `thread_shared`, `@sync`, `SyncShared`, `THR-*`, `ECS-*`, `ATT-1`, `std/src/sync.em` or `std/src/ecs.em` beyond
+  task 1's lines (the lead is changing them, M4 slice E); `E3063` against `E3060` (lane a's); class-object clauses (M4).
+- **Run `cargo test -p` for every crate you touched, `ember_parser` and `ember_driver` always**, before you finish: W6 skipped them and they found
+  that `ember fmt` crashed on a script.
+- `tasks/96/redesign/jobs/review.md`, round 7, holds the rulings, W6's last.
+
