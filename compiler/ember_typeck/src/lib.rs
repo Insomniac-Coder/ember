@@ -60714,9 +60714,33 @@ impl<'a> Checker<'a> {
                 // A generic body is checked once per instance; report once.
                 && self.reported_defaults.insert(default.span)
             {
+                let mode = params.iter().find(|(n, ..)| *n == name).map_or(Mode::Borrow, |(_, _, mode, _)| *mode);
+                // `[FN-5]` — a default is the argument the caller did not write, and it takes no word:
+                // on a `ref mut` parameter it would be a temporary that ends with the call (`E3027`).
+                if mode == Mode::Mut {
+                    let function = decl.name.name;
+                    let noun = self.value_noun(ty);
+                    let written = self.written_line(param.span).unwrap_or_default();
+                    let plain = written.trim_start_matches("const ").trim_start_matches("ref mut ").to_string();
+                    self.sink.emit(
+                        Diagnostic::error(codes::E3027, default.span, format!("`ref mut {name}` names the caller's place, and a default would be a temporary that ends with the call"))
+                            .help(format!("take the {noun} over, `owns {plain}`, or let the caller pass one: `{function}(ref mut {name})`"))
+                            .note("a default is written only for a plain or an `owns` parameter [FN-5]"),
+                    );
+                    if let Some(local) = self.lookup(name) {
+                        earlier.insert(name, local);
+                    }
+                    continue;
+                }
                 let scopes = std::mem::replace(&mut self.scopes, vec![earlier.clone()]);
                 let locals = self.locals.len();
-                self.check_expr(default, ty);
+                // An `owns` parameter's default is handed over as an argument is: reading an earlier
+                // parameter there is a hand-over of what the function only reads (`E3013`).
+                if mode == Mode::Owned {
+                    self.check_argument_by(default, ty, Mode::Owned, false);
+                } else {
+                    self.check_expr(default, ty);
+                }
                 self.locals.truncate(locals);
                 self.scopes = scopes;
             }
