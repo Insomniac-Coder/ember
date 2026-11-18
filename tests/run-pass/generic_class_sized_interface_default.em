@@ -8,7 +8,7 @@
 #$ assert-c: contains(NULL,)
 
 interface Factory:
-    fn clone() -> Self where Self: needs Sized:
+    fn clone() owns this -> Self where Self: needs Sized:
         return this
 
     fn draw() -> i32
@@ -26,7 +26,7 @@ fn draw_it(value: ref dyn Factory) -> i32:
 
 fn main():
     pixel = Pixel[bool](42, false)
-    clone = pixel.clone()
+    clone = Pixel[bool](42, false).clone()
     println(clone.draw())
     println(draw_it(ref pixel))
     boxed: owns dyn Factory = owns Pixel[bool](42, false)

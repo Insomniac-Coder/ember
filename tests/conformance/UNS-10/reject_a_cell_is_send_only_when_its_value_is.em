@@ -6,10 +6,10 @@
 import std.thread
 from std.mem import UnsafeCell
 
-fn size(c: UnsafeCell[Shared[int]]) -> int:
+fn size(c: UnsafeCell[shares int]) -> int:
     return 1
 
 fn main():
-    held = UnsafeCell(Shared(1))
-    t = thread.spawn(owns owned fn() -> int => size(held))    #$ error[E7004]: the thread's function captures `held`, a `std.mem.UnsafeCell[Shared[i64]]`, which is not Send
+    held = UnsafeCell(shares 1)
+    t = thread.spawn(owns owned fn() -> int => size(held))    #$ error[E7004]: the thread's function captures `held`, a `std.mem.UnsafeCell[shares i64]`, which is not Send
     println(t.join())

@@ -30,4 +30,4 @@ fn main():
     println(payload.project(42))
     factory = Factory[i32](7)
     println(factory.project_default(payload, 42))
-    println(factory.round_trip(payload).project(42))
+    println(factory.round_trip(owns payload).project(42))

@@ -6,7 +6,7 @@
 #$ assert-c: contains(NULL,)
 
 interface Factory:
-    fn clone() -> Self where Self: needs Sized:
+    fn clone() owns this -> Self where Self: needs Sized:
         return this
 
     fn draw() -> i32

@@ -12,14 +12,14 @@ class Node:
 fn main():
     a = Node("a")
     b = Node("b")
-    seen: Set[Node] = Set()
-    seen.add(owns a)
-    seen.add(owns b)
-    seen.add(owns a)
-    other = Node("a")
-    println(len(seen), seen.contains(a), seen.contains(other))
-    m: Map[Node, int] = Map()
-    m[a] = 1
-    m[b] = 2
-    m[a] = 3
-    println(m[a], m[b], len(m))
+    seen: Set[shares Node] = Set()
+    seen.add(shares a)
+    seen.add(shares b)
+    seen.add(shares a)
+    other = shares Node("a")
+    println(len(seen), seen.contains(shares a), seen.contains(other))
+    m: Map[shares Node, int] = Map()
+    m[shares a] = 1
+    m[shares b] = 2
+    m[shares a] = 3
+    println(m[shares a], m[shares b], len(m))

@@ -38,12 +38,12 @@ fn wobbles(x: f64) -> f64:
     return x.sin()
 
 @nosync
-fn retains(t: Token) -> int:
-    copies = [t, t]
+fn retains(t: shares Token) -> int:
+    copies = [shares t, shares t]
     return copies.len()
 
 fn main():
     xs: Array[int] = []
     grows(ref mut xs)
     prints(1)
-    println(waits(), stops(1), wobbles(1.0), retains(Token(1)))
+    println(waits(), stops(1), wobbles(1.0), retains(shares Token(1)))

@@ -8,7 +8,7 @@ fn keep(token: Token):
 
 class Token:
     fn drop():
-        copy = this
+        copy = this #$ error[E3013]: cannot move `this` out of `drop`
         _task = owned fn() => keep(copy) #$ error[E3016]: `drop` ends this `Token`; an owner made from it would point at a freed object; keep a copy of what you need
 
 fn main():

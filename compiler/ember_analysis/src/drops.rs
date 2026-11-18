@@ -144,7 +144,7 @@ impl MovePaths {
         self.places.push(place.clone());
         self.parents.push(parent);
         self.children.push(Vec::new());
-        self.handles.push(matches!(types.kind(ty), TyKind::Class(_) | TyKind::ClassInterface(_)));
+        self.handles.push(matches!(types.kind(ty), TyKind::Class(_) | TyKind::ClassInterface(_) | TyKind::Link { .. }));
 
         let fields: Vec<Ty> = match types.kind(ty) {
             TyKind::Struct(id)
@@ -721,7 +721,7 @@ fn report_drop_self_escape(sink: &mut Sink, types: &TypeTable, self_ty: Ty, span
         _ => None,
     };
     // One mistake, one error (`[DIA-14]`): this says more than the plain move `check_drop_moves` reports.
-    let plain_move = sink.diagnostics().iter().position(|d| d.code == Some(codes::E3013) && d.primary.span == span && d.message.starts_with("cannot move `this` out of `drop`"));
+    let plain_move = sink.diagnostics().iter().position(|d| d.code == Some(codes::E3013) && spans_meet(d.primary.span, span) && d.message.starts_with("cannot move `this` out of `drop`"));
     let line = ember_diag::line_mark(span);
     let help = match field {
         Some(field) => format!("on line {line}, hand over a copy of what you need where it has `this`: `copy of this.{field}`; or move the data out with `mem.take`"),
@@ -742,6 +742,11 @@ fn report_drop_self_escape(sink: &mut Sink, types: &TypeTable, self_ty: Ty, span
         Some(at) => sink.amend(at, |existing| *existing = diagnostic),
         None => sink.emit_classified(diagnostic),
     }
+}
+
+/// Whether two spans of one file share any of it (a statement, and a name inside it).
+fn spans_meet(a: Span, b: Span) -> bool {
+    a.file == b.file && a.start <= b.end && b.start <= a.end
 }
 
 /// Whether a move leaves through `drop`'s `self`: rooted at it, past the borrow.
@@ -805,7 +810,7 @@ fn check_drop_moves(body: &Body, types: &TypeTable, sink: &mut Sink) -> usize {
                 .note("a `drop` body may not take fields out of `this` [DRP-5]; the field is dropped again after `drop` returns [EXP-6]")
                 .help("use `mem.take`, `mem.replace` or `swap` to leave a value in its place"),
             );
-        } else if !sink.diagnostics().iter().any(|d| d.code == Some(codes::E3016) && d.primary.span == span) {
+        } else if !sink.diagnostics().iter().any(|d| d.code == Some(codes::E3016) && spans_meet(d.primary.span, span)) {
             sink.emit_classified(
                 Diagnostic::error(codes::E3013, span, "cannot move `this` out of `drop`")
                     .primary_label("moved out here")

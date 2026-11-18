@@ -10,5 +10,5 @@ class Local:
 class Shared:
     item: Local
 
-    fn init(item: Local):
+    fn init(owns item: Local):
         this.item = item

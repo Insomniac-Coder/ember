@@ -11,7 +11,7 @@ class Local:
 class Holder:
     value: T
 
-    fn init(value: T):
+    fn init(owns value: T):
         this.value = value
 
 fn main():

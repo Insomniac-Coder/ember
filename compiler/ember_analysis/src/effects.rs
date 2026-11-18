@@ -1313,6 +1313,15 @@ impl SiteBuilder<'_> {
                     sites.push(Site { effects, span, origin: Origin::Operation(operation) });
                 }
                 match which {
+                    // `[EFF-1]` — one more owner of a `@sync` object is an atomic count.
+                    Builtin::LinkMake { link, .. } => {
+                        if let TyKind::Link { target, .. } = *self.types.kind(*link)
+                            && let TyKind::Class(id) = *self.types.kind(target)
+                            && self.types.class_def(id).is_sync
+                        {
+                            sites.push(Site { effects: Effects::SYNC, span, origin: Origin::Operation("retaining a `@sync` handle") });
+                        }
+                    }
                     // The elements a call removes are dropped.
                     Builtin::ArrayClear | Builtin::ArrayTruncate => {
                         if let Some(elem) = self.element(*arg_ty) {

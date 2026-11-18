@@ -24,7 +24,7 @@ fn nudge(ref mut p: Point):
 class Tally:
     count: i64
 
-fn keep(t: Tally) -> Tally:
+fn keep(owns t: Tally) -> Tally:
     return t
 
 fn main():
@@ -32,7 +32,7 @@ fn main():
     b = Point(1, 2)
     nudge(ref mut a)
     println(a.x + a.y + b.x)
-    kept = keep(Tally(1))
+    kept = keep(owns Tally(1))
     alone = Tally(2)
     println(kept.count + alone.count)
     println(a.x + a.y + b.y)

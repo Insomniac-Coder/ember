@@ -32,7 +32,8 @@ gen fn blink(c: Counter) -> Generator[Wait]:
         yield wait_frames(2)
 
 gen fn waiting_for(owns c: shares mut Counter) -> Generator[Wait]:
-    yield wait_until(owns owned fn() => c.blinks == 0)
+    watched = shares c
+    yield wait_until(owns owned fn() => watched.blinks == 0)
     c.blinks = 2
 
 fn main():

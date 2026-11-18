@@ -23,6 +23,6 @@ fn main():
         bag.items.push(owns i)
     total = 0
     for i in 0..4:
-        e = Emptier(shares mut bag)
+        _e = Emptier(shares mut bag)
         total = total + bag.items[i]
     println(total)

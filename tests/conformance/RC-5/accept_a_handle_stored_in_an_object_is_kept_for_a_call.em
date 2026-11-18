@@ -22,29 +22,31 @@ class Node:
     v: int
 
     fn poke(owns p: Parent):
-        p.child = Node(9)
+        p.child = shares mut Node(9)
         println("poke", this.v)
 
     fn bump(owns p: Parent):
         r = ref this.v
-        p.child = Node(8)
+        p.child = shares mut Node(8)
         println("bump", r)
 
     fn drop():
         println("drop", this.v)
 
 class Parent:
-    child: Node
+    child: shares mut Node
 
 fn main():
-    p = Parent(Node(1))
-    p.child.poke(owns p)
-    q = Parent(Node(2))
-    q.child.bump(owns q)
-    s = Parent(Node(3))
-    c = s.child
+    p = Parent(shares mut Node(1))
+    first = shares p.child
+    first.poke(owns p)
+    q = Parent(shares mut Node(2))
+    second = shares q.child
+    second.bump(owns q)
+    s = Parent(shares mut Node(3))
+    c = shares s.child
     r = ref c.v
-    s.child = Node(7)
+    s.child = shares mut Node(7)
     println("kept", r)
     mem.drop(c)
     println("end")

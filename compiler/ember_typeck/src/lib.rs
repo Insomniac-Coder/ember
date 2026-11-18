@@ -38581,6 +38581,17 @@ impl<'a> Checker<'a> {
                 span,
             };
         }
+        // `[TYP-5]` item 8 — a view of a class object as a view of its base class.
+        if let (&TyKind::Ref { mutable: found, inner: derived }, &TyKind::Ref { mutable: wanted, inner: base }) =
+            (self.types.kind(expr.ty), self.types.kind(expected))
+            && found == wanted
+            && let (&TyKind::Class(derived), &TyKind::Class(base)) = (self.types.kind(derived), self.types.kind(base))
+            && derived != base
+            && self.types.class_is_subclass_of(derived, base)
+        {
+            let span = expr.span;
+            return Expr { ty: expected, kind: ExprKind::Cast { expr: Box::new(expr), to: expected }, span };
+        }
         // `[TYP-5]` item 8 — a class object's owner or link to a base class, with its word kept: a
         // `shares Dog` to a `shares Animal`, a `weakref Dog` to a `weakref Animal`; the same pointer.
         if let (&TyKind::Link { kind: found, target: derived }, &TyKind::Link { kind: wanted, target: base }) =
@@ -40906,6 +40917,8 @@ impl<'a> Checker<'a> {
                 // before code generation.
                 let to = self.resolve_type(ty);
                 let inner = self.synth_committed(inner);
+                // `[RC-1]` — an owner of a class object is cast as the object it names.
+                let inner = self.read_link_through(inner);
                 let (source, target) = match (self.types.kind(inner.ty), self.types.kind(to)) {
                     (TyKind::Class(source), TyKind::Class(target)) => (*source, *target),
                     // `[FFI-48]` — C++ classes Ember holds as values or behind pointers: their

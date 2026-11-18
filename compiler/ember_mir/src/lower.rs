@@ -6871,7 +6871,11 @@ impl<'a> Builder<'a> {
             self.at(expr.span);
             return Operand::Copy(self.lower_place(expr));
         }
-        self.lower_operand(expr)
+        // An operand of `is` upcast to the other's class stays where it is too.
+        self.lending_upcast = matches!(expr.kind, hir::ExprKind::Cast { .. }) && self.counted_handle(expr.ty);
+        let operand = self.lower_operand(expr);
+        self.lending_upcast = false;
+        operand
     }
 
     fn lower_operand(&mut self, expr: &'a hir::Expr) -> Operand {

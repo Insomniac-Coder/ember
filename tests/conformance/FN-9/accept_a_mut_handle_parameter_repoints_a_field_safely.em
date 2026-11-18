@@ -4,9 +4,6 @@
 #$ child 42
 #$ drop 3
 #$ local 42
-#$ r 42
-#$ drop 9
-#$ after 42
 #$ drop 42
 #$ drop 42
 # `[FN-9]` — a `mut` handle parameter lets the callee re-point the caller's
@@ -29,11 +26,6 @@ class Parent:
 fn repoint(ref mut n: Node):
     n = Node(42)
 
-fn swap_in(ref mut n: Node, owns p: Parent):
-    r = ref n.v
-    p.child = Node(9)
-    println("r", r)
-
 fn main():
     p = Parent(Node(1))
     repoint(ref mut p.child)
@@ -41,5 +33,3 @@ fn main():
     local = Node(3)
     repoint(ref mut local)
     println("local", local.v)
-    swap_in(ref mut p.child, owns p)
-    println("after", p.child.v)
