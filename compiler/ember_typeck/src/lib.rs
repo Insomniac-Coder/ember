@@ -4084,6 +4084,8 @@ struct Checker<'a> {
     /// `[FN-4]` — the function whose body is being checked, and whether it is a `static fn` (it has no
     /// object): what `this` where there is none names in its `E1010`.
     body_fn: Option<(Symbol, bool)>,
+    /// `[FN-4]` — the line that builds the value a `static fn` set through `this`, for its `E1010`.
+    static_this_help: Option<String>,
     /// The default `[TYP-8]` policy when a module has no overflow attribute.
     default_overflow: OverflowPolicy,
     /// Each source module's lexical default, selected before checking bodies.
@@ -4548,6 +4550,7 @@ impl<'a> Checker<'a> {
             reported_defaults: HashSet::new(),
             open: OpenState::default(),
             body_fn: None,
+            static_this_help: None,
         }
     }
 
@@ -25741,10 +25744,54 @@ impl<'a> Checker<'a> {
         let saved = std::mem::replace(&mut self.some_checking, wrappers);
         let is_static = !decl.params.iter().any(|param| matches!(param.kind, ast::ParamKind::Receiver { .. }));
         let outer_fn = self.body_fn.replace((decl.name.name, is_static));
+        let built = if is_static { self.static_build_help(owner, decl, block) } else { None };
+        let outer_help = std::mem::replace(&mut self.static_this_help, built);
         let function = self.check_one_method_inner(owner, decl, block, def, attrs, span);
+        self.static_this_help = outer_help;
         self.body_fn = outer_fn;
         self.some_checking = saved;
         function
+    }
+
+    /// `[FN-4]` — "the help that builds the value is given where the function returns its own type
+    /// and sets each field it names through `this` from its parameters": `build the counter from
+    /// `k`: `return Counter(n=k)``.
+    fn static_build_help(&self, owner: Ty, decl: &ast::FnDecl, block: &ast::Block) -> Option<String> {
+        let own = self.types.display(owner);
+        let own = own.rsplit('.').next().unwrap_or(&own).to_string();
+        let returns_own = matches!(&decl.ret, Some(ast::TypeExpr { kind: ast::TypeKind::Path { segments, .. }, .. }) if segments.last().is_some_and(|last| last.name.as_str() == own));
+        if !returns_own {
+            return None;
+        }
+        let params: Vec<Symbol> = decl.params.iter().filter_map(|param| match &param.kind {
+            ast::ParamKind::Named { name, .. } => Some(name.name),
+            _ => None,
+        }).collect();
+        let mut sets: Vec<(Symbol, Symbol)> = Vec::new();
+        for stmt in &block.stmts {
+            if let ast::StmtKind::Assign { targets, op: None, value } = &stmt.kind
+                && let [target] = targets.as_slice()
+                && let ast::ExprKind::Field { base, name } = &target.kind
+                && matches!(base.kind, ast::ExprKind::SelfExpr)
+                && let ast::ExprKind::Path { segments } = &value.kind
+                && let [from] = segments.as_slice()
+                && params.contains(&from.name)
+            {
+                sets.push((name.name, from.name));
+            }
+        }
+        if sets.is_empty() {
+            return None;
+        }
+        let mut used: Vec<String> = Vec::new();
+        for (_, from) in &sets {
+            let shown = format!("`{from}`");
+            if !used.contains(&shown) {
+                used.push(shown);
+            }
+        }
+        let arguments: Vec<String> = sets.iter().map(|(field, from)| format!("{field}={from}")).collect();
+        Some(format!("build the {} from {}: `return {own}({})`", own.to_lowercase(), used.join(" and "), arguments.join(", ")))
     }
 
     fn check_one_method_inner(
@@ -39032,11 +39079,17 @@ impl<'a> Checker<'a> {
                                     span,
                                     format!("`this` can only be used in a method, and a field default runs before `init`, when there is no object yet; set `{field}` in `init`: write `this.{field} = ...` in `fn init(...):`"),
                                 ),
-                                Some((name, true)) => Diagnostic::error(
-                                    codes::E1010,
-                                    span,
-                                    format!("`this` can only be used in a method, and `{name}` is a `static fn`, not a method"),
-                                ),
+                                Some((name, true)) => {
+                                    let static_error = Diagnostic::error(
+                                        codes::E1010,
+                                        span,
+                                        format!("`this` can only be used in a method, and `{name}` is a `static fn`, not a method"),
+                                    );
+                                    match &self.static_this_help {
+                                        Some(help) => static_error.help(help.clone()),
+                                        None => static_error,
+                                    }
+                                }
                                 Some((name, false)) => Diagnostic::error(
                                     codes::E1010,
                                     span,
