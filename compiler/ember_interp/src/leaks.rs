@@ -6,7 +6,7 @@
 
 use ember_types::{Ty, TyKind};
 
-use crate::object::{payload_offset, shared_inner, weak_inner, Info};
+use crate::object::{payload_offset, shared_inner, Info};
 use crate::{Interp, R};
 
 const LIST_LIMIT: usize = 64;
@@ -40,6 +40,9 @@ impl Interp<'_, '_> {
         match self.types.kind(ty) {
             TyKind::Class(_) => out.push((Some(self.mem.read_u64(addr)?), Kind::Strong, top)),
             TyKind::ClassInterface(_) => out.push((Some(self.mem.read_u64(addr)?), Kind::Strong, false)),
+            // `[RC-1]`, `[WK-11]` — an owner is a strong edge to the block it points at, a link a weak one.
+            TyKind::Link { kind: ember_types::LinkKind::Weakref | ember_types::LinkKind::WeakrefThreadShared, .. } => out.push((Some(self.mem.read_u64(addr)?), Kind::Weak, true)),
+            TyKind::Link { .. } => out.push((Some(self.mem.read_u64(addr)?), Kind::Strong, top)),
             TyKind::Vec { elem, .. } => {
                 let (ptr, len) = (self.mem.read_u64(addr)?, self.mem.read_u64(addr + 8)?);
                 if ptr != 0 {
@@ -52,10 +55,6 @@ impl Interp<'_, '_> {
             TyKind::Struct(id) => {
                 if shared_inner(self.types, *id).is_some() {
                     out.push((Some(self.mem.read_u64(addr)?), Kind::Strong, top));
-                    return Ok(());
-                }
-                if weak_inner(self.types, *id).is_some() {
-                    out.push((Some(self.mem.read_u64(addr)?), Kind::Weak, true));
                     return Ok(());
                 }
                 if let Some(inner) = self.types.compiler_box_inner(*id) {
@@ -129,7 +128,7 @@ impl Interp<'_, '_> {
                     let label = format!("{}.{}", self.types.class_def(owner).name, field.name);
                     let replacement = match self.types.kind(field.ty) {
                         TyKind::Class(target) if self.types.class_def(owner).origin.is_none() => {
-                            Some(format!("Weak[{}]", self.types.class_def(*target).name))
+                            Some(format!("weakref {}", self.types.class_def(*target).name))
                         }
                         _ => None,
                     };

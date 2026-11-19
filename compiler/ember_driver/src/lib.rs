@@ -11,6 +11,7 @@ mod cores;
 mod foreign;
 mod incremental;
 mod migrate;
+mod run_cache;
 mod llvm;
 mod memory;
 mod packages;
@@ -6654,7 +6655,8 @@ fn compile_once(input: &Path, command: &str, options: &Options, attempts: &mut i
     let (mut units, objects): (Vec<PathBuf>, Vec<PathBuf>) =
         sources.into_iter().partition(|path| path.extension().is_some_and(|extension| extension == "c"));
     units.extend(module_unit_paths);
-    ember_build::ninja::build(
+    let mut kept = None;
+    ember_build::ninja::build_unless(
         &toolchain,
         &ember_build::ninja::Program {
             units: &units,
@@ -6668,6 +6670,7 @@ fn compile_once(input: &Path, command: &str, options: &Options, attempts: &mut i
         },
         &retained_symbols,
         &libraries,
+        &mut |key| run_cache::consider(key, options, command, &mut kept),
     )
     .map_err(|e| e.to_string())?;
     mark("C compile and link", "all modules");
@@ -6690,7 +6693,7 @@ fn compile_once(input: &Path, command: &str, options: &Options, attempts: &mut i
         return test_runner::run_tests(&exe, &tests, options, instrumented.as_ref(), &map);
     }
     if command == "run" {
-        return run_program(&exe, options);
+        return run_cache::finish(kept, &exe, options);
     }
 
     eprintln!("built {}", exe.display());
@@ -6945,11 +6948,16 @@ fn run_program(exe: &Path, options: &Options) -> Result<ExitCode, String> {
     if let Some(how) = abnormal_end(&status) {
         eprintln!("error: {how}");
     }
-    Ok(match status.code() {
+    Ok(exit_code_of(status.code()))
+}
+
+/// A program's status as the command's.
+fn exit_code_of(code: Option<i32>) -> ExitCode {
+    match code {
         Some(0) => ExitCode::SUCCESS,
         Some(code) => ExitCode::from(u8::try_from(code).unwrap_or(1)),
         None => ExitCode::FAILURE,
-    })
+    }
 }
 
 /// `[SIMD-2]`, `[SIMD-5]` — every `@simd` loop's verdict, one line each for

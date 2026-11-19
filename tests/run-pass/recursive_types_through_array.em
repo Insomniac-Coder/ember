@@ -17,9 +17,9 @@ struct Tree:
 
 class Node:
     id: i64
-    children: Array[Node]    #$ warning[L3001]: potential reference cycle
+    children: Array[Node]
 
-    fn add(child: Node):
+    fn add(owns child: Node):
         this.children.push(owns child)
 
 # `program` holds the test, so its values die before `main`'s last
@@ -33,8 +33,8 @@ fn program():
     println(tree.kids.len())
     println(tree.kids[0].kids[0].id)
     root = Node(1, Array())
-    root.add(Node(2, Array()))
-    root.add(Node(3, Array()))
+    root.add(owns Node(2, Array()))
+    root.add(owns Node(3, Array()))
     println(root.children.len())
 
 fn main():

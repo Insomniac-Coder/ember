@@ -3,8 +3,8 @@
 # `[ECS-4]` (ODR-218, ODR-255) — `run_parallel` runs each system on another thread, so what a system
 # captures and every component its query reads or writes must be `Send` (`E7004`, naming it, where
 # the system is made: here in the literal, or by `system`), and a component two systems of one
-# run read must be `Sync` (`E7005`, naming both systems). A `Texture` handle is neither (its class
-# is not `@sync`, `[THR-1]`); a `Cell` is `Send` but not `Sync`.
+# run read must be `Sync` (`E7005`, naming both systems). A `shares Texture` owner is neither (it
+# stays on one thread, `[THR-2]`); a `Cell` is `Send` but not `Sync`.
 from std.ecs import World, Query, Mut, Component, system
 
 class Texture:
@@ -15,7 +15,7 @@ class Texture:
 
 @derive(Component)
 struct Sprite:
-    texture: Texture
+    texture: shares Texture
 
 @derive(Component)
 struct Gauge:
@@ -36,8 +36,8 @@ fn read_gauge_too(ref mut q: Query[(Gauge, Pos)]):
 
 fn main():
     w = World()
-    w.run_parallel(owns [draw])  #$ error[E7004]: the system `draw`'s query uses `Sprite`, which is not Send
+    w.run_parallel(owns [draw])  #$ error[E7015]: the system `draw`'s query uses `Sprite`, which is not Send
     w.run_parallel(owns [read_gauge, read_gauge_too])  #$ error[E7005]: systems `read_gauge` and `read_gauge_too` cannot run at once: both read `Gauge`, which is not Sync
-    shared = Texture(1)
-    by_value = system(owns owned fn(ref mut q: Query[Pos]): println(shared.id), "by_value")  #$ error[E7004]: the system `by_value` captures `shared`, a `Texture`, which is not Send
+    shared = shares Texture(1)
+    by_value = system(owns owned fn(ref mut q: Query[Pos]): println(shared.id), "by_value")  #$ error[E7015]: the system `by_value` captures `shared`, a `shares Texture`, which is not Send
     w.run_parallel(owns [by_value])

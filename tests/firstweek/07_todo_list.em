@@ -52,7 +52,7 @@ class TodoList:
         return [t for t in this.tasks if tag in t.tags]
 
     fn print():
-        sorted_tasks = this.tasks.clone()
+        sorted_tasks = copy of this.tasks
         sorted_tasks.sort(key=fn(t) => priority_rank(t.priority))
         for t in sorted_tasks:
             mark = "x" if t.status == Status.Done else " "

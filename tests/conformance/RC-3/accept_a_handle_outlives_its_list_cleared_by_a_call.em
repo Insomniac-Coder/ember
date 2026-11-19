@@ -12,13 +12,13 @@ class Node:
     fn drop():
         println("drop", this.v)
 
-fn wipe(ref mut xs: Array[Node]):
+fn wipe(ref mut xs: Array[shares Node]):
     xs.clear()
 
 fn main():
-    nodes: Array[Node] = []
-    nodes.push(owns Node(3))
-    t = nodes[0]
+    nodes: Array[shares Node] = []
+    nodes.push(owns shares Node(3))
+    t = shares nodes[0]
     wipe(ref mut nodes)
     println(t.v)
     mem.drop(t)

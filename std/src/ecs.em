@@ -304,7 +304,7 @@ pub class World:
 
     ## The storage of `T`, if any entity has had one.
     [T: needs Component]
-    pub fn storage() -> Option[AnyStorage]:
+    pub fn storage() -> Option[ref AnyStorage]:
         match this.storages.get(T.component_hash()):
             Some(found):
                 return Some(found)
@@ -317,7 +317,7 @@ pub class World:
     pub fn entities_with() -> Array[Entity]:
         match this.storages.get(T.component_hash()):
             Some(found):
-                return found.entities.clone()
+                return copy of found.entities
             None:
                 return []
 
@@ -328,7 +328,8 @@ pub class World:
     [Q: needs QueryParam, A, S: needs fn(ref mut Query[Q], A)]
     pub fn run(owns system: S, owns args: A):
         fetched = Q.Ops.fetch(this)
-        q = Query[Q](view=Q.Ops.view(ref fetched), cmds=Commands(false), entities=null[*Entity](), count=0)
+        commands = thread_shared Commands(false)
+        q = Query[Q](view=Q.Ops.view(ref fetched), cmds=thread_shared commands, entities=null[*Entity](), count=0)
         match Q.Ops.driver(q.view):
             Some(list):
                 q.entities = list.as_ptr()
@@ -341,7 +342,7 @@ pub class World:
                 q.count = live.len()
                 system(q, args)
                 _held = live.len()
-        this.apply(q.cmds)
+        this.apply(commands)
 
     ## `[ECS-4]` (ODR-218) — runs `systems` at once, each over its own query on a job of the pool,
     ## once no two of them conflict: two systems conflict when one writes a component the other
@@ -374,9 +375,9 @@ pub class World:
                         pass
         if systems.len() == 0:
             return
-        commands: Array[Commands] = []
+        commands: Array[thread_shared Commands] = []
         for _ in 0..systems.len():
-            commands.push(owns Commands(true))
+            commands.push(owns thread_shared Commands(true))
         parts = systems.as_mut_span().split_at(1)
         (parts.0[0].run_nested)(this, parts.1, commands.as_span())
         for queued in commands:
@@ -728,7 +729,7 @@ extend[T: needs Component] Without[T] implements ParamOps:
     static fn fetch(world: World) -> AnyStorage:
         # `T`'s storage, made in its own layout if no entity has had a `T` yet.
         _made = T.Read.fetch(world)
-        return world.storages[T.component_hash()]
+        return cast world.storages[T.component_hash()] as AnyStorage
 
     static fn view(fetch: ref AnyStorage) -> Without[T]:
         return Without[T](set=SetView(entities=fetch.entities.as_span(), sparse=fetch.sparse.as_span()))
@@ -1110,7 +1111,7 @@ extend[A: needs QueryParam, B: needs QueryParam, C: needs QueryParam, D: needs Q
 [Q: needs QueryParam]
 pub struct Query:
     view: Q.Ops.View
-    cmds: Commands
+    cmds: thread_shared Commands
     ## The entities it visits, in order (`count` of them from `entities`): those of the shortest
     ## storage it requires, which the view holds, or, requiring none, every live entity of the
     ## world, whose list the run holds as it holds the storages (ODR-142). The query holds no handle
@@ -1126,8 +1127,8 @@ pub struct Query:
 
     ## `[ECS-5]` — the buffer for adding, removing and destroying while iterating: applied after
     ## the system returns.
-    pub fn commands() -> Commands:
-        return this.cmds
+    pub fn commands() -> ref thread_shared Commands:
+        return ref this.cmds
 
 ## `q.iter()`.
 [Q: needs QueryParam]
@@ -1226,9 +1227,8 @@ extend[T: needs Component] AddChange[T] implements Change:
                 pass
 
 ## `[ECS-5]` — the changes a system asks for while it iterates, in order: applied to the world
-## after the system returns (`World.run`), so no storage changes under a query. `@sync`: a system
+## after the system returns (`World.run`), so no storage changes under a query. `thread_shared`: a system
 ## `run_parallel` runs fills its own on a job, and the calling thread applies it (`[THR-1]`).
-@sync
 pub class Commands:
     queued: Mutex[Array[owns dyn Change]]
     ## Whether a system `run_parallel` runs fills it, on another thread.
@@ -1275,7 +1275,7 @@ pub class Commands:
 pub struct System:
     pub name: StrView
     accesses_of: fn(ref mut Array[Access])
-    run_nested: fn(World, ref mut MutSpan[System], Span[Commands])
+    run_nested: fn(World, ref mut MutSpan[System], Span[thread_shared Commands])
 
     ## `[ECS-4]` — the components it reads and writes.
     ## It allocates a new `Array`.
@@ -1289,7 +1289,7 @@ pub struct System:
 ## must be `Send` (`E7004`, naming it, where `system` is called).
 [Q: needs QueryParam, B: needs fn(ref mut Query[Q])]
 pub fn system(owns body: B, name: StrView) -> System:
-    return System(name=name, accesses_of=owned fn(ref mut out: Array[Access]) => Q.Ops.accesses(ref mut out), run_nested=owned fn(world: World, ref mut rest: MutSpan[System], commands: Span[Commands]) => run_staged[Q, B](world, ref mut body, ref mut rest, commands))
+    return System(name=name, accesses_of=owned fn(ref mut out: Array[Access]) => Q.Ops.accesses(ref mut out), run_nested=owned fn(world: World, ref mut rest: MutSpan[System], commands: Span[thread_shared Commands]) => run_staged[Q, B](world, ref mut body, ref mut rest, commands))
 
 ## What a system's job is handed: its function and its query, both the staging frame's.
 [B, T]
@@ -1300,7 +1300,7 @@ struct SystemWork:
 ## SAFETY: `system` requires what the function captures, and every component its query reads or
 ## writes, to be `Send`, and `run_parallel` requires a component two systems read to be `Sync`
 ## (`[THR-8]`, ODR-255): nothing the job reaches is used by two threads unless that is allowed. The
-## query holds no class handle but its `@sync` `Commands`.
+## query holds no class handle but its `thread_shared` `Commands`.
 unsafe extend[B, T] SystemWork[B, T] implements Send:
     pass
 
@@ -1313,9 +1313,9 @@ fn run_work(ref mut work: SystemWork[B, Query[Q]]):
 ## on the calling thread; its function run as a job of the pool while the systems after it are
 ## staged inside this one's scope, whose end waits for the job.
 [Q: needs QueryParam, B: needs fn(ref mut Query[Q])]
-fn run_staged(world: World, ref mut body: B, ref mut rest: MutSpan[System], commands: Span[Commands]):
+fn run_staged(world: World, ref mut body: B, ref mut rest: MutSpan[System], commands: Span[thread_shared Commands]):
     fetched = Q.Ops.fetch(world)
-    q = Query[Q](view=Q.Ops.view(ref fetched), cmds=commands[0], entities=null[*Entity](), count=0)
+    q = Query[Q](view=Q.Ops.view(ref fetched), cmds=thread_shared commands[0], entities=null[*Entity](), count=0)
     # ODR-142: the world's live entities, held for the run (no system changes them while it runs).
     live = world.live.as_span()
     match Q.Ops.driver(q.view):

@@ -33,8 +33,8 @@ fn main():
     total = sum(counts.values())
     println(f"{total} words, {counts.len()} distinct")
 
-    pairs = [(word.clone(), n) for word, n in counts.items()]
-    pairs.sort_by_key(owns fn(p) => (-p.1, p.0.clone()))
+    pairs = [(copy of word, n) for word, n in counts.items()]
+    pairs.sort_by_key(owns fn(p) => (-p.1, copy of p.0))
     println("top ten:")
     for i, (word, n) in pairs[..10].iter().enumerate():
         bar = "#".repeat(n)
@@ -46,7 +46,7 @@ fn main():
             longest = word
     println(f"longest word: {longest}")
 
-    once = [w.clone() for w, n in counts.items() if n == 1]
+    once = [copy of w for w, n in counts.items() if n == 1]
     println(f"{once.len()} words appear only once")
 
     by_length: Map[int, int] = {}

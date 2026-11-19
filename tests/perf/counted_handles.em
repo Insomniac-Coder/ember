@@ -11,16 +11,16 @@ class Cell:
 
 @overflow(wrap)
 fn main():
-    cells: Array[Cell] = []
+    cells: Array[shares mut Cell] = []
     for i in 0..1000:
-        cells.push(owns Cell(i))
-    ring: Array[Cell] = []
+        cells.push(owns shares mut Cell(i))
+    ring: Array[shares mut Cell] = []
     for i in 0..1000:
-        ring.push(owns cells[i])
+        ring.push(owns shares mut cells[i])
     total = 0
     for round in 0..20000:
         for i in 0..ring.len():
-            ring[i] = cells[(i * 7 + round) % cells.len()]
+            ring[i] = shares mut cells[(i * 7 + round) % cells.len()]
         for i in 0..ring.len():
             total = total + ring[i].value
     println(total)

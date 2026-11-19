@@ -34,6 +34,14 @@ BACKEND = os.environ.get('EMBER_BACKEND') or 'llvm'
 # The default backend's run checks everything; another's, the runs only.
 FULL = BACKEND == 'llvm'
 ALL_PROFILES = os.environ.get('EMBER_PROFILES') == 'all'
+# A run whose program and input have not changed gives its recorded result (`ember_driver::run_cache`):
+# `EMBER_NO_RUN_CACHE=1` runs everything. The merge suite and the push gate never use it. What may print
+# something else from one run to the next is always run: threads, time, chance, the outside world.
+RUN_CACHE = None if os.environ.get('EMBER_NO_RUN_CACHE') else os.path.join(ROOT, 'target', 'run-cache')
+RUN_CACHE_LIMIT = 256 << 20
+ALWAYS_RUN = re.compile(r'\b(thread|Thread|thread_shared|scope|spawn|parallel|run_parallel|Mutex|RwLock|Atomic|channel|Sender|Receiver'
+                        r'|Condvar|Once|job|Job|time|Instant|Duration|clock|sleep|random|rand|fs|File|env|process|net|Socket|args'
+                        r'|extern|ffi|import c|unsafe|@unsafe|reload)\b')
 
 if os.name == 'nt':
     # SEM_NOGPFAULTERRORBOX, inherited by every program this starts: a test program that
@@ -84,14 +92,26 @@ def program_args(text):
     return [line[len('#$ args:'):].strip() for line in text.splitlines() if line.startswith('#$ args:')]
 
 
-def run(args, path, stdin=None, after=()):
+def trim_run_cache():
+    """The recorded runs start again when they pass their limit: stale ones are never read."""
+    if RUN_CACHE and os.path.isdir(RUN_CACHE):
+        files = [entry for entry in os.scandir(RUN_CACHE) if entry.is_file()]
+        if sum(entry.stat().st_size for entry in files) > RUN_CACHE_LIMIT:
+            for entry in files:
+                os.unlink(entry.path)
+
+
+def run(args, path, stdin=None, after=(), keep=False):
     after = ['--', *after] if after else []
     # `[TST-31]` — `#$ count_bits: 8` builds the program and the runtime with 8-bit counts, and the
     # evaluator counts the same way, as the conformance suite does.
     env = None
     with open(path, encoding='utf-8') as source:
-        if re.search(r'^#\$ count_bits:\s*8\s*$', source.read(), re.M):
-            env = dict(os.environ, EMBER_COUNT_BITS='8')
+        text = source.read()
+    if re.search(r'^#\$ count_bits:\s*8\s*$', text, re.M):
+        env = dict(os.environ, EMBER_COUNT_BITS='8')
+    if keep and RUN_CACHE and not ALWAYS_RUN.search(text):
+        env = dict(env or os.environ, EMBER_RUN_CACHE=RUN_CACHE)
     result = subprocess.run([EMBER, *args, path, *after], cwd=ROOT, capture_output=True, text=True,
                             input=stdin if stdin is not None else '',
                             encoding='utf-8', errors='replace', env=env)
@@ -178,7 +198,7 @@ def check(path):
         profiles = [p.strip() for p in listed[1].split(',') if p.strip()] if listed and ALL_PROFILES else [profile]
         return [f'{each}: {problem}' if len(profiles) > 1 else problem
                 for each in profiles for problem in run_problems(path, text, each, kind)[0]]
-    problems = []
+    problems = emitted_c_problems(path, text)
     exit_code, found = produced(path, profile, compiler_flags(text), checking_command(text))
     claimed = [False] * len(found)
     for _, code, message, line in annotations(text):
@@ -207,13 +227,47 @@ def check(path):
     return problems
 
 
+def emitted_c_problems(path, text):
+    """`#$ assert-c:`, `assert-c-count:` and `assert-c-order:` against the C the test's profiles emit: each
+    profile but `debug`, or `debug` when it is the only one, as the cargo harness reads them."""
+    lines = re.findall(r'^\s*#\$ (assert-c(?:-count|-order)?):(.*)$', text, re.M)
+    if not lines:
+        return []
+    listed = re.search(r'^#\$ profiles:\s*(.*)$', text, re.M)
+    profiles = [p.strip() for p in listed[1].split(',') if p.strip()] if listed else ['debug']
+    problems = []
+    for profile in [p for p in profiles if p != 'debug'] or profiles:
+        code, c, err = run(['build', '--backend', 'c', '--emit', 'c', '--profile', profile], path)
+        if code != 0:
+            problems.append(f'{profile}: the C was not emitted: {err.strip()[:200]!r}')
+            continue
+        for key, value in lines:
+            value = value.strip()
+            if key == 'assert-c':
+                wanted = not value.startswith('!')
+                needle = re.sub(r'^contains\(|\)$', '', value.lstrip('!').strip()).strip('"')
+                if (needle in c) != wanted:
+                    problems.append(f'{profile}: the C {"lacks" if wanted else "has"} {needle!r}')
+            elif key == 'assert-c-count':
+                body, _, count = value.rpartition('==')
+                needle = re.sub(r'^contains\(|\)$', '', body.strip()).strip('"')
+                if c.count(needle) != int(count):
+                    problems.append(f'{profile}: the C has {needle!r} {c.count(needle)} times, not {count.strip()}')
+            else:
+                first, _, second = value.partition(' then ')
+                first, second = first.strip().strip('"'), second.strip().strip('"')
+                if first not in c or second not in c or c.find(first) >= c.find(second):
+                    problems.append(f'{profile}: the C does not have {first!r} before {second!r}')
+    return problems
+
+
 def run_problems(path, text, profile, kind):
     """The compiled run's problems against the test's `stdout`, `stderr`, `exit` and `panics`,
     and the run's status and output."""
     problems = []
     backend = ['--backend', BACKEND]
     code, out, err = run(['run', '--profile', profile, *backend, '--out-dir', out_dir(path)], path,
-                         expected_stdin(text), program_args(text))
+                         expected_stdin(text), program_args(text), keep=True)
     exit_line = re.search(r'^#\$ exit:\s*(-?\d+)\s*$', text, re.M)
     expected_exit = int(exit_line[1]) if exit_line else 0
     stdout = expected_stdout(text)
@@ -312,6 +366,7 @@ def main():
         # (2026-11-13, the laptop at 102 °C): at most 16 at once, and one full run at a time.
         workers = min(int(os.environ.get('RUST_TEST_THREADS') or 0) or os.cpu_count(), 16)
         one_full_run_at_a_time(len(everything))
+        trim_run_cache()
         with ThreadPoolExecutor(max_workers=workers) as pool:
             found = dict(zip(everything, pool.map(check, everything)))
 

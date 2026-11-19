@@ -6,24 +6,23 @@
 #$ assert-c: contains("ember_weak_release(")
 #$ assert-c: contains("ember_weak_upgrade(")
 
-# A Weak[C] returned from a class field remains a valid but expired observer
+# A weakref C returned from a class field remains a valid but expired observer
 # once both the source Holder and its final Token owner leave the helper. Its
-# control block survives solely for the returned weak handle; upgrade is None.
+# control block survives solely for the returned link; upgrade is None.
 class Token:
     value: i32
 
 class Holder:
-    weak: Weak[Token]
+    weak: weakref Token
 
-fn expired() -> Weak[Token]:
+fn expired() -> weakref Token:
     strong = Token(7)
-    holder = Holder(Weak(strong))
-    return holder.weak
+    holder = Holder(weakref strong)
+    return weakref holder.weak
 
 fn main():
     weak = expired()
-    match weak.upgrade():
-        Some(_):
-            println(0)
-        None:
-            println(7)
+    if weak exists as _:
+        println(0)
+    else:
+        println(7)

@@ -6,13 +6,13 @@
 # runtime; ordinary `run-pass` verification confirms the program itself is
 # still valid when the diagnostic mode is disabled.
 class Node:
-    next: Option[Node] = None    #$ warning[L3001]: potential reference cycle
-    previous: Weak[Node] = Weak[Node].empty()
+    next: Option[shares mut Node] = None    #$ warning[L3001]: potential reference cycle
+    previous: weakref Node = None
 
-    fn link():
-        this.next = Some(this)
-        this.previous = Weak(this)
+    static fn link(owns me: shares mut Node):
+        me.next = Some(shares mut me)
+        me.previous = weakref me
 
 fn main():
     node = Node()
-    node.link()
+    Node.link(shares mut node)

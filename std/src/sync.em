@@ -28,13 +28,6 @@
 ## own. `o.is_completed()` tells whether the run has finished. A `Once` is `Send` and `Sync`. A
 ## `call_once` inside the run it is waiting for never returns.
 ##
-## `[HEAP-10]` — `SyncShared[T]` is `Shared[T]` for several threads: `SyncShared(value)` makes the
-## first owner, a copy is another (its counts are atomic), and the last one's end drops the value,
-## on whichever thread that is. It offers `get() -> ref T` only: mutation goes through `T`'s own
-## locks or atomics. It and its `Weak` are `Send` and `Sync` when `T` is both (`[THR-8]`,
-## `[THR-9]`). The compiler builds it as it builds `Shared`; the declaration here gives it its
-## name.
-##
 ## `[THR-15]` — `channel[T](capacity=n)` makes a queue of at most `n` values (one or more) that any
 ## number of `Sender[T]`s fill and one `Receiver[T]` empties, in order; `channel_unbounded[T]()` one
 ## with no bound, which allocates as it grows. `tx.send(v)` waits while the queue is full and gives
@@ -116,10 +109,6 @@ const ONCE_RUNNING: u32 = 1
 const ONCE_DONE: u32 = 2
 
 [T]
-pub struct SyncShared:
-    value: *mut T
-
-[T]
 pub struct SendError:
     ## The value that was not sent.
     pub value: T
@@ -192,10 +181,10 @@ struct ChannelState:
 
 [T]
 pub struct Sender:
-    state: SyncShared[ChannelState[T]]
+    state: thread_shared ChannelState[T]
 
     pub fn send(owns value: T) -> Result[void, SendError[T]]:
-        state = this.state.get()
+        state = this.state
         waited = false
         while true:
             seen: u32 = 0
@@ -218,7 +207,7 @@ pub struct Sender:
         return Ok(())
 
     pub fn try_send(owns value: T) -> Result[void, SendError[T]]:
-        state = this.state.get()
+        state = this.state
         with q = state.queue.lock():
             if q.receiver_gone:
                 return Err(SendError(value, true))
@@ -232,7 +221,7 @@ pub struct Sender:
         return Err(SendError(value, false))
 
     fn drop():
-        state = this.state.get()
+        state = this.state
         if state.senders.fetch_sub(1) == 1:
             with q = state.queue.lock():
                 if q.receiver_waiting:
@@ -242,15 +231,15 @@ pub struct Sender:
 
 extend[T] Sender[T] implements Clone:
     fn clone() -> Sender[T]:
-        this.state.get().senders.fetch_add(1, MemoryOrder.Relaxed)
-        return Sender(this.state)
+        this.state.senders.fetch_add(1, MemoryOrder.Relaxed)
+        return Sender(thread_shared this.state)
 
 [T]
 pub struct Receiver:
-    state: SyncShared[ChannelState[T]]
+    state: thread_shared ChannelState[T]
 
     pub fn recv() -> Option[T]:
-        state = this.state.get()
+        state = this.state
         while true:
             seen: u32 = 0
             with q = state.queue.lock():
@@ -269,7 +258,7 @@ pub struct Receiver:
         return None
 
     pub fn try_recv() -> Option[T]:
-        state = this.state.get()
+        state = this.state
         with q = state.queue.lock():
             value = q.pop()
             if value.is_some() and q.senders_waiting > 0:
@@ -281,7 +270,7 @@ pub struct Receiver:
         return this.recv()
 
     fn drop():
-        state = this.state.get()
+        state = this.state
         with q = state.queue.lock():
             q.receiver_gone = true
             if q.senders_waiting > 0:
@@ -306,5 +295,5 @@ fn open_channel(capacity: int) -> (Sender[T], Receiver[T]):
     while slots.len() < capacity:
         slots.push(owns None)
     queue = ChannelQueue(slots, 0, 0, false, false, 0)
-    state = SyncShared(ChannelState(Mutex(queue), capacity, Atomic(1), Atomic(0), Atomic(0)))
-    return (Sender(state), Receiver(state))
+    state = thread_shared ChannelState(Mutex(queue), capacity, Atomic(1), Atomic(0), Atomic(0))
+    return (Sender(thread_shared state), Receiver(state))

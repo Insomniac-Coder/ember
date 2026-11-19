@@ -69,7 +69,7 @@ pub fn surviving_count_operations(bodies: &[Body], types: &TypeTable) -> Vec<Cou
                             note(stmt.span, true, reason);
                         }
                     }
-                    StmtKind::Drop { place, .. } if counted(types, place_type(body, types, place)) && !uncounted(body, place) => {
+                    StmtKind::Drop { place, .. } if ended_by_count(types, place_type(body, types, place)) && !uncounted(body, place) => {
                         let reason = if place.projection.is_empty() {
                             format!("{} ends here, releasing its count", described(body, place))
                         } else {
@@ -79,6 +79,13 @@ pub fn surviving_count_operations(bodies: &[Body], types: &TypeTable) -> Vec<Cou
                     }
                     _ => {}
                 }
+            }
+            // `[RC-1]` — one more owner, and where it goes.
+            if let Terminator::Call { func: FuncRef::Builtin { which: Builtin::LinkMake { kind, .. }, .. }, args, dest, next } = &data.terminator
+                && !kind.is_weak()
+                && let Some(Operand::Copy(source) | Operand::Move(source)) = args.first()
+            {
+                note(data.terminator_span, true, owner_reason(body, source, dest, next.0 as usize));
             }
             // `Array.push` copies a `Copy` value into the list (the backend's
             // `[RC-1]` retain before `ember_vec_push`).
@@ -125,6 +132,11 @@ pub fn retained_classes(bodies: &[Body], types: &TypeTable) -> HashSet<ClassId> 
                     classes_in(types, place_type(body, types, place), &mut found, &mut HashSet::new());
                 }
             }
+            if let Terminator::Call { func: FuncRef::Builtin { which: Builtin::LinkMake { kind, link }, .. }, .. } = &data.terminator
+                && !kind.is_weak()
+            {
+                classes_in(types, *link, &mut found, &mut HashSet::new());
+            }
             if let Terminator::Call { func, args, .. } = &data.terminator {
                 for (index, argument) in args.iter().enumerate() {
                     let Operand::Copy(place) = argument else { continue };
@@ -167,6 +179,7 @@ fn classes_in(types: &TypeTable, ty: Ty, found: &mut HashSet<ClassId>, seen: &mu
             }
         }
         TyKind::Array { elem, .. } => classes_in(types, *elem, found, seen),
+        TyKind::Link { target, .. } => classes_in(types, *target, found, seen),
         _ => {}
     }
 }
@@ -174,6 +187,30 @@ fn classes_in(types: &TypeTable, ty: Ty, found: &mut HashSet<ClassId>, seen: &mu
 /// A value whose copy is a count operation: `Copy`, yet with a drop.
 fn counted(types: &TypeTable, ty: Ty) -> bool {
     types.is_copy(ty) && types.needs_drop(ty)
+}
+
+/// A value whose end gives a count back: a counted copy, or an owner (`[RC-1]`).
+fn ended_by_count(types: &TypeTable, ty: Ty) -> bool {
+    counted(types, ty) || matches!(types.kind(ty), TyKind::Link { kind, .. } if !kind.is_weak())
+}
+
+/// Why an owner made here keeps a count: what the block after it does with it.
+fn owner_reason(body: &Body, source: &Place, made: &Place, next: usize) -> String {
+    let data = &body.blocks[next];
+    for stmt in &data.stmts {
+        if let StmtKind::Assign { place: target, rvalue: Rvalue::Use(Operand::Move(moved)) } = &stmt.kind
+            && moved == made
+            && !target.projection.is_empty()
+        {
+            return format!("{} is stored into {}, which keeps a count of its own", described(body, source), described(body, target));
+        }
+    }
+    if let Terminator::Call { func: FuncRef::Builtin { which: Builtin::ArrayPush, .. }, args, .. } = &data.terminator
+        && matches!(args.get(1), Some(Operand::Move(moved)) if moved == made)
+    {
+        return format!("{} is pushed into a list, which keeps a count of its own", described(body, source));
+    }
+    format!("one more owner of {} is made", described(body, source))
 }
 
 /// `[RC-3]` — a handle the uncounted-handle analysis marked: its copies and

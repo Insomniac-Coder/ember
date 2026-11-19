@@ -9,31 +9,30 @@
 #$ assert-c: !contains("ember_box_new_copy")
 
 # A weak observer returned from a Box[dyn Observe] adapter remains valid after
-# both the box payload and its last Shared owner leave scope. It retains only
+# both the box payload and its last `shares` owner leave scope. It retains only
 # the control block, so the later upgrade must take the None arm.
 interface Observe:
-    fn observer() -> Weak[Shared[Token]]
+    fn observer() -> weakref Token
 
 struct Token:
     value: i32
 
 [T]
 class Observer implements Observe:
-    weak: Weak[Shared[Token]]
+    weak: weakref Token
     marker: T
 
-    fn observer() -> Weak[Shared[Token]]:
-        return this.weak
+    fn observer() -> weakref Token:
+        return weakref this.weak
 
-fn expired() -> Weak[Shared[Token]]:
-    strong = Shared(Token(7))
-    boxed: owns dyn Observe = owns Observer[bool](Weak(strong), true)
+fn expired() -> weakref Token:
+    strong = shares mut Token(7)
+    boxed: owns dyn Observe = owns Observer[bool](weakref strong, true)
     return boxed.observer()
 
 fn main():
     weak = expired()
-    match weak.upgrade():
-        Some(_):
-            println(0)
-        None:
-            println(7)
+    if weak exists as _:
+        println(0)
+    else:
+        println(7)

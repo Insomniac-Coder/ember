@@ -26,7 +26,7 @@ gen fn texts(times: int) -> Generator[String]:
             continue
         s.push_str("ab-")
         if n == 2:
-            yield s.clone()
+            yield copy of s
             break
 
 gen fn fibonacci() -> Generator[int]:

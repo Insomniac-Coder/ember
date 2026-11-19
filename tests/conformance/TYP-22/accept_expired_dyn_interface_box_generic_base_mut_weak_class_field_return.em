@@ -9,44 +9,43 @@
 #$ assert-c: contains("ember_weak_upgrade(")
 #$ assert-c: !contains("ember_box_new_copy")
 
-# A mutable dynamic call may return Weak[Token] from a generic base field after
+# A mutable dynamic call may return weakref Token from a generic base field after
 # updating an inherited counter. When the box and final Token owner leave the
 # helper, the returned observer must follow the expired upgrade path.
 interface Revise:
-    fn observer() -> Weak[Token]
+    fn observer() -> weakref Token
 
 class Token:
     value: i32
 
 [T]
 open class Base:
-    weak: Weak[Token]
+    weak: weakref Token
     marker: T
     count: i32
 
-    fn init(weak: Weak[Token], marker: T):
-        this.weak = weak
+    fn init(weak: weakref Token, marker: T):
+        this.weak = weakref weak
         this.marker = marker
         this.count = 0
 
 [T]
 class Holder(Base[T]) implements Revise:
-    fn init(weak: Weak[Token], marker: T):
+    fn init(weak: weakref Token, marker: T):
         super.init(weak, marker)
 
-    fn observer() -> Weak[Token]:
+    fn observer() -> weakref Token:
         this.count = this.count + 1
-        return this.weak
+        return weakref this.weak
 
-fn expired() -> Weak[Token]:
+fn expired() -> weakref Token:
     strong = Token(7)
-    boxed: owns dyn Revise = owns Holder[bool](Weak(strong), true)
+    boxed: owns dyn Revise = owns Holder[bool](weakref strong, true)
     return boxed.observer()
 
 fn main():
     weak = expired()
-    match weak.upgrade():
-        Some(_):
-            println(0)
-        None:
-            println(7)
+    if weak exists as _:
+        println(0)
+    else:
+        println(7)

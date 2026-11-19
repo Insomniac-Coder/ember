@@ -4,7 +4,6 @@
 #$ stdout: 5
 #$ assert-c: contains(EMBER_TI_SYNC)
 
-@sync
 [T]
 class Holder:
     value: T
@@ -13,5 +12,5 @@ class Holder:
         this.value = value
 
 fn main():
-    holder = Holder(5)
+    holder = thread_shared Holder(5)
     println(holder.value)

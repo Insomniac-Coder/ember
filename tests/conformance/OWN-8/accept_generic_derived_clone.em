@@ -11,7 +11,7 @@ struct Wrapper:
 
 [T: needs Clone]
 fn duplicate(value: T) -> T:
-    return value.clone()
+    return copy of value
 
 fn main():
     original = Wrapper(42)

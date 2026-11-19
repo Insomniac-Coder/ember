@@ -44,7 +44,7 @@ struct Tree:
 fn main():
     p = Point(x=1, y=2.5)
     println(p)
-    println(Line(a=p.clone(), name="l"))
+    println(Line(a=copy of p, name="l"))
     println(Shape.Circle(1.5), Shape.Rect(2, 3), Shape.Empty)
     m = Mode.Slow
     println(m)
@@ -52,5 +52,5 @@ fn main():
     println(f"{m} {m!r} {p} [{m!s:>6}]")
     println(Pair[int](left=1, right=2))
     println(Tree(value=1, kids=[Tree(value=2, kids=[])]))
-    o: Option[Point] = Some(p.clone())
+    o: Option[Point] = Some(copy of p)
     println(o)

@@ -140,7 +140,8 @@ impl<'a> Types<'a> {
             },
             // ODR-278 — a function item holds nothing.
             TyKind::Void | TyKind::Never | TyKind::Error | TyKind::Opaque(_) | TyKind::FnItem { .. } => Repr::Zst,
-            TyKind::CStr | TyKind::Class(_) | TyKind::ClassInterface(_) => Repr::Scalar(Sc::Ptr),
+            // `[RC-1]`, `[WK-11]` (D4) — an owner or a link is one pointer, as a class handle is.
+            TyKind::CStr | TyKind::Class(_) | TyKind::ClassInterface(_) | TyKind::Link { .. } => Repr::Scalar(Sc::Ptr),
             TyKind::Ref { inner, .. } | TyKind::Ptr { inner, .. } if !matches!(self.kind(*inner), TyKind::Dyn { .. }) => {
                 Repr::Scalar(Sc::Ptr)
             }

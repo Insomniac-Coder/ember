@@ -6,13 +6,12 @@
 import std.thread
 from std.sync import Atomic
 
-@sync
 class Counter:
     hits: Atomic[int] = Atomic(0)
 
 fn main():
-    counter = Counter()
-    mine = counter
+    counter = thread_shared Counter()
+    mine = thread_shared counter
     worker = thread.spawn(owns owned fn() => mine.hits.fetch_add(2))
     worker.join()
     println(counter.hits.load())

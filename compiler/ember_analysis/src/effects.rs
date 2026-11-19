@@ -20,7 +20,7 @@ use ember_diag::{Diagnostic, Sink, codes};
 use ember_hir::{Builtin, Effects, FloatLib, SimdOp};
 use ember_mir::{AggregateKind, AssertKind, Body, CastKind, FuncRef, Operand, Rvalue, StmtKind, Terminator};
 use ember_span::Span;
-use ember_types::{ClassId, OverflowPolicy, Ty, TyKind, TypeTable};
+use ember_types::{ClassId, LinkKind, OverflowPolicy, Ty, TyKind, TypeTable};
 
 use crate::regions::place_type;
 use crate::targets::Targets;
@@ -442,15 +442,16 @@ pub fn storage_mechanism(types: &TypeTable, ty: Ty) -> &'static str {
         TyKind::Class(_) | TyKind::ClassInterface(_) => "class",
         TyKind::Tuple(_) | TyKind::Array { .. } | TyKind::ArrayN { .. } | TyKind::Enum(_) => AGGREGATE,
         TyKind::Dyn { .. } => "owns T",
+        TyKind::Link { kind: LinkKind::Shares | LinkKind::SharesMut, .. } => "shares T, shares mut T",
+        TyKind::Link { kind: LinkKind::ThreadShared, .. } => "thread_shared T",
+        TyKind::Link { kind: LinkKind::Weakref | LinkKind::WeakrefThreadShared, .. } => "weakref T",
         // `[SEL-1]` — the compiler's block of one owner, `owns T`, by the type itself.
         TyKind::Struct(id) if types.compiler_box_inner(*id).is_some() => "owns T",
         TyKind::Struct(_) => {
             let shown = types.display(ty);
             let head = shown.split('[').next().unwrap_or("");
             match head.rsplit('.').next().unwrap_or(head) {
-                "Shared" => "Shared[T]",
                 "SyncShared" => "SyncShared[T]",
-                "Weak" => "Weak[O]",
                 "Arena" | "FixedArena" | "ScopedArena" | "ArenaArray" | "ArenaMap" => "Arena, FixedArena",
                 "Pool" | "Handle" => "Pool[T] + Handle[T]",
                 "Cell" | "RefCell" | "OnceCell" => "Cell[T], RefCell[T]",
@@ -1242,7 +1243,7 @@ impl SiteBuilder<'_> {
         if let TyKind::Class(id) = self.types.kind(place_type(body, self.types, place))
             && self.types.class_def(*id).is_sync
         {
-            sites.push(Site { effects: Effects::SYNC, span, origin: Origin::Operation("retaining a `@sync` handle") });
+            sites.push(Site { effects: Effects::SYNC, span, origin: Origin::Operation("one more owner of a `thread_shared` object") });
         }
     }
 
@@ -1316,6 +1317,15 @@ impl SiteBuilder<'_> {
                     sites.push(Site { effects, span, origin: Origin::Operation(operation) });
                 }
                 match which {
+                    // `[EFF-1]` — one more owner of a `thread_shared` object is an atomic count.
+                    Builtin::LinkMake { link, .. } => {
+                        if let TyKind::Link { target, .. } = *self.types.kind(*link)
+                            && let TyKind::Class(id) = *self.types.kind(target)
+                            && self.types.class_def(id).is_sync
+                        {
+                            sites.push(Site { effects: Effects::SYNC, span, origin: Origin::Operation("one more owner of a `thread_shared` object") });
+                        }
+                    }
                     // The elements a call removes are dropped.
                     Builtin::ArrayClear | Builtin::ArrayTruncate => {
                         if let Some(elem) = self.element(*arg_ty) {
@@ -1507,7 +1517,7 @@ const RELAXED: &str = "a function with `@fastmath` or `@fp(allow_fma)`";
 
 fn drop_description(effects: Effects) -> &'static str {
     if effects == Effects::SYNC {
-        "releasing a `@sync` handle or a lock"
+        "ending an owner of a `thread_shared` object, or a lock"
     } else {
         "dropping a value whose drop is not known here"
     }
@@ -1585,7 +1595,8 @@ fn builtin_effects(which: &Builtin) -> (Effects, &'static str) {
         B::StringNew => (ALLOC, "a new `String`"),
         B::ClassNew { .. } => (ALLOC, "a new class instance"),
         B::BoxNew { .. } => (ALLOC, "an `owns` block"),
-        B::SharedNew { .. } => (ALLOC, "`Shared(…)`"),
+        // `[PHIL-2]` — the block of `shares x`, `shares mut x` or `thread_shared x` (and `SyncShared(…)`).
+        B::SharedNew { .. } => (ALLOC, "a value made shared"),
         B::ArrayPush => (ALLOC, "`Array.push`"),
         B::ArrayInsert => (ALLOC | Effects::CHECK_BOUNDS, "`Array.insert`"),
         B::ArrayExtend => (ALLOC, "`Array.extend`"),
@@ -1665,7 +1676,11 @@ fn builtin_effects(which: &Builtin) -> (Effects, &'static str) {
         B::ParallelFor { .. } => (Effects::SYNC | Effects::BLOCK, "a `@parallel` loop"),
         // `[DSJ-1]` — it establishes a static fact; `@static_safe` allows it (`[EFF-12]`).
         B::AssertDisjoint { .. } => (Effects::CHECK_ALIASING, "`assert_disjoint`"),
-        B::WeakUpgrade { .. } => (Effects::CHECK_STALE, "`Weak.upgrade`"),
+        // `[RC-1]`, `[WK-11]` — a count or a weak count of one more, with its limit's stop; an opening
+        // tests whether the target lives.
+        B::LinkMake { .. } => (Effects::PANIC, "one more owner or link, whose count may reach its limit"),
+        B::LinkAdopt { .. } => (Effects::NONE, "the one owner of a class object, made a `shares mut` owner"),
+        B::LinkOpen { .. } => (Effects::CHECK_STALE, "`exists as` of a `weakref` link"),
         B::LazyStatic { .. } => (Effects::SYNC | Effects::BLOCK, "a static's first access, which may wait for another thread's"),
         B::ConstStatic { .. } => (Effects::NONE, "a static in the image"),
         // `[CT-2]` — the two inputs compile time is given, recorded as build inputs.
@@ -1712,8 +1727,8 @@ fn builtin_effects(which: &Builtin) -> (Effects, &'static str) {
         | B::FmtSinkOpen | B::FmtSinkClose
         | B::ParseValue { .. } | B::StrCharNext | B::StrCharNextWide | B::StrContains | B::StrContainsChar
         | B::ArraySort | B::ArrayReverse | B::ArrayClear | B::ArrayPop { .. } | B::ArrayCapacity
-        | B::ArrayTruncate | B::ValueCompare { .. } | B::ClassSuperInit { .. } | B::WeakNew { .. }
-        | B::WeakEmpty { .. } | B::StrIsCharBoundary | B::StrAsBytes | B::ArrayLen | B::StringLen
+        | B::ArrayTruncate | B::ValueCompare { .. } | B::ClassSuperInit { .. }
+        | B::LinkNone { .. } | B::StrIsCharBoundary | B::StrAsBytes | B::ArrayLen | B::StringLen
         | B::StringAsStr | B::PtrIsNull | B::SizeOf | B::AlignOf | B::TypeIsSend | B::TypeIsSync | B::MemReplace { .. } | B::MemTake { .. }
         | B::MemSwap { .. } | B::MemDrop { .. } | B::HandOver | B::SpanLen | B::SpanGet
         | B::SpanFrom { .. } | B::SpanReborrow | B::SpanSharedReborrow | B::SpanIterNext { .. }

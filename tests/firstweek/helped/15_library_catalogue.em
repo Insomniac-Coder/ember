@@ -29,11 +29,11 @@ class Library:
         if book.isbn in this.books:
             this.books[book.isbn].copies += book.copies
         else:
-            this.books[book.isbn.clone()] = book
+            this.books[copy of book.isbn] = book
 
     fn search(text: StrView) -> Array[Book]:
         needle = text.to_lower()
-        return [b.clone() for b in this.books.values() if needle in b.title.to_lower() or needle in b.author.to_lower()]
+        return [copy of b for b in this.books.values() if needle in b.title.to_lower() or needle in b.author.to_lower()]
 
     fn available(isbn: StrView) -> int:
         lent = this.loans.iter().filter(owns fn(l) => l.isbn == isbn).count()
@@ -43,12 +43,12 @@ class Library:
         if isbn not in this.books:
             return Err(LendError.NoSuchBook)
         if this.available(isbn) == 0:
-            return Err(LendError.NoCopiesLeft(this.books[isbn].title.clone()))
-        held = [l.clone() for l in this.loans if l.member == member]
+            return Err(LendError.NoCopiesLeft(copy of this.books[isbn].title))
+        held = [copy of l for l in this.loans if l.member == member]
         if held.len() >= MAX_LOANS:
             return Err(LendError.TooManyLoans(member.to_string(), MAX_LOANS))
         loan = Loan(isbn=isbn.to_string(), member=member.to_string(), due_day=this.today + LOAN_DAYS)
-        this.loans.push(owns loan.clone())
+        this.loans.push(owns copy of loan)
         return Ok(loan)
 
     fn give_back(isbn: StrView, member: StrView) -> Option[int]:

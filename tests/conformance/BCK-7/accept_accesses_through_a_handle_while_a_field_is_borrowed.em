@@ -11,5 +11,5 @@ class Node:
 fn main():
     n = Node([1, 2])
     r: ref Array[int] = ref n.v
-    m = n
+    m = shares mut n
     println(r[0], n.v.len(), m.v.len())

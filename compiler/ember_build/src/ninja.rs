@@ -60,6 +60,34 @@ pub fn write_if_changed(path: &Path, text: &str) -> std::io::Result<bool> {
 /// `[BLD-4]` — build `program` through Ninja (`crate::ninja`), linking `libraries` after its own
 /// objects and keeping `retained` though nothing calls them (as `compile_and_link_program`).
 pub fn build(toolchain: &Toolchain, program: &Program<'_>, retained: &[String], libraries: &[String]) -> Result<(), BuildError> {
+    build_unless(toolchain, program, retained, libraries, &mut |_| false)
+}
+
+/// What the program's build depends on: the program cache's key, with what the headers hold (a
+/// header's change reaches the program through a unit whose text is the same).
+fn key_with_headers(key: &str, include_dirs: &[PathBuf]) -> String {
+    let mut hash = blake3::Hasher::new();
+    hash.update(key.as_bytes());
+    for dir in include_dirs {
+        let mut files: Vec<PathBuf> = std::fs::read_dir(dir).into_iter().flatten().flatten().map(|entry| entry.path()).collect();
+        files.sort();
+        for file in files {
+            hash.update(file.file_name().unwrap_or_default().as_encoded_bytes());
+            hash.update(&std::fs::read(&file).unwrap_or_default());
+        }
+    }
+    hash.finalize().to_hex().to_string()
+}
+
+/// `build`, unless `done`, given what the build depends on, says its result is not needed. A
+/// program the cache does not keep is always built.
+pub fn build_unless(
+    toolchain: &Toolchain,
+    program: &Program<'_>,
+    retained: &[String],
+    libraries: &[String],
+    done: &mut dyn FnMut(&str) -> bool,
+) -> Result<(), BuildError> {
     std::fs::create_dir_all(&program.dir)?;
     // Ninja runs in the objects' folder: every path it is given is absolute, and the build's own
     // files are spelled from that folder (`from_dir`).
@@ -107,8 +135,16 @@ pub fn build(toolchain: &Toolchain, program: &Program<'_>, retained: &[String], 
     let inputs: Vec<PathBuf> = program.units.iter().chain(program.objects).cloned().collect();
     let request = LinkRequest { sources: &inputs, include_dirs: program.include_dirs, output: program.output.clone(), profile: program.profile, obj_dir: program.dir.clone() };
     let mut key = compiler_command(toolchain);
-    key.arg("ninja-program").args(&compile).arg("link").args(&link).args(&inputs);
+    // `[BLD-13]` — the prefix map says where this build happens, so that the program does not hold it:
+    // the same program built in another folder has the same key.
+    let compile_key = compile.iter().filter(|arg| !arg.to_string_lossy().starts_with("-ffile-prefix-map="));
+    key.arg("ninja-program").args(compile_key).arg("link").args(&link).args(&inputs);
     let cached = cache.as_deref().and_then(|dir| CachedProgram::find(dir, toolchain, &key, &request));
+    if let Some(cached) = &cached
+        && done(&key_with_headers(&cached.key, program.include_dirs))
+    {
+        return Ok(());
+    }
     if let Some(cached) = &cached
         && cached.serve(&program.output)
     {

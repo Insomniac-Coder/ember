@@ -13,15 +13,15 @@
 # the two items share that shape, so it is given once with both.
 
 class Item:
-    owner: Option[Holder]
+    owner: Option[shares mut Holder]
 
 class Holder:
     items: Array[Item]
 
 fn main():
     holder = Holder(Array[Item]())
-    first = Item(Some(holder))
-    second = Item(Some(holder))
+    first = Item(Some(shares mut holder))
+    second = Item(Some(shares mut holder))
     holder.items.push(owns first)
     holder.items.push(owns second)
     println("built")

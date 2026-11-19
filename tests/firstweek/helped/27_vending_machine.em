@@ -52,7 +52,7 @@ class Machine:
     fn choose(code: StrView) -> Result[(String, Array[int]), VendError]:
         if code not in this.slots:
             return Err(VendError.UnknownSlot(code.to_string()))
-        slot = this.slots[code].clone()
+        slot = copy of this.slots[code]
         if slot.stock == 0:
             return Err(VendError.SoldOut(slot.product))
         if this.inserted < slot.price:

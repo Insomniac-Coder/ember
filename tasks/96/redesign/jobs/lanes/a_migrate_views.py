@@ -14,6 +14,8 @@ MINE = (
     "`copy of` where 0.9.10's `=` copied",
     "`copy of` before a part a name changes",
 )
+# Other migrations of the lane are named on the command line, after the list of files.
+MINE = tuple(sys.argv[2:]) or MINE
 
 
 def edits_for(path):

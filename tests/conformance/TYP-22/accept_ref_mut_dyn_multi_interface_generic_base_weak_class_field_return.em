@@ -10,10 +10,10 @@
 #$ assert-c: contains("ember_weak_upgrade(")
 
 # A ref mut dyn Observe + Bump carrier mutates an inherited generic-base
-# counter, then returns its inherited Weak[Token] field through the distinct
+# counter, then returns its inherited weakref Token field through the distinct
 # shared slot. The borrowed class is never copied; only the weak observer is.
 interface Observe:
-    fn observer() -> Weak[Token]
+    fn observer() -> weakref Token
 
 interface Bump:
     fn bump() -> i32
@@ -23,37 +23,36 @@ class Token:
 
 [T]
 open class Base:
-    weak: Weak[Token]
+    weak: weakref Token
     marker: T
     count: i32
 
-    fn init(weak: Weak[Token], marker: T):
-        this.weak = weak
+    fn init(weak: weakref Token, marker: T):
+        this.weak = weakref weak
         this.marker = marker
         this.count = 0
 
 [T]
 class Holder(Base[T]) implements Observe, Bump:
-    fn init(weak: Weak[Token], marker: T):
+    fn init(weak: weakref Token, marker: T):
         super.init(weak, marker)
 
-    fn observer() -> Weak[Token]:
-        return this.weak
+    fn observer() -> weakref Token:
+        return weakref this.weak
 
     fn bump() -> i32:
         this.count = this.count + 1
         return this.count
 
-fn inspect(ref mut value: dyn Observe + Bump) -> Weak[Token]:
+fn inspect(ref mut value: dyn Observe + Bump) -> weakref Token:
     value.bump()
     return value.observer()
 
 fn main():
     strong = Token(7)
-    holder = Holder[bool](Weak(strong), true)
+    holder = Holder[bool](weakref strong, true)
     weak = inspect(ref mut holder)
-    match weak.upgrade():
-        Some(owner):
-            println(owner.value)
-        None:
-            println(0)
+    if weak exists as owner:
+        println(owner.value)
+    else:
+        println(0)

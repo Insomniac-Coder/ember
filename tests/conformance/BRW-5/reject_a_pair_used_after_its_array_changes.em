@@ -5,7 +5,7 @@
 # outlive the array. After the pair's last use the array is free again.
 
 fn first_two(xs: Array[int]) -> ref mut int:
-    tmp = xs.clone()
+    tmp = copy of xs
     match tmp.get_pair_mut(0, 1):
         Some((a, _)):
             return a #$ error[E3060]

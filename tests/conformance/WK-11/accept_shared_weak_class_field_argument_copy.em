@@ -6,24 +6,23 @@
 #$ assert-c: contains("ember_weak_release(")
 #$ assert-c: contains("ember_weak_upgrade(")
 
-# Passing a Weak[Shared[T]] class field to an `owned` parameter copies its weak
+# Passing a weakref T class field to an `owned` parameter copies its weak
 # handle for the callee. The copied observer may upgrade while the caller's
-# separate Shared owner is live, but it never turns the field read into a
+# separate `shares` owner is live, but it never turns the field read into a
 # payload copy.
 struct Token:
     value: i32
 
 class Holder:
-    weak: Weak[Shared[Token]]
+    weak: weakref Token
 
-fn observe(owns weak: Weak[Shared[Token]]) -> i32:
-    match weak.upgrade():
-        Some(owner):
-            return owner.get().value
-        None:
-            return 0
+fn observe(owns weak: weakref Token) -> i32:
+    if weak exists as owner:
+        return owner.value
+    else:
+        return 0
 
 fn main():
-    strong = Shared(Token(7))
-    holder = Holder(Weak(strong))
-    println(observe(owns holder.weak))
+    strong = shares mut Token(7)
+    holder = Holder(weakref strong)
+    println(observe(owns (weakref holder.weak)))

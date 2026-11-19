@@ -27,7 +27,7 @@ fn main():
     b.add(4)
     with g = b.cell.borrow():
         println(g)
-    c = b
+    c = shares mut b
     with g = b.cell.borrow():
         with h = c.cell.borrow():
             println(g, h)

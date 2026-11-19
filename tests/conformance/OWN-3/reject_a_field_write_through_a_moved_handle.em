@@ -17,5 +17,5 @@ class Mote implements Speak:
 fn main():
     m = Mote()
     boxed: owns dyn Speak = owns m
-    m.n = 5    #$ error[E3040]: `m` was handed over on line 19 and is used on line 20; to keep it, write `owns copy of m`
+    m.n = 5    #$ error[E3040]: `m` was handed over on line 19 and is used on line 20
     println(boxed.speak())

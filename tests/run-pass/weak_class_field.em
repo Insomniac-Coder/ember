@@ -6,14 +6,15 @@
 #$ assert-c: contains(ember_weak_release)
 
 # A weak field is a non-owning class back-reference. The empty default also
-# exercises a self-referential `Weak[Node]` C declaration before any instance
+# exercises a self-referential `weakref Node` C declaration before any instance
 # is constructed.
 class Node:
     value: i32 = 7
-    parent: Weak[Node] = Weak[Node].empty()
+    parent: weakref Node = None
 
 fn main():
     node = Node()
-    match node.parent.upgrade():
-        Some(_) => println(0)
-        None => println(node.value)
+    if node.parent exists as _:
+        println(0)
+    else:
+        println(node.value)

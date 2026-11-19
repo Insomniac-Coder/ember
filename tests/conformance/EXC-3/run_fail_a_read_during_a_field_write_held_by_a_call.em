@@ -17,5 +17,5 @@ fn grow(ref mut items: Array[int], other: Player):
 
 fn main():
     p = Player()
-    alias = p
+    alias = shares mut p
     grow(ref mut p.items, alias)

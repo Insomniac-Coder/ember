@@ -34,6 +34,6 @@ fn main():
     println(f"{token}"[0..9], f"{token!r}"[0..9])
     pet: Animal = Dog()
     println(f"{pet}"[0..7])
-    named: Named = token
+    named: Named = Token(id=2)
     println(f"{named}"[0..9])
     println(f"{[token]}"[0..10])

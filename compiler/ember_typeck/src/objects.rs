@@ -560,21 +560,6 @@ impl Checker<'_> {
             .map(|(&name, found)| (name, found.methods.iter().map(|&(_, declaration, ..)| self.signatures[declaration.0 as usize].decl).collect()))
             .collect();
         let mut report = Vec::new();
-        // `[CLS-*]` (0.9.10's `@sync`, until M1 refuses it) — a `@sync` class's method may not change
-        // its object; one that does not list it is refused once its body is known to.
-        for function in functions.iter() {
-            if let Some(class) = function.class_owner
-                && self.types.class_def(class).is_sync
-                && changing.contains(&function.def)
-            {
-                let owner = self.types.class_def(class).name;
-                let at = self.signatures[function.def.0 as usize].decl;
-                report.push(
-                    Diagnostic::error(ember_diag::codes::E7003, at, format!("`@sync` class `{owner}` cannot declare a method that changes its object: `{}` does", function.name))
-                        .help("change its fields through `Atomic` or under a lock, which only read the object"),
-                );
-            }
-        }
         for function in functions.iter_mut() {
             hir::visit_block_mut(&mut function.body, &mut |expr| match &mut expr.kind {
                 ExprKind::Call { callee, args, .. } if implicit.contains(callee) => {

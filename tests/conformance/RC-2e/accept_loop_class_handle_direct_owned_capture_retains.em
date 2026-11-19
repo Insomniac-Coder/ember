@@ -13,8 +13,9 @@ class Token:
     value: i32
 
 fn main():
-    tokens: Array[Token] = Array[Token]()
-    tokens.push(owns Token(7))
+    tokens: Array[shares Token] = Array[shares Token]()
+    tokens.push(owns shares Token(7))
     for token in tokens:
-        task = owned fn() => token.value
+        owner = shares token
+        task = owned fn() => owner.value
         println(task())

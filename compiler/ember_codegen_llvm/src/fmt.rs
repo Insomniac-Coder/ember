@@ -296,6 +296,16 @@ impl<'a> FnCx<'_, 'a> {
     fn printed_payload(&mut self, v: &str, ty: Ty) -> Option<(String, Ty)> {
         let table = self.m.ty.table;
         let inner = table.printed_as(ty)?;
+        // `[TYP-36]` — an owner: of an object, the object's pointer; of a value, the value in its block.
+        if matches!(table.kind(ty), TyKind::Link { .. }) {
+            if table.link_payload(ty).is_none() {
+                return Some((v.to_string(), inner));
+            }
+            let (_, align) = self.m.ty.size_align(inner);
+            let header = self.load(Sc::Ptr, v, 8);
+            let offset = self.m.ty.payload_offset(align);
+            return Some((self.gep(&header, offset), inner));
+        }
         let TyKind::Struct(id) = *table.kind(ty) else { return None };
         if table.compiler_box_inner(id).is_some() {
             return Some((self.load(Sc::Ptr, v, 8), inner));

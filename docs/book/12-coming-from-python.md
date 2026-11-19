@@ -116,8 +116,8 @@ Hello|World
 * **Values have one owner.** Assigning or passing on a list moves it, unless the function only
   borrows it (the default for a parameter); a moved name cannot be used again, and the error offers
   a clone (chapter 8).
-* **Objects are freed when their last handle goes,** at a point you can see, not by a collector. A
-  cycle of strong handles leaks, and a debug run reports it with the field to make `Weak`
+* **Objects are freed when their last owner goes,** at a point you can see, not by a collector. A
+  cycle of owners leaks, and a debug run reports it with the field to make a `weakref` link
   (chapter 9).
 * **Integers are 64-bit, and overflow stops the program** instead of growing: `@overflow(wrap)` or
   `wrapping_add` when wrapping is wanted.

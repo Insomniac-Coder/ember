@@ -30,7 +30,7 @@ fn read_inherited_id(player: Player) -> i32:
 fn read_inherited_method(player: Player) -> i32:
     return player.get_id()
 
-fn retain_copy(entity: Entity) -> Entity:
+fn retain_copy(owns entity: Entity) -> Entity:
     return entity
 
 fn consume(owns entity: Entity):

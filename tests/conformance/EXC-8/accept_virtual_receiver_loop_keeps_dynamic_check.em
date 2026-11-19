@@ -24,7 +24,7 @@ class Derived(Counter):
 
 fn main():
     counter: Counter = Derived()
-    alias = counter
+    alias = shares mut counter
     for i in 0..3:
         counter.bump()
     println(alias.value)

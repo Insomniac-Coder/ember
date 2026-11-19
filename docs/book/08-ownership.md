@@ -22,7 +22,7 @@ fn main():
 
 Using `first` after `second = first` is `E3040` ("`first` is borrowed after it has been moved
 out of"), whose help is to clone the value so that the move takes the copy: `second =
-first.clone()` leaves each name a list of its own. Numbers, booleans and other small values are
+copy of first` leaves each name a list of its own. Numbers, booleans and other small values are
 copied rather than moved, so there is nothing to think about for them.
 
 ## Passing borrows

@@ -28,8 +28,8 @@ class Other(Base[T]):
 
 fn main():
     child = Child[bool](7, true)
-    same = child
-    base: Base[bool] = child
+    same = shares mut child
+    base: shares mut Base[bool] = shares mut child
     if child is same:
         println(1)
     else:

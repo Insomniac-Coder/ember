@@ -8,7 +8,7 @@
 #$ assert-c: contains(ember_release((ember_obj_header*)
 
 # `[DRP-6]` distinguishes the two counted owners from the existing Box probe.
-# The copied Shared value releases its payload only at the final strong release;
+# The copied `shares` value releases its payload only at the final strong release;
 # the class handle then releases its own object at scope exit. (The object is the runtime's to
 # make, `ember_obj_new`, or in `main`'s frame, `ember_obj_new_frame`, as `[OPT-1]` permits: either
 # way its last release, at scope exit, runs its `drop`.)
@@ -23,5 +23,5 @@ struct Token:
 
 fn main():
     _handle = Handle()
-    owner = Shared(Token())
+    owner = shares mut Token()
     _alias = owner

@@ -21,7 +21,7 @@ fn r#is() -> int:
 
 fn main():
     a = Node(1)
-    b = a
+    b = shares mut a
     flag = Flag(true)
     maybe: Option[Flag] = Some(Flag(false))
     nothing: Option[Flag] = None

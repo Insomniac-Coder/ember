@@ -25,7 +25,7 @@ fn main():
     println(xs[0], xs[1], xs[2], xs[3], xs[4], xs[5])
 
     bag = Bag()
-    other = bag
+    other = shares mut bag
     for i in 0..3:
         bag.items.push(owns (i + 1))
     total = 0

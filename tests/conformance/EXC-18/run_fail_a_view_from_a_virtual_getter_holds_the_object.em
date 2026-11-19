@@ -22,6 +22,6 @@ open class Person:
 fn main():
     p = Person()
     n = p.label()
-    q = p
+    q = shares mut p
     q.rename()
     println(n)

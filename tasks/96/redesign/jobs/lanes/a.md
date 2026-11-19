@@ -14,8 +14,13 @@ The lead's lane. Read first by every job in it; updated last.
 - **Where the code is:** `ember_types/src/lib.rs` (`Link` kinds, `is_copy`/`copy_with`), `ember_typeck` (`synth_link`,
   `read_link_through`, `open_link`, `reject_change_through_reader`), `ember_analysis/src/borrows.rs` and `drops.rs`,
   `ember_mir`'s link builtins, `uncounted_handles.rs`, `temporary_owners.rs`.
-- **State:** slice A and B built (H2, round 6); slice C measured only (581 copies in 289 programs, 65 in std;
-  `count_handle_copies.py`); slices D (`copy of`) and E (`thread_shared`) not started.
+- **State (2026-11-19):** slices A, B, C and D are built on branch `m4-slice-c-probe` in the lead worktree (`M4-plan.md`, Progress). Next: slice E (`thread_shared`) and `[TYP-36]`'s row for owners, then M4 goes onto `main`.
+- **Slice C waits for M5's A2-3** (`M4-plan.md`, "Found by C2"): the rest of the 262 are reads of a class object
+  out of a place (`x = list[0]`, `x = p.child`), which `[BRW-12]` makes views, for every type. Measured: part
+  views alone give 3,344 "cannot write through a shared reference" (names written through, `[BRW-12]` clause 6's
+  `x = ref mut <part>`, which is not built either: `x = ref mut b.items; x.push(3)` is E3021 today). So the next
+  lane-a job is A2-3 whole (`[BRW-12]` to `[BRW-15]`), with a checker migration to `ref mut` and the deputy's
+  tests in `tasks/96/redesign/jobs/ahead/M5/BRW-12..15/`, then slice C on top.
 - **Traps:** a `shares` value reaching a thread is E7004 where the spec says E7015 (slice E);
   `[HR-15]`'s reload test is ignored until `weakref thread_shared`.
 

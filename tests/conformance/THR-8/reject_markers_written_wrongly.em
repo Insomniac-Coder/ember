@@ -1,7 +1,7 @@
 #$ test: compile-fail
 #$ rules: TYP-43, THR-8, THR-1
 # ODR-111 — `Send` and `Sync` are written by hand only with `unsafe extend`, for a struct or enum of
-# this package, with nothing else in the block; a class is either only as `@sync`; `Copy` comes from
+# this package, with nothing else in the block; a class is either by its fields; `Copy` comes from
 # `@derive(Copy)`, and `Sized` is never written.
 
 class Node:
@@ -17,7 +17,7 @@ extend Raw implements Send:    #$ error[E3100]: implementing `Send` by hand requ
     pass
 
 # SAFETY: every change to it is synchronised
-unsafe extend Node implements Sync:    #$ error[E2040]: a class is `Sync` only as `@sync`: its reference counts must be atomic
+unsafe extend Node implements Sync:    #$ error[E2040]: a class is `Sync` by its fields, which the compiler checks: nothing is written for it
     pass
 
 # SAFETY: it keeps the promises the interface states

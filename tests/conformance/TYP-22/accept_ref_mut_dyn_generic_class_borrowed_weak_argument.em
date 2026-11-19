@@ -9,11 +9,11 @@
 #$ assert-c: contains("ember_weak_release(")
 #$ assert-c: contains("ember_weak_upgrade(")
 
-# A borrowed Weak[Shared[Token]] argument crossing a ref mut dyn carrier is
+# A borrowed weakref Token argument crossing a ref mut dyn carrier is
 # reused by the generic class implementation while the receiver's write
 # interval remains scoped to the dynamic call.
 interface Observe:
-    fn observe(weak: Weak[Shared[Token]]) -> i32
+    fn observe(weak: weakref Token) -> i32
 
 struct Token:
     value: i32
@@ -23,15 +23,14 @@ class Reader implements Observe:
     marker: T
     count: i32
 
-    fn observe(weak: Weak[Shared[Token]]) -> i32:
+    fn observe(weak: weakref Token) -> i32:
         this.count = this.count + 1
-        match weak.upgrade():
-            Some(owner):
-                return owner.get().value
-            None:
-                return 0
+        if weak exists as owner:
+            return owner.value
+        else:
+            return 0
 
-fn inspect(ref mut value: dyn Observe, weak: Weak[Shared[Token]]) -> i32:
+fn inspect(ref mut value: dyn Observe, weak: weakref Token) -> i32:
     return value.observe(weak)
 
 # `program` holds the test, so its values die before `main`'s last
@@ -39,9 +38,9 @@ fn inspect(ref mut value: dyn Observe, weak: Weak[Shared[Token]]) -> i32:
 # memory to the operating system (`[PHIL-5]`), and the drops read here
 # would go with it.
 fn program():
-    strong = Shared(Token(7))
+    strong = shares mut Token(7)
     reader = Reader[bool](true, 0)
-    println(inspect(ref mut reader, Weak(strong)))
+    println(inspect(ref mut reader, weakref strong))
 
 fn main():
     program()

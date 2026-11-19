@@ -359,7 +359,7 @@ fn manifest_entry_below_src_resolves_sibling_imports_from_package_root() {
     assert_success(&explicit, "explicit nested source invocation");
 }
 
-/// `[BLD-FFI-5a]` (ODR-162) — a static library hands its host objects of a `@sync` class: the host
+/// `[BLD-FFI-5a]` (ODR-162) — a static library hands its host `thread_shared` objects of a class: the host
 /// counts a handle and ends it, and calls the class's `pub` methods through the functions the header
 /// declares: one taking a value, one a view (its address and length), one a value it borrows, one
 /// another handle, one keeping another handle (a count of its own), and a virtual one, which reaches
@@ -440,7 +440,6 @@ pub struct Pair:
     a: i32
     b: i32
 
-@sync
 pub open class World:
     people: Atomic[i32] = Atomic(0)
 
@@ -456,29 +455,28 @@ pub open class World:
     pub fn sum(pair: ref Pair) -> i32:
         return pair.a + pair.b
 
-    pub fn merged(other: World) -> i32:
+    pub fn merged(other: thread_shared World) -> i32:
         return this.population() + other.population()
 
-    pub fn adopt(owns other: World) -> i32:
+    pub fn adopt(owns other: thread_shared World) -> i32:
         return other.kind() * 10
 
     pub virtual fn kind() -> i32:
         return 1
 
-@sync
 pub class Moon(World):
     pub override fn kind() -> i32:
         return 2
 
 # SAFETY: nothing else in the process defines this name
 @unsafe(export(\"make_world\"))
-pub fn make_world() -> World:
-    return World()
+pub fn make_world() -> thread_shared World:
+    return thread_shared World()
 
 # SAFETY: nothing else in the process defines this name
 @unsafe(export(\"make_moon\"))
-pub fn make_moon() -> World:
-    return Moon()
+pub fn make_moon() -> thread_shared World:
+    return thread_shared Moon()
 ";
 
 /// `[FFI-28]` — two static libraries whose code calls the same runtime functions link into one host

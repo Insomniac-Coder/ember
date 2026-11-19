@@ -24,11 +24,11 @@ unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definiti
     safe fn always(handler: extern "C" fn(*mut void), data: *mut void)
 
 fn main():
-    counter = Counter()
+    counter = shares mut Counter()
     name = "kept".to_string()
-    now(fn(): counter.count += 1)    #$ error[E7004]: captures `counter`
+    now(fn(): counter.count += 1)    #$ error[E7015]: captures `counter`
     now_on_main(fn(): counter.count += 1)
     later(fn(): println(name))    #$ error[E3026]: borrows `name`, and C keeps it past the call
-    later(owned fn(): println(counter.count))    #$ error[E7004]: captures `counter`, a `Counter`, which is not Send
+    later(owned fn(): println(counter.count))    #$ error[E7015]: captures `counter`, a `shares mut Counter`, which is not Send
     token = always(owns owned fn(): println(counter.count))
     println(name)

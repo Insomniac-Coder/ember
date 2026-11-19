@@ -32,7 +32,7 @@ class Nick(Person):
 
 fn main():
     k: Person = Nick()
-    r = k
+    r = shares mut k
     m = k.label()
     r.alias = "kit"
     println(m)

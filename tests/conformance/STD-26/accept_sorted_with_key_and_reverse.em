@@ -17,7 +17,7 @@ fn main():
     e = sorted(range(10, 0, -3))
     people = [Person("ann", 30), Person("bob", 25), Person("cy", 30)]
     by_age = sorted(people, key=owns fn(p) => p.age, reverse=true)
-    names = [p.name.clone() for p in by_age]
+    names = [copy of p.name for p in by_age]
     fixed: [int; 3] = [9, 7, 8]
     g = sorted(fixed, reverse=true)
     println(a, b, c, d, e, names, g)

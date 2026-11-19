@@ -39,13 +39,6 @@ pub fn shared_inner(types: &TypeTable, id: StructId) -> Option<Ty> {
     }
 }
 
-pub fn weak_inner(types: &TypeTable, id: StructId) -> Option<Ty> {
-    match &types.struct_def(id).origin {
-        Some((name, args)) if name.is("Weak") && args.len() == 1 => Some(args[0]),
-        _ => None,
-    }
-}
-
 /// What a type-information address names.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Info {
@@ -239,7 +232,8 @@ impl Interp<'_, '_> {
     pub(crate) fn object_name(&self, object: u64) -> R<String> {
         Ok(match self.object_info(object)? {
             Info::Class(id) => self.types.class_display_name(id),
-            Info::Shared(id) => self.types.display(self.types.find(&TyKind::Struct(id)).unwrap_or(self.common.void)),
+            // `[RT-7]` — a value in a block is named by its own type: "too many owners of a `Counter`".
+            Info::Shared(id) => shared_inner(self.types, id).map_or_else(String::new, |inner| self.types.display(inner)),
         })
     }
 
@@ -391,10 +385,6 @@ impl Interp<'_, '_> {
                     let object = self.mem.read_u64(addr)?;
                     return self.retain_object(object);
                 }
-                if weak_inner(self.types, id).is_some() {
-                    let object = self.mem.read_u64(addr)?;
-                    return self.weak_retain(object);
-                }
                 let def = self.types.struct_def(id);
                 if def.name.as_str().starts_with("MaybeUninit_") || !def.drops_fields {
                     return Ok(());
@@ -447,6 +437,15 @@ impl Interp<'_, '_> {
         match self.types.kind(ty).clone() {
             TyKind::Fn { abi: None, .. } => self.drop_callable(addr),
             TyKind::Class(_) | TyKind::ClassInterface(_) => {
+                let object = self.mem.read_u64(addr)?;
+                self.release_object(object)
+            }
+            // `[WK-11]`, `[RC-1]` — a link's or an owner's end.
+            TyKind::Link { kind: ember_types::LinkKind::Weakref | ember_types::LinkKind::WeakrefThreadShared, .. } => {
+                let object = self.mem.read_u64(addr)?;
+                self.weak_release(object)
+            }
+            TyKind::Link { .. } => {
                 let object = self.mem.read_u64(addr)?;
                 self.release_object(object)
             }
@@ -511,10 +510,6 @@ impl Interp<'_, '_> {
         if shared_inner(types, id).is_some() {
             let object = self.mem.read_u64(addr)?;
             return self.release_object(object);
-        }
-        if weak_inner(types, id).is_some() {
-            let object = self.mem.read_u64(addr)?;
-            return self.weak_release(object);
         }
         if let Some(inner) = types.compiler_box_inner(id) {
             if matches!(types.kind(inner), TyKind::Dyn { .. }) {

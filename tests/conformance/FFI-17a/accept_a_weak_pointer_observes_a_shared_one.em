@@ -30,7 +30,7 @@ fn watched() -> CppWeak[cpp.Counter]:
 
 fn main():
     weak = watched()
-    copy = weak.clone()
+    copy = copy of weak
     gone = weak.lock().is_none()
     unsafe:  # SAFETY(ffi): a scalar call
         println(weak.expired(), copy.expired(), gone, cpp.destroyed())

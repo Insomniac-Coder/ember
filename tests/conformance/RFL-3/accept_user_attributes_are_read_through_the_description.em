@@ -39,7 +39,7 @@ fn show(value: AttrValue) -> String:
         AttrValue.Int(n):
             return f"{n}"
         AttrValue.Str(s):
-            return s.clone()
+            return copy of s
         _:
             return String.from("?")
 

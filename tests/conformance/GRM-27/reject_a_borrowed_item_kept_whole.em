@@ -12,5 +12,5 @@ fn main():
     shapes = [Shape("small", 1), Shape("big", 7)]
     big = [s for s in shapes if s.size > 2]  #$ error[E3013]: cannot move a borrowed item into the new collection
     #$ help: take the collection over, `for s in owns shapes`
-    #$ help: or copy each item, `s.clone()`, `shapes` staying as it was
+    #$ help: or copy each item, `copy of s`, `shapes` staying as it was
     println(len(big))

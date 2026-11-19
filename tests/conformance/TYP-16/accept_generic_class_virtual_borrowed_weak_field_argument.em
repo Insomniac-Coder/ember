@@ -8,14 +8,14 @@
 #$ assert-c-count: contains("ember_weak_release(") == 1
 #$ assert-c: contains("ember_weak_upgrade(")
 
-# A Weak[Shared[T]] field passed to a generic virtual method uses the default
+# A weakref T field passed to a generic virtual method uses the default
 # borrowed parameter mode. Dispatch must reuse the Holder field rather than
 # copy a second weak owner across the virtual-call boundary.
 struct Token:
     value: i32
 
 class Holder:
-    weak: Weak[Shared[Token]]
+    weak: weakref Token
 
 [T]
 open class Base:
@@ -24,28 +24,26 @@ open class Base:
     fn init(marker: T):
         this.marker = marker
 
-    virtual fn observe(weak: Weak[Shared[Token]]) -> i32:
-        match weak.upgrade():
-            Some(owner):
-                return owner.get().value
-            None:
-                return 0
+    virtual fn observe(weak: weakref Token) -> i32:
+        if weak exists as owner:
+            return owner.value
+        else:
+            return 0
 
 [T]
 class Derived(Base[T]):
     fn init(marker: T):
         super.init(marker)
 
-    override fn observe(weak: Weak[Shared[Token]]) -> i32:
-        match weak.upgrade():
-            Some(owner):
-                return owner.get().value
-            None:
-                return 0
+    override fn observe(weak: weakref Token) -> i32:
+        if weak exists as owner:
+            return owner.value
+        else:
+            return 0
 
 fn main():
-    strong = Shared(Token(7))
-    holder = Holder(Weak(strong))
+    strong = shares mut Token(7)
+    holder = Holder(weakref strong)
     derived = Derived[bool](true)
     base: Base[bool] = derived
     println(base.observe(holder.weak))

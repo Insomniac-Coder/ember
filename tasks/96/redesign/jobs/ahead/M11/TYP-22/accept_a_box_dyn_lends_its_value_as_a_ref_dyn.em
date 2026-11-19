@@ -1,0 +1,53 @@
+#$ test: run-pass
+#$ rules: TYP-22
+#$ profiles: debug, development, release
+#$ stdout: 4 9 4
+#$ stdout: 7 8
+#$ stdout: 5
+# `[TYP-22]` (D-908) — a `Box[dyn I]` given to a `ref dyn I` parameter lends the box's own data and
+# table: a struct concrete, a class concrete (the object shared with another handle, whose change
+# the next call sees) and a box held in a field (the LLVM backend's port of D-908, tried against the
+# C backend's).
+
+interface Shape:
+    fn area() -> int
+
+struct Square:
+    side: int
+
+extend Square implements Shape:
+    fn area() -> int:
+        return this.side * this.side
+
+class Tile:
+    size: int
+
+    fn init(size: int):
+        this.size = size
+
+    fn grow():
+        this.size = this.size + 1
+
+extend Tile implements Shape:
+    fn area() -> int:
+        return this.size
+
+fn measure(s: ref dyn Shape) -> int:
+    return s.area()
+
+struct Holder:
+    boxed: owns dyn Shape
+
+fn main():
+    a: owns dyn Shape = owns Square(2)
+    b: owns dyn Shape = owns Square(3)
+    println(measure(a), measure(b), a.area())
+    tile = Tile(7)
+    keep = shares mut tile
+    t: owns dyn Shape = owns tile
+    m = measure(t)
+    keep.grow()
+    println(m, measure(t))
+    h = Holder(owns Square(1))
+    h.boxed = owns Tile(5)
+    println(measure(h.boxed))

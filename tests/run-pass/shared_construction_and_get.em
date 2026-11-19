@@ -14,7 +14,7 @@ struct Token:
         println(this.value)
 
 fn main():
-    first = Shared(Token(7))
-    second = first
-    value = second.get()
+    first = shares mut Token(7)
+    second = shares mut first
+    value = second
     println(value.value)

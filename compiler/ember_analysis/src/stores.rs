@@ -344,6 +344,7 @@ fn slot_type(body: &Body, types: &TypeTable, arg: LocalId, path: &[Projection]) 
     for projection in path {
         ty = match (projection, types.kind(ty)) {
             (Projection::Deref, TyKind::Ref { inner, .. }) => *inner,
+            (Projection::Field(0), TyKind::Link { .. }) => types.link_field(ty).unwrap_or(ty),
             (Projection::Field(i), TyKind::Struct(id)) => types.struct_def(*id).fields.get(*i).map_or(ty, |f| f.ty),
             (Projection::Field(i), TyKind::Tuple(items)) => items.get(*i).copied().unwrap_or(ty),
             (Projection::Index(_) | Projection::ConstIndex(_), TyKind::Array { elem, .. }) => *elem,
@@ -442,7 +443,7 @@ fn requirement_error(
                 Unbounded::ClassField => format!("`{shown}` is a view, so it may not be stored in a class object unless it is `static`"),
                 Unbounded::SpanElement => format!("`{shown}` is a view, so it may not be stored in a span's element unless it is `static`"),
                 Unbounded::BoxContents => format!("`{shown}` is a view, so it may not be stored in an `owns` block"),
-                Unbounded::SharedContents => format!("`{shown}` is a view, so it may not be stored in a Shared's contents"),
+                Unbounded::SharedContents => format!("`{shown}` is a view, so it may not be stored in a block of `shares`"),
                 Unbounded::Unknown => format!(
                     "`{shown}` is a view, so it may not be stored through a reference whose target cannot be seen, unless it is `static`"
                 ),

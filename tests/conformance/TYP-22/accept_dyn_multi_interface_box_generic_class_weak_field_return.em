@@ -15,7 +15,7 @@
 # through its shared slot, then call its separate mutable slot. The returned
 # observer remains independent while the write interval is confined to bump().
 interface Observe:
-    fn observer() -> Weak[Shared[Token]]
+    fn observer() -> weakref Token
 
 interface Bump:
     fn bump() -> i32
@@ -25,24 +25,23 @@ struct Token:
 
 [T]
 class Counter implements Observe, Bump:
-    weak: Weak[Shared[Token]]
+    weak: weakref Token
     marker: T
     count: i32
 
-    fn observer() -> Weak[Shared[Token]]:
-        return this.weak
+    fn observer() -> weakref Token:
+        return weakref this.weak
 
     fn bump() -> i32:
         this.count = this.count + 1
         return this.count
 
 fn main():
-    strong = Shared(Token(7))
-    boxed: owns dyn Observe + Bump = owns Counter[bool](Weak(strong), true, 0)
+    strong = shares mut Token(7)
+    boxed: owns dyn Observe + Bump = owns Counter[bool](weakref strong, true, 0)
     weak = boxed.observer()
     println(boxed.bump())
-    match weak.upgrade():
-        Some(owner):
-            println(owner.get().value)
-        None:
-            println(0)
+    if weak exists as owner:
+        println(owner.value)
+    else:
+        println(0)

@@ -1691,12 +1691,16 @@ fn field_accesses(body: &Body, types: &TypeTable, regions: &Regions) -> Vec<Shar
                     point_access(&mut accesses, place, !inside_a_cell(body, types, place), created_at, stmt.span);
                     let Some(region) = regions.loan_region(created_at) else { continue };
                     let mutable = *mutable && !inside_a_cell(body, types, borrowed);
+                    // A loan made again while the one before it lives (a view walked down a chain of
+                    // objects in a loop) names another object each turn, so no one bracket holds it:
+                    // it is checked where it is made.
+                    let held = if regions.contains(region, created_at) { Vec::new() } else { vec![region] };
                     for owner in field_boundaries(body, types, borrowed, true) {
                         accesses.push(SharedAccess {
                             created_at,
                             owner,
                             mutable,
-                            regions: vec![region],
+                            regions: held.clone(),
                             span: stmt.span,
                             start: SharedAccessStart::Normal,
                             end: SharedAccessEnd::Normal,
@@ -1797,6 +1801,7 @@ fn field_boundaries(body: &Body, types: &TypeTable, place: &Place, self_covered:
                 let Some(v) = variant.take() else { continue };
                 ty = types.enum_def(*id).variants[v].fields.get(*i).map_or(ty, |f| f.ty);
             }
+            (Projection::Field(0), TyKind::Link { .. }) => ty = types.link_field(ty).unwrap_or(ty),
             (Projection::Field(i), TyKind::Struct(id)) => {
                 ty = types.struct_def(*id).fields.get(*i).map_or(ty, |f| f.ty);
             }
@@ -1995,7 +2000,7 @@ fn drop_is_quiet_in(types: &TypeTable, ty: Ty, seen: &mut HashSet<Ty>) -> bool {
         TyKind::Struct(id) => {
             let def = types.struct_def(*id);
             !def.has_drop
-                && !matches!(&def.origin, Some((name, _)) if name.is("Weak") || name.is("Shared") || name.is("SyncShared"))
+                && !matches!(&def.origin, Some((name, _)) if name.is("Shared") || name.is("SyncShared"))
                 && def.fields.iter().all(|field| drop_is_quiet_in(types, field.ty, seen))
         }
         TyKind::Enum(id) => {
@@ -5753,6 +5758,7 @@ mod callable_region_metadata_tests {
             callable_regions: None,
             closure_environment: None,
             closure_captures_by_move: false,
+            stored_at: Vec::new(),
             path: None,
             class_owner: None,
             class_virtual_slot: None,

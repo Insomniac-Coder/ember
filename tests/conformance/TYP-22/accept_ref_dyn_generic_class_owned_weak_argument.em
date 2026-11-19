@@ -7,11 +7,11 @@
 #$ assert-c: contains("ember_weak_release(")
 #$ assert-c: contains("ember_weak_upgrade(")
 
-# An owned Weak[Shared[Token]] argument passed through a ref dyn carrier is
+# An owned weakref Token argument passed through a ref dyn carrier is
 # copied for the generic class implementation. The borrowed receiver remains
 # separate while the callee upgrades and destroys its owned observer.
 interface Observe:
-    fn observe(owns weak: Weak[Shared[Token]]) -> i32
+    fn observe(owns weak: weakref Token) -> i32
 
 struct Token:
     value: i32
@@ -20,18 +20,17 @@ struct Token:
 class Reader implements Observe:
     marker: T
 
-    fn observe(owns weak: Weak[Shared[Token]]) -> i32:
-        match weak.upgrade():
-            Some(owner):
-                return owner.get().value
-            None:
-                return 0
+    fn observe(owns weak: weakref Token) -> i32:
+        if weak exists as owner:
+            return owner.value
+        else:
+            return 0
 
-fn inspect(value: ref dyn Observe, weak: Weak[Shared[Token]]) -> i32:
-    return value.observe(owns weak)
+fn inspect(value: ref dyn Observe, weak: weakref Token) -> i32:
+    return value.observe(owns (weakref weak))
 
 fn main():
-    strong = Shared(Token(7))
+    strong = shares mut Token(7)
     reader = Reader[bool](true)
-    weak = Weak(strong)
+    weak = weakref strong
     println(inspect(ref reader, weak))

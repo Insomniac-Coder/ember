@@ -147,8 +147,24 @@ the laptop hit 102 °C too often ("yes, apply the limit"): the cause was several
 programs, 7 C compiles, 3 links on 24 threads at 100%), each runner starting a program per thread. So: only one full
 test run at a time, each at most 16 threads; builds `CARGO_BUILD_JOBS=4` each. The code enforces both:
 `annotations.py`, `milestones.rs`'s `run_cases`/`cores()`, `firstweek.rs` and `fuzz.rs` cap at 16, and a run of 300
-cases or more waits for a lock on `%TEMP%\ember-suite.lock`, which every worktree's runs share. A helper runs the full
-quick check once, at the end of its job, at `RUST_TEST_THREADS=8`; between rules, only the folders it changed.
+cases or more waits for a lock on `%TEMP%\ember-suite.lock`, which every worktree's runs share. A helper tests only
+the folders it changed, at `RUST_TEST_THREADS=8`, and the crates it touched once at the end.
+
+**Test what a change can affect, once, and rebuild nothing that did not change.** The owner, 2026-11-19, verbatim:
+"remember, reduce unnecessary execution and testing, recycle if possible and do no rebuild things that dont need
+rebuilding", and "more time developing and \"the right amount\" of time testing, no unnecessary fluff". Nothing tested
+is lost. Measured on 118 test programs (CPU time of everything they start, identical results): 315 s before, 125 s
+with the optimised compiler, 77 s when the programs had not changed.
+- **Between rules:** `cargo check`, then the quick check over the folders the change can affect.
+- **A full run uses the optimised compiler:** `cargo build --profile ci -p ember_driver --bin ember`, with `EMBER` set to
+  `target/ci/ember.exe`. It keeps the debug assertions and overflow checks. `cargo test` runs take `--profile ci` too.
+- **Before a merge, one full run:** `cargo test --workspace --locked --profile ci --no-fail-fast`. It checks everything the
+  quick check does and more, so a full quick check is not run beside it. `cargo check --workspace --all-targets` first: a
+  unit test that no longer compiles stops the whole run.
+- **The quick check reuses runs** (`EMBER_RUN_CACHE`, `compiler/ember_driver/src/run_cache.rs`): a program whose generated
+  code, build commands and input are unchanged is not compiled, linked or run again. Programs that use threads, time,
+  chance, files, C or `unsafe` always run (`ALWAYS_RUN` in `annotations.py`). `EMBER_NO_RUN_CACHE=1` runs everything. The
+  cargo suite and the push gate never reuse a run.
 
 **The heat guard.** The owner, 2026-11-19, verbatim: "if the CPU temp hits 102 more than 3 times you pause all
 things and wait for it to get down to a reasonable temperature and then you resume". `tools/heat_guard.ps1` does it

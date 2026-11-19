@@ -16,7 +16,7 @@ class Dog(Animal):
 class Owner:
     pet: Animal
 
-    fn init(pet: Animal):
+    fn init(owns pet: Animal):
         this.pet = pet
 
     fn bark() -> int:

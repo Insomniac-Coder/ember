@@ -12,7 +12,7 @@ class Bag:
         this.items = []
 
 class Emptier:
-    target: Bag
+    target: shares mut Bag
 
     fn drop():
         this.target.items.clear()
@@ -23,6 +23,6 @@ fn main():
         bag.items.push(owns i)
     total = 0
     for i in 0..4:
-        e = Emptier(bag)
+        _e = Emptier(shares mut bag)
         total = total + bag.items[i]
     println(total)

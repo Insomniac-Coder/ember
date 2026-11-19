@@ -347,6 +347,11 @@ struct Builder<'a> {
     class_init_flags: std::collections::HashMap<usize, LocalId>,
     /// `Body::handed_at`.
     handed_at: Vec<(LocalId, ember_span::Span)>,
+    /// `Body::stored_at`.
+    stored_at: Vec<(LocalId, ember_span::Span)>,
+    /// `[TYP-45]` (M4 slice C) — the upcast being lowered lends its object to a parameter that reads
+    /// it: the object stays where it is, read as a counted copy the compiler makes.
+    lending_upcast: bool,
 }
 
 impl<'a> Builder<'a> {
@@ -498,6 +503,8 @@ impl<'a> Builder<'a> {
             class_access,
             class_init_flags: std::collections::HashMap::new(),
             handed_at: Vec::new(),
+            stored_at: Vec::new(),
+            lending_upcast: false,
         }
     }
 
@@ -602,6 +609,7 @@ impl<'a> Builder<'a> {
                 positions
             },
             handed_at: self.handed_at,
+            stored_at: self.stored_at,
         }
     }
 
@@ -807,8 +815,70 @@ impl<'a> Builder<'a> {
         self.statement_temps.truncate(mark);
     }
 
+    /// `[RC-2b]` — the `ref mut` names whose every value is a place of this function's own, with no
+    /// object or owner on the way to it: while one lives nothing else reaches what it names, so that
+    /// needs no count of its own.
+    fn own_place_views(&self, body: &'a hir::Block) -> Vec<hir::LocalId> {
+        let own_place = |place: &hir::Expr| {
+            let mut current = place;
+            loop {
+                current = match &current.kind {
+                    hir::ExprKind::Field { base, .. } | hir::ExprKind::EnumField { base, .. } | hir::ExprKind::Index { base, .. } => {
+                        if self.counted_handle(base.ty) {
+                            return false;
+                        }
+                        base
+                    }
+                    hir::ExprKind::Local(local) => return !matches!(self.types.kind(self.function.local(*local).ty), TyKind::Ref { .. } | TyKind::Span { .. }),
+                    _ => return false,
+                };
+            }
+        };
+        let mut found: std::collections::HashMap<hir::LocalId, bool> = std::collections::HashMap::new();
+        let mut note = |local: hir::LocalId, value: &hir::Expr| {
+            let own = matches!(&value.kind, hir::ExprKind::Ref { place, mutable: true } if own_place(place));
+            let entry = found.entry(local).or_insert(true);
+            *entry = *entry && own;
+        };
+        let mut seen: std::collections::HashSet<*const hir::Block> = std::collections::HashSet::new();
+        let mut pending = vec![body];
+        while let Some(block) = pending.pop() {
+            if !seen.insert(block as *const hir::Block) {
+                continue;
+            }
+            for stmt in &block.stmts {
+                match stmt {
+                    hir::Stmt::Let { local, init: Some(init) } => note(*local, init),
+                    hir::Stmt::Assign { place, value } => {
+                        if let hir::ExprKind::Local(local) = place.kind {
+                            note(local, value);
+                        }
+                    }
+                    hir::Stmt::If { then_block, else_block, .. } | hir::Stmt::While { body: then_block, else_block, .. } => {
+                        pending.push(then_block);
+                        pending.extend(else_block.iter());
+                    }
+                    hir::Stmt::ForRange { body, else_block, .. } => {
+                        pending.push(body);
+                        pending.extend(else_block.iter());
+                    }
+                    hir::Stmt::Block(inner) | hir::Stmt::Defer(inner) => pending.push(inner),
+                    _ => {}
+                }
+                hir::visit_stmt(stmt, &mut |expr| {
+                    if let hir::ExprKind::Block { block, .. } = &expr.kind {
+                        pending.push(block);
+                    }
+                });
+            }
+        }
+        found.into_iter().filter(|&(_, own)| own).map(|(local, _)| local).collect()
+    }
+
     /// Lower `body`, the function's (given apart from it: `lower_with` takes it from the program).
     fn build(&mut self, body: &'a hir::Block) {
+        let views = self.own_place_views(body);
+        self.mut_param_locals.extend(views);
         self.lower_block(body);
         // A function whose body falls off the end returns the (void) return
         // slot as it stands. `[FN-8]`'s `main` is the common case. Owned
@@ -1149,6 +1219,7 @@ impl<'a> Builder<'a> {
                 self.at(decl_span);
                 self.push(StmtKind::StorageLive(mir_local));
                 if let Some(init) = init {
+                    self.note_stored_object(init);
                     let place = Place::local(mir_local);
                     self.lower_into(place, init);
                 }
@@ -1156,6 +1227,7 @@ impl<'a> Builder<'a> {
                 self.owns(mir_local);
             }
             hir::Stmt::Assign { place, value } => {
+                self.note_stored_object(value);
                 let place = self.lower_place(place);
                 self.lower_assign(place, value);
             }
@@ -3020,11 +3092,21 @@ impl<'a> Builder<'a> {
                     expr.span,
                 );
             }
-            hir::ExprKind::Builtin {
-                which: hir::Builtin::WeakUpgrade { class, option },
-                args,
-            } => {
-                self.lower_weak_upgrade(place, &args[0], *class, *option, expr.span);
+            // `[WK-12]` — an opening: the runtime's upgrade, made into an `Option`.
+            hir::ExprKind::Builtin { which: which @ hir::Builtin::LinkOpen { class, option }, args } => {
+                self.lower_option_query(place, &args[0], *which, *class, *option, expr.span);
+            }
+            // `[RC-1]`, `[WK-11]` — the owner or the handle is read where it is, never moved.
+            hir::ExprKind::Builtin { which: which @ hir::Builtin::LinkMake { .. }, args } => {
+                let source = self.lower_operand_borrowed(&args[0]);
+                let next = self.new_block();
+                self.terminate(Terminator::Call {
+                    func: FuncRef::Builtin { which: *which, arg_ty: expr.ty },
+                    args: vec![source],
+                    dest: place,
+                    next,
+                });
+                self.current = next;
             }
             hir::ExprKind::Builtin { which: hir::Builtin::SpanGet, args } => {
                 self.lower_span_get(place, &args[0], &args[1], expr.ty, expr.span);
@@ -3630,7 +3712,7 @@ impl<'a> Builder<'a> {
                     | hir::Builtin::ArenaAllocUninit { .. }
                     | hir::Builtin::ArenaAllocArrayZeroed { .. }
                     | hir::Builtin::MaybeUninitUninit { .. }
-                    | hir::Builtin::WeakEmpty { .. }
+                    | hir::Builtin::LinkNone { .. }
                     | hir::Builtin::ThreadScope
                     | hir::Builtin::ScopeSpawn { .. }
                     | hir::Builtin::JobScope
@@ -3664,6 +3746,7 @@ impl<'a> Builder<'a> {
                     which,
                     hir::Builtin::BoxNew { .. }
                         | hir::Builtin::SharedNew { .. }
+                        | hir::Builtin::LinkAdopt { .. }
                         | hir::Builtin::ArrayFromLiteral
                         | hir::Builtin::ThreadSpawn
                         | hir::Builtin::ThreadJoin
@@ -6670,7 +6753,10 @@ impl<'a> Builder<'a> {
                 let reads_c_entry = matches!(self.types.kind(*to), TyKind::Fn { abi: Some(_), .. })
                     && matches!(&inner.kind, hir::ExprKind::Local(_) | hir::ExprKind::Field { .. }
                         | hir::ExprKind::Index { .. } | hir::ExprKind::Deref(_));
-                let operand = if reads_c_entry {
+                let lent = std::mem::take(&mut self.lending_upcast) && is_place_expr(inner);
+                // `[TYP-36]` — a class object's address, as a number, reads the handle where it is.
+                let address = self.counted_handle(inner.ty) && !self.counted_handle(*to) && is_place_expr(inner);
+                let operand = if reads_c_entry || lent || address {
                     self.at(inner.span);
                     Operand::Copy(self.lower_place(inner))
                 } else {
@@ -6715,7 +6801,8 @@ impl<'a> Builder<'a> {
                 implementations,
                 expr: inner,
             } => {
-                let operand = self.lower_operand(inner);
+                let lent = std::mem::take(&mut self.lending_upcast) && is_place_expr(inner);
+                let operand = if lent { Operand::Copy(self.lower_place(inner)) } else { self.lower_operand(inner) };
                 let implementations = implementations
                     .iter()
                     .map(|implementation| {
@@ -6785,7 +6872,10 @@ impl<'a> Builder<'a> {
             // convert.
             hir::ExprKind::EraseRange(inner) => Rvalue::Use(self.lower_operand(inner)),
             hir::ExprKind::StructLit { struct_id, fields } => {
-                let operands = self.lower_aggregate_operands(fields, expr.span);
+                let mut operands = self.lower_aggregate_operands_of_frame(*struct_id, fields);
+                if operands.is_empty() {
+                    operands = self.lower_aggregate_operands(fields, expr.span);
+                }
                 Rvalue::Aggregate { kind: AggregateKind::Struct(*struct_id), operands }
             }
             hir::ExprKind::TupleLit(items) => {
@@ -6829,6 +6919,25 @@ impl<'a> Builder<'a> {
     /// first value moved out of a place (`self.title` of `R(title=self.title, n=1)`), where a move
     /// a diagnostic reports happens, else at the aggregate: not at the last operand, which may be
     /// a field's default in its declaration.
+    /// `[CORO-1]` — a generator's frame outlives the call that makes it, so a class object its caller
+    /// only lent is held by a count of the frame's own. Empty for any other struct.
+    fn lower_aggregate_operands_of_frame(&mut self, id: ember_types::StructId, items: &'a [hir::Expr]) -> Vec<Operand> {
+        if !self.types.is_coroutine_frame_struct(id) {
+            return Vec::new();
+        }
+        items
+            .iter()
+            .enumerate()
+            .map(|(index, item)| {
+                if self.types.coroutine_field_is_read_parameter(id, index) && self.counted_handle(item.ty) && is_place_expr(item) {
+                    Operand::Copy(self.lower_place(item))
+                } else {
+                    self.lower_operand_kept(item)
+                }
+            })
+            .collect()
+    }
+
     fn lower_aggregate_operands(&mut self, items: &'a [hir::Expr], span: ember_span::Span) -> Vec<Operand> {
         let mut moved_at = None;
         let operands = items
@@ -6848,14 +6957,18 @@ impl<'a> Builder<'a> {
     /// An operand of `==`: ODR-102 compares two owned callable values where
     /// they are, without moving either.
     fn lower_compared(&mut self, expr: &'a hir::Expr) -> Operand {
-        if matches!(self.types.kind(expr.ty), TyKind::Fn { abi: None, stateless: false, .. })
-            && matches!(&expr.kind, hir::ExprKind::Local(_) | hir::ExprKind::Field { .. }
-                | hir::ExprKind::Index { .. } | hir::ExprKind::Deref(_))
+        // `[EXP-9]` — `is` reads the two addresses and leaves both operands where they are.
+        if matches!(self.types.kind(expr.ty), TyKind::Fn { abi: None, stateless: false, .. } | TyKind::Class(_) | TyKind::ClassInterface(_) | TyKind::Link { .. })
+            && is_place_expr(expr)
         {
             self.at(expr.span);
             return Operand::Copy(self.lower_place(expr));
         }
-        self.lower_operand(expr)
+        // An operand of `is` upcast to the other's class stays where it is too.
+        self.lending_upcast = matches!(expr.kind, hir::ExprKind::Cast { .. }) && self.counted_handle(expr.ty);
+        let operand = self.lower_operand(expr);
+        self.lending_upcast = false;
+        operand
     }
 
     fn lower_operand(&mut self, expr: &'a hir::Expr) -> Operand {
@@ -7241,14 +7354,16 @@ impl<'a> Builder<'a> {
         self.push(StmtKind::StorageDead(raw));
     }
 
-    /// `[WK-3]` — attempt to acquire one strong handle from a weak control
-    /// block. The runtime result is already an owning class handle, so unlike
-    /// a downcast query it remains a normal statement temporary: copying it
-    /// into `Some` retains once and its statement-end drop releases once.
-    fn lower_weak_upgrade(
+    /// A builtin that answers a class handle or null (`which`: `[WK-12]`'s opening of a link), made
+    /// into `option`: `None` for null, `Some` of the handle otherwise. The source is read where it is.
+    /// The runtime's answer is an owning handle, a statement temporary: a class handle copied into
+    /// `Some` retains once and the temporary's end releases once; an owner of a value in a block
+    /// (not `Copy`) moves into `Some`.
+    fn lower_option_query(
         &mut self,
         place: Place,
         source: &'a hir::Expr,
+        which: hir::Builtin,
         class: Ty,
         option: ember_types::EnumId,
         span: ember_span::Span,
@@ -7260,7 +7375,7 @@ impl<'a> Builder<'a> {
         let checked = self.new_block();
         self.terminate(Terminator::Call {
             func: FuncRef::Builtin {
-                which: hir::Builtin::WeakUpgrade { class, option },
+                which,
                 arg_ty: class,
             },
             args: vec![source],
@@ -7290,7 +7405,8 @@ impl<'a> Builder<'a> {
             place,
             rvalue: Rvalue::Aggregate {
                 kind: AggregateKind::Enum(option, 1),
-                operands: vec![Operand::Copy(Place::local(raw))],
+                // `[WK-12]` — an owner opened from a link (`shares T`, not `Copy`) moves into `Some`.
+                operands: vec![self.read(Place::local(raw), class)],
             },
         });
         self.terminate(Terminator::Goto(join));
@@ -7565,7 +7681,13 @@ impl<'a> Builder<'a> {
             let temp = self.keep_handle_alive(expr);
             return Operand::Copy(temp);
         }
-        match self.lower_operand(expr) {
+        // `[TYP-45]` — a class object given to a parameter of its base class or of an interface is
+        // lent, as it is given to one of its own class.
+        self.lending_upcast = matches!(&expr.kind, hir::ExprKind::Cast { .. } | hir::ExprKind::InterfaceUpcast { .. })
+            && self.counted_handle(expr.ty);
+        let operand = self.lower_operand(expr);
+        self.lending_upcast = false;
+        match operand {
             Operand::Move(place) => Operand::Copy(place),
             other => other,
         }
@@ -7628,6 +7750,16 @@ impl<'a> Builder<'a> {
             _ => {}
         });
         found
+    }
+
+    /// `Body::stored_at` — a `let` or `=` whose value is a class object or an owner a local holds.
+    fn note_stored_object(&mut self, value: &hir::Expr) {
+        if let hir::ExprKind::Local(source) = value.kind
+            && matches!(self.types.kind(value.ty), TyKind::Class(_) | TyKind::ClassInterface(_) | TyKind::Link { .. })
+        {
+            let local = self.local_map[source.0 as usize];
+            self.stored_at.push((local, value.span));
+        }
     }
 
     /// `[OWN-9]` — an argument for an `owns` parameter: handed over (`lent`, `handed`).
@@ -7708,7 +7840,14 @@ impl<'a> Builder<'a> {
     fn keep_handle_alive(&mut self, handle: &'a hir::Expr) -> Place {
         let temp = self.temp(handle.ty, handle.span);
         self.push(StmtKind::StorageLive(temp));
-        self.lower_into(Place::local(temp), handle);
+        // A handle is not `Copy` (`[TYP-45]`), but this read leaves it where it is: a counted copy the
+        // compiler makes for itself, until `[RC-5]`'s check at compile time replaces it.
+        if is_place_expr(handle) {
+            let stored = self.lower_place(handle);
+            self.push(StmtKind::Assign { place: Place::local(temp), rvalue: Rvalue::Use(Operand::Copy(stored)) });
+        } else {
+            self.lower_into(Place::local(temp), handle);
+        }
         Place::local(temp)
     }
 
@@ -7799,4 +7938,9 @@ fn state_place(place: Place, index: usize, in_cell: bool) -> Place {
 /// ODR-240 — whether `symbol` names a function of the standard library: its module path is `std`'s.
 fn std_symbol(symbol: &str) -> bool {
     symbol.strip_prefix(ember_branding::mangle_prefix().as_str()).is_some_and(|rest| rest.starts_with("3std"))
+}
+
+/// Whether `expr` names a place of the program (a local, a field, an element, what a reference names).
+fn is_place_expr(expr: &hir::Expr) -> bool {
+    matches!(expr.kind, hir::ExprKind::Local(_) | hir::ExprKind::Field { .. } | hir::ExprKind::EnumField { .. } | hir::ExprKind::Index { .. } | hir::ExprKind::Deref(_))
 }

@@ -9,7 +9,7 @@
 #$ assert-c: !contains("ember_box_new_copy")
 
 # A generic class can satisfy two independent interfaces inside one dynamic box
-# while owning a Weak[Shared[T]] field. Each interface method uses the same
+# while owning a weakref T field. Each interface method uses the same
 # class payload; the weak observer stays non-owning and the box stays a handle.
 # `[TYP-17]` — `write` returns an `i32` field, not the `T` one: a generic
 # class's method must hold for every `T` (D-248).
@@ -24,22 +24,21 @@ struct Token:
 
 [T]
 class Pair implements Read, Write:
-    weak: Weak[Shared[Token]]
+    weak: weakref Token
     marker: T
     score: i32
 
     fn read() -> i32:
-        match this.weak.upgrade():
-            Some(owner):
-                return owner.get().value
-            None:
-                return 0
+        if this.weak exists as owner:
+            return owner.value
+        else:
+            return 0
 
     fn write() -> i32:
         return this.score
 
 fn main():
-    strong = Shared(Token(7))
-    boxed: owns dyn Read + Write = owns Pair[i32](Weak(strong), 0, 42)
+    strong = shares mut Token(7)
+    boxed: owns dyn Read + Write = owns Pair[i32](weakref strong, 0, 42)
     println(boxed.read())
     println(boxed.write())

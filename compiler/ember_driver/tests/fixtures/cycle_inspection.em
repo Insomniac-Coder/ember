@@ -4,8 +4,8 @@ class Root:
     child: Child
 
 class Child:
-    root: Weak[Root]
-    leaf: Shared[Leaf]
+    root: weakref Root
+    leaf: shares Leaf
 
 class Leaf:
     root: Root

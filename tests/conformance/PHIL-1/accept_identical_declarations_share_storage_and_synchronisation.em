@@ -20,11 +20,10 @@ struct Point:
 fn nudge(ref mut p: Point):
     p.x += 1
 
-@sync
 class Tally:
     count: i64
 
-fn keep(t: Tally) -> Tally:
+fn keep(owns t: thread_shared Tally) -> thread_shared Tally:
     return t
 
 fn main():
@@ -32,7 +31,7 @@ fn main():
     b = Point(1, 2)
     nudge(ref mut a)
     println(a.x + a.y + b.x)
-    kept = keep(Tally(1))
-    alone = Tally(2)
+    kept = keep(owns thread_shared Tally(1))
+    alone = thread_shared Tally(2)
     println(kept.count + alone.count)
     println(a.x + a.y + b.y)

@@ -6,22 +6,21 @@
 #$ assert-c: contains("ember_weak_release(")
 #$ assert-c: contains("ember_weak_upgrade(")
 
-# Monomorphizing a generic class must retain its Weak[Shared[T]] field's normal
+# Monomorphizing a generic class must retain its weakref T field's normal
 # field-drop glue. The unrelated generic marker must not change the weak
-# observer's ownership or the explicit Shared.get() payload boundary.
+# observer's ownership or the explicit the owner read as its value payload boundary.
 struct Token:
     value: i32
 
 [T]
 class Holder:
-    weak: Weak[Shared[Token]]
+    weak: weakref Token
     marker: T
 
 fn main():
-    strong = Shared(Token(7))
-    holder = Holder[bool](Weak(strong), true)
-    match holder.weak.upgrade():
-        Some(owner):
-            println(owner.get().value)
-        None:
-            println(0)
+    strong = shares mut Token(7)
+    holder = Holder[bool](weakref strong, true)
+    if holder.weak exists as owner:
+        println(owner.value)
+    else:
+        println(0)

@@ -26,7 +26,7 @@ fn insert_into(node: TreeNode, key: StrView) -> bool:
 fn in_order(node: Option[TreeNode], ref mut out: Array[String]):
     if node exists as n:
         in_order(n.left, ref mut out)
-        out.push(owns n.key.clone())
+        out.push(owns copy of n.key)
         in_order(n.right, ref mut out)
 
 fn height(node: Option[TreeNode]) -> int:
@@ -47,12 +47,12 @@ class Tree:
                 this.root = Some(TreeNode(key.to_string()))
                 this.size = 1
 
-    fn find(key: StrView) -> Option[TreeNode]:
-        current = this.root
+    fn find(key: StrView) -> Option[ref TreeNode]:
+        current = ref this.root
         while current exists as n:
             if key == n.key:
-                return Some(n)
-            current = n.left if key < n.key else n.right
+                return Some(ref n)
+            current = ref n.left if key < n.key else ref n.right
         return None
 
     fn words() -> Array[String]:

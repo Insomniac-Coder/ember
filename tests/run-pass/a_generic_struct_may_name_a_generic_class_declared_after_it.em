@@ -6,7 +6,7 @@
 # type" before). A struct holding a class handle reaches the class's fields through it.
 [T]
 struct Holder:
-    store: Store[T]
+    store: shares mut Store[T]
     at: int
 
 [T]
@@ -25,7 +25,7 @@ fn bump(h: Holder[Pos]):
 fn main():
     s = Store[Pos]()
     s.items.push(owns Pos(x=3))
-    h = Holder[Pos](store=s, at=0)
+    h = Holder[Pos](store=shares mut s, at=0)
     println(s.items[0].x)
     bump(h)
     println(s.items[0].x)

@@ -1,8 +1,8 @@
 # 9. Classes
 
-A `struct` is a value with one owner. A `class` is an **object**: several names can refer to the
-same one, through **handles**, and it lives as long as any handle to it does. Use a class for a
-thing with an identity — a player, a window, a node in a graph — and a struct for plain data.
+A `struct` is a value with one owner. A `class` is an **object**, a thing with an identity: a player, a window,
+a node in a graph. It has one owner too until you share it: `shares` and `shares mut` make more owners of
+the same object, and it lives as long as any owner does. Use a struct for plain data.
 
 ```ember
 class Counter:
@@ -14,7 +14,7 @@ class Counter:
 
 fn main():
     a = Counter("clicks")
-    b = a
+    b = shares mut a
     b.bump()
     a.bump()
     println(a.name, a.count, b.count)
@@ -24,8 +24,8 @@ fn main():
 clicks 2 2
 ```
 
-`b = a` copies the handle, not the object: `a` and `b` are one counter. The object is freed when
-its last handle goes, at that point in the program — not later, by a collector.
+`b = shares mut a` makes a second owner, not a second object: `a` and `b` are one counter. The object is
+freed when its last owner goes, at that point in the program — not later, by a collector.
 
 ## Constructors
 
@@ -86,12 +86,13 @@ generic says ...
 Rex says woof
 ```
 
-## Cycles and `Weak`
+## Cycles and `weakref`
 
-Two objects holding handles to each other keep each other alive: neither is freed. A debug run
+Two objects holding owners of each other keep each other alive: neither is freed. A debug run
 reports such a cycle when the program ends, naming the field to change. A back-pointer — a child to
-its parent, an item to its list — is a `Weak` handle, which does not keep its object alive;
-`upgrade()` gives the object back as an `Option`, `None` once it is gone:
+its parent, an item to its list — is a `weakref` link, which does not keep its object alive and may
+hold none (`= None`). A link is made with `weakref x`, and opened with `exists as`, which runs its
+block while the object lives:
 
 ```ember
 class Parent:
@@ -100,17 +101,16 @@ class Parent:
 
 class Child:
     name: String
-    parent: Option[Weak[Parent]] = None
+    parent: weakref Parent = None
 
 fn main():
     mum = Parent("Ada")
     kid = Child("Byron")
-    kid.parent = Some(Weak(mum))
+    kid.parent = weakref mum
     mum.children.push(owns kid)
     for child in mum.children:
-        if child.parent exists as weak:
-            if weak.upgrade() exists as parent:
-                println(f"{child.name} is {parent.name}'s")
+        if child.parent exists as parent:
+            println(f"{child.name} is {parent.name}'s")
 ```
 
 ```output

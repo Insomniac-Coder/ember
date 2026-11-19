@@ -11,7 +11,7 @@ struct Leaf implements Clone:
 
 [T: needs Clone]
 fn duplicate(value: T) -> T:
-    return value.clone()
+    return copy of value
 
 fn main():
     println(duplicate(Leaf(42)).value)

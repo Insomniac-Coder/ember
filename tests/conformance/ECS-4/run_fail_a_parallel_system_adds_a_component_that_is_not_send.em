@@ -3,8 +3,8 @@
 #$ profiles: debug, development
 #$ panics: a system `run_parallel` runs adds a `Sprite`, which is not Send
 # `[ECS-4]` (ODR-218), `[ECS-5]` — a component `run_parallel` uses is `Send`: a system it runs on
-# another thread that asks its `Commands` to add one that is not (here a `Texture` handle, whose
-# class is not `@sync`) would hand it to the calling thread, and panics before it does. The same
+# another thread that asks its `Commands` to add one that is not (here a `shares Texture` owner, which
+# stays on one thread) would hand it to the calling thread, and panics before it does. The same
 # addition from `world.run`, on the calling thread, is made.
 from std.ecs import World, Query, Component, Entity
 
@@ -16,7 +16,7 @@ class Texture:
 
 @derive(Component)
 struct Sprite:
-    texture: Texture
+    texture: shares Texture
 
 @derive(Copy, Component)
 struct Pos:
@@ -24,11 +24,11 @@ struct Pos:
 
 fn decorate(ref mut q: Query[(Entity, Pos)]):
     for e, p in q.iter():
-        q.commands().add(e, owns Sprite(Texture(p.x)))
+        q.commands().add(e, owns Sprite(shares Texture(p.x)))
 
 fn decorate_now(ref mut q: Query[(Entity, Pos)], unused: ()):
     for e, p in q.iter():
-        q.commands().add(e, owns Sprite(Texture(p.x)))
+        q.commands().add(e, owns Sprite(shares Texture(p.x)))
 
 fn main():
     w = World()

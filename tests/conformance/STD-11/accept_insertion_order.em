@@ -12,7 +12,7 @@
 fn keys(m: Map[String, int]) -> Array[String]:
     out: Array[String] = []
     for k in m:
-        out.push(owns k.clone())
+        out.push(owns copy of k)
     return out
 
 fn main():

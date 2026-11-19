@@ -144,7 +144,7 @@ impl MovePaths {
         self.places.push(place.clone());
         self.parents.push(parent);
         self.children.push(Vec::new());
-        self.handles.push(matches!(types.kind(ty), TyKind::Class(_) | TyKind::ClassInterface(_)));
+        self.handles.push(matches!(types.kind(ty), TyKind::Class(_) | TyKind::ClassInterface(_) | TyKind::Link { .. }));
 
         let fields: Vec<Ty> = match types.kind(ty) {
             TyKind::Struct(id)
@@ -629,6 +629,7 @@ fn builtin_publishing_arguments(which: ember_mir::Builtin) -> &'static [usize] {
         ember_mir::Builtin::ArenaMapInsert { .. } => &[2, 3],
         ember_mir::Builtin::BoxNew { .. }
         | ember_mir::Builtin::SharedNew { .. }
+        | ember_mir::Builtin::LinkAdopt { .. }
         | ember_mir::Builtin::IntoRaw { .. } => &[0],
         _ => &[],
     }
@@ -719,24 +720,33 @@ fn report_drop_self_escape(sink: &mut Sink, types: &TypeTable, self_ty: Ty, span
         TyKind::Struct(id) => types.struct_def(*id).fields.first().map(|field| field.name),
         _ => None,
     };
+    // One mistake, one error (`[DIA-14]`): this says more than the plain move `check_drop_moves` reports.
+    let plain_move = sink.diagnostics().iter().position(|d| d.code == Some(codes::E3013) && spans_meet(d.primary.span, span) && d.message.starts_with("cannot move `this` out of `drop`"));
     let line = ember_diag::line_mark(span);
     let help = match field {
         Some(field) => format!("on line {line}, hand over a copy of what you need where it has `this`: `copy of this.{field}`; or move the data out with `mem.take`"),
         None => format!("on line {line}, hand over a value of your own where it has `this`; or move the data out with `mem.take`"),
     };
-    sink.emit_classified(
-        Diagnostic::error(
-            codes::E3016,
-            span,
-            format!(
-                "`drop` ends this `{}`; an owner made from it would point at a freed object; keep a copy of what you need",
-                types.display(inner)
-            ),
-        )
-        .primary_label("published here")
-        .note("a destructor may not publish a handle to the object being destroyed [CLS-7a]")
-        .help(help),
-    );
+    let diagnostic = Diagnostic::error(
+        codes::E3016,
+        span,
+        format!(
+            "`drop` ends this `{}`; an owner made from it would point at a freed object; keep a copy of what you need",
+            types.display(inner)
+        ),
+    )
+    .primary_label("published here")
+    .note("a destructor may not publish a handle to the object being destroyed [CLS-7a]")
+    .help(help);
+    match plain_move {
+        Some(at) => sink.amend(at, |existing| *existing = diagnostic),
+        None => sink.emit_classified(diagnostic),
+    }
+}
+
+/// Whether two spans of one file share any of it (a statement, and a name inside it).
+fn spans_meet(a: Span, b: Span) -> bool {
+    a.file == b.file && a.start <= b.end && b.start <= a.end
 }
 
 /// Whether a move leaves through `drop`'s `self`: rooted at it, past the borrow.
@@ -800,7 +810,7 @@ fn check_drop_moves(body: &Body, types: &TypeTable, sink: &mut Sink) -> usize {
                 .note("a `drop` body may not take fields out of `this` [DRP-5]; the field is dropped again after `drop` returns [EXP-6]")
                 .help("use `mem.take`, `mem.replace` or `swap` to leave a value in its place"),
             );
-        } else {
+        } else if !sink.diagnostics().iter().any(|d| d.code == Some(codes::E3016) && spans_meet(d.primary.span, span)) {
             sink.emit_classified(
                 Diagnostic::error(codes::E3013, span, "cannot move `this` out of `drop`")
                     .primary_label("moved out here")
@@ -885,6 +895,7 @@ fn moved_place_ty(place: &Place, body: &Body, types: &TypeTable) -> Ty {
                 ty = fields.get(*i).map(|f| f.ty).unwrap_or(ty);
                 variant = None;
             }
+            (Projection::Field(0), TyKind::Link { .. }) => ty = types.link_field(ty).unwrap_or(ty),
             (Projection::Field(i), TyKind::Struct(id)) => {
                 let fields = &types.struct_def(*id).fields;
                 ty = fields.get(*i).map(|f| f.ty).unwrap_or(ty);
@@ -929,6 +940,7 @@ fn through_class_field(place: &Place, body: &Body, types: &TypeTable) -> bool {
                 ty = fields.get(*i).map(|f| f.ty).unwrap_or(ty);
                 variant = None;
             }
+            (Projection::Field(0), TyKind::Link { .. }) => ty = types.link_field(ty).unwrap_or(ty),
             (Projection::Field(i), TyKind::Struct(id)) => {
                 let fields = &types.struct_def(*id).fields;
                 ty = fields.get(*i).map(|f| f.ty).unwrap_or(ty);
@@ -954,6 +966,7 @@ fn class_object_of_field(place: &Place, body: &Body, types: &TypeTable) -> Optio
     for projection in &place.projection {
         match (projection, types.kind(ty)) {
             (Projection::Field(_), TyKind::Class(_)) => return Some(ty),
+            (Projection::Field(0), TyKind::Link { .. }) => ty = types.link_field(ty).unwrap_or(ty),
             (Projection::Field(i), TyKind::Struct(id)) => ty = types.struct_def(*id).fields.get(*i).map(|f| f.ty).unwrap_or(ty),
             (Projection::Field(i), TyKind::Tuple(items)) => ty = items.get(*i).copied().unwrap_or(ty),
             (Projection::Deref, TyKind::Ref { inner, .. } | TyKind::Ptr { inner, .. }) => ty = *inner,
@@ -969,6 +982,7 @@ fn describe_place(place: &Place, body: &Body, types: &TypeTable) -> String {
     let mut ty = body.local(place.local).ty;
     for projection in &place.projection {
         match (projection, types.kind(ty)) {
+            (Projection::Field(0), TyKind::Link { .. }) => ty = types.link_field(ty).unwrap_or(ty),
             (Projection::Field(i), TyKind::Struct(id)) => {
                 if let Some(field) = types.struct_def(*id).fields.get(*i) {
                     text.push('.');
@@ -1011,6 +1025,7 @@ fn deref_through_ref(place: &Place, body: &Body, types: &TypeTable) -> bool {
                 ty = fields.get(*i).map(|f| f.ty).unwrap_or(ty);
                 variant = None;
             }
+            (Projection::Field(0), TyKind::Link { .. }) => ty = types.link_field(ty).unwrap_or(ty),
             (Projection::Field(i), TyKind::Struct(id)) => {
                 let fields = &types.struct_def(*id).fields;
                 ty = fields.get(*i).map(|f| f.ty).unwrap_or(ty);
@@ -1165,7 +1180,7 @@ fn check_borrowed_moves(body: &Body, types: &TypeTable, sink: &mut Sink) -> usiz
                 Diagnostic::error(codes::E3013, span, "cannot move out of a reference")
                     .primary_label("moved out here")
                     .note("moving out of a `ref`/`ref mut` is forbidden [EXP-6]; the referent still owns the value and drops it")
-                    .help("borrow it, `ref` (`ref mut` to change it where it is); move it out where its owner is held mutably, with `mem.take`, `mem.replace` or `swap`, or `pop`, `swap_remove`, `remove` or `drain` from a container; or copy it, `.clone()`, leaving the owner's value as it is"),
+                    .help("borrow it, `ref` (`ref mut` to change it where it is); move it out where its owner is held mutably, with `mem.take`, `mem.replace` or `swap`, or `pop`, `swap_remove`, `remove` or `drain` from a container; or copy it, `copy of`, leaving the owner's value as it is"),
             );
             errors += 1;
         } else if borrowed {
@@ -1211,7 +1226,7 @@ fn check_borrowed_moves(body: &Body, types: &TypeTable, sink: &mut Sink) -> usiz
                 Diagnostic::error(codes::E3013, span, "cannot move out of a borrowed parameter")
                     .primary_label("moved out here")
                     .note(note)
-                    .help("the caller keeps its value: borrow it, `ref`, or copy what is moved, `.clone()`; or take the parameter `owns`, or `ref mut` and move it out with `mem.take`, `mem.replace` or `swap`, leaving a value behind"),
+                    .help("the caller keeps its value: borrow it, `ref`, or copy what is moved, `copy of`; or take the parameter `owns`, or `ref mut` and move it out with `mem.take`, `mem.replace` or `swap`, leaving a value behind"),
             );
             errors += 1;
         }
@@ -1342,9 +1357,11 @@ fn write_flag_updates(body: &mut Body, flags: &BTreeMap<Place, LocalId>) {
                     written.push(dest.clone());
                     written.push(overflow.clone());
                 }
+                // What is dropped is gone: a flag left set would drop it again on a later turn of a
+                // loop that does not make it.
+                StmtKind::Drop { place, .. } => moved.push(place.clone()),
                 StmtKind::StorageLive(_)
                 | StmtKind::StorageDead(_)
-                | StmtKind::Drop { .. }
                 | StmtKind::BeginAccess { .. }
                 | StmtKind::BeginAccessTransfer { .. }
                 | StmtKind::EndAccess { .. }
@@ -1835,6 +1852,7 @@ impl Reporter<'_> {
                 None => diagnostic,
             };
             let diagnostic = self.kept_by_copy(diagnostic, body, local, again.then_some(span));
+            let diagnostic = self.kept_by_sharing(diagnostic, body, local, again.then_some(span));
             diagnostic
             .primary_label("handed over here, and the loop comes round again")
             .note(concat!(
@@ -1854,6 +1872,7 @@ impl Reporter<'_> {
                 .primary_label("used here")
                 .note("handing a value over gives it away; the old owner cannot use it again [OWN-3]");
             let diagnostic = self.kept_by_copy(diagnostic, body, local, again.then_some(span));
+            let diagnostic = self.kept_by_sharing(diagnostic, body, local, again.then_some(span));
             self.moved_from(diagnostic, body, local, span)
         };
         self.sink.emit_classified(diagnostic);
@@ -1900,13 +1919,18 @@ impl Reporter<'_> {
             _ => format!("`{name}` {was} handed over and is used on line {used}"),
         };
         let ty = body.local(local).ty;
+        // An owner's second owner is made with its own word.
+        let owner = match self.types.kind(ty) {
+            TyKind::Link { kind, .. } => kind.word(),
+            _ => "shares",
+        };
         let (tail, help) = if self.types.is_copy(ty) {
             (format!("to keep it, write `owns copy of {name}`"), format!("write `owns copy of {name}` where it is handed over"))
         } else {
             match site.as_ref().map(|site| &site.keep) {
                 Some(Keep::Store { dest }) => (
-                    format!("to keep both, write `{dest} = copy of {name}` (a copy of your own) or `{dest} = shares {name}` (two owners of one value)"),
-                    format!("write `{dest} = copy of {name}` (a copy of your own) or `{dest} = shares {name}` (two owners), or use `{name}` before it is handed over"),
+                    format!("to keep both, write `{dest} = copy of {name}` (a copy of your own) or `{dest} = {owner} {name}` (two owners of one value)"),
+                    format!("write `{dest} = copy of {name}` (a copy of your own) or `{dest} = {owner} {name}` (two owners), or use `{name}` before it is handed over"),
                 ),
                 _ => (
                     format!("to keep both, hand over a copy of your own: `copy of {name}`"),
@@ -1935,6 +1959,30 @@ impl Reporter<'_> {
             return diagnostic;
         }
         diagnostic.migrate_edits("a copy where 0.9.10 copied the number (`owns copy of`)", edits)
+    }
+
+    /// `[CLI-20]` (M4 slice C) — before 0.9.15 `m = n` made a second owner of the class object `n`
+    /// held; it hands it over now (`[TYP-45]`). Where `n` is used again, `ember fmt --migrate` writes
+    /// each such line `m = shares mut n`, two owners that may both change it, so the program does
+    /// what it did; for a name that is an owner already, with that owner's own word. No message changes.
+    fn kept_by_sharing(&self, diagnostic: Diagnostic, body: &Body, local: LocalId, instruction: Option<Span>) -> Diagnostic {
+        let moves: Vec<Span> = moves_reaching(body, local, self.point).into_iter().chain(instruction).collect();
+        let word = match self.types.kind(body.local(local).ty) {
+            TyKind::Link { kind, .. } => kind.word(),
+            _ => "shares mut",
+        };
+        let mut edits: Vec<(Span, Replacement)> = Vec::new();
+        for (stored, at) in &body.stored_at {
+            let within = moves.iter().any(|moved| moved.file == at.file && moved.start <= at.end && at.start <= moved.end);
+            let insert = Span::new(at.file, at.start, at.start);
+            if *stored == local && within && !edits.iter().any(|(span, _)| *span == insert) {
+                edits.push((insert, Replacement::Text(format!("{word} "))));
+            }
+        }
+        if edits.is_empty() {
+            return diagnostic;
+        }
+        diagnostic.migrate_edits(format!("a second owner where 0.9.10 copied the handle (`{word}`)"), edits)
     }
 
     /// `[OWN-3]` — a use after a move is labelled at the move as well; and a collection's, with the
@@ -1983,6 +2031,7 @@ impl Reporter<'_> {
             .primary_label("used here")
             .note(note);
         let diagnostic = self.kept_by_copy(diagnostic, body, local, None);
+        let diagnostic = self.kept_by_sharing(diagnostic, body, local, None);
         let diagnostic = self.moved_from(diagnostic, body, local, span);
         self.sink.emit_classified(diagnostic);
     }

@@ -588,15 +588,26 @@ impl Checker<'_> {
         Expr { ty: result_ty, kind: ExprKind::Block { block: Block { stmts: vec![Stmt::Expr(append)], span }, value: Box::new(done) }, span }
     }
 
+    /// `[TYP-14]` — what a value given to a plain parameter is read as: a reference, and a `shares`,
+    /// `shares mut` or `thread_shared` owner, are read through to the value (`synth_print_pieces`
+    /// prints an owner as its value); a `weakref` link is not, since it is opened first (`[GRM-44]`).
+    fn printed_through(&self, ty: Ty) -> Ty {
+        let mut ty = ty;
+        loop {
+            match *self.types.kind(ty) {
+                TyKind::Ref { inner, .. } => ty = inner,
+                TyKind::Link { kind, target } if !kind.is_weak() => ty = target,
+                _ => return ty,
+            }
+        }
+    }
+
     /// `[STD-9]` (verdict 117) — whether `ty` is `Printable`: whether printing a value of it is
     /// allowed, as `print` decides for each value (`synth_print_pieces`): its written `Display`
     /// (through a `Box`, or a `Cell` of a `Copy` value, ODR-109), or a `dyn` value's, or else the
     /// text the table gives it (`Display`'s, else `Debug`'s).
     pub(crate) fn printable(&self, ty: Ty) -> bool {
-        let mut ty = ty;
-        while let TyKind::Ref { inner, .. } = *self.types.kind(ty) {
-            ty = inner;
-        }
+        let ty = self.printed_through(ty);
         if self.dyn_reaches(ty, "std.core.Display") {
             return true;
         }
@@ -614,10 +625,7 @@ impl Checker<'_> {
 
     /// `[STD-9]` — why `ty` is not `Printable`, as printing a value of it reports it.
     pub(crate) fn report_not_printable(&mut self, ty: Ty, span: Span) {
-        let mut cell = ty;
-        while let TyKind::Ref { inner, .. } = *self.types.kind(cell) {
-            cell = inner;
-        }
+        let mut cell = self.printed_through(ty);
         let mut reached = cell;
         while let Some(inner) = self.types.printed_as(reached) {
             if self.cell_inner(reached).is_some_and(|held| !self.types.is_copy(held)) {

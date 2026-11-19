@@ -1,7 +1,7 @@
 #$ test: run-pass
 #$ rules: RC-1, RC-2e, CTL-1, CTL-2, TYP-14, RNG-4
 #$ profiles: debug, development, release
-#$ assert-c-count: contains("ember_retain_plain((ember_obj_header*)") == 4
+#$ assert-c-count: contains("ember_retain_plain((ember_obj_header*)") == 2
 #$ assert-c-count: contains("ember_retain((ember_obj_header*)") == 0
 #$ stdout: 7
 #$ stdout: 8
@@ -13,14 +13,14 @@
 class Token:
     value: i32
 
-type Pair = (Token, Token)
+type Pair = (shares Token, shares Token)
 
-fn consume(owns token: Token) -> i32:
+fn consume(owns token: shares Token) -> i32:
     return token.value
 
 fn main():
     pairs: Array[Pair] = Array[Pair]()
-    pairs.push(owns (Token(7), Token(8)))
+    pairs.push(owns (shares Token(7), shares Token(8)))
     for left, right in pairs:
-        println(consume(owns left))
-        println(consume(owns right))
+        println(consume(shares left))
+        println(consume(shares right))

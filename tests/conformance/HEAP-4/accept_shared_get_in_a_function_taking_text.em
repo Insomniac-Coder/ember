@@ -5,8 +5,8 @@
 # `Shared` through `get`: the access check named the function's C symbol in its message, and the
 # backend stopped at it.
 
-fn show(s: Shared[int], label: StrView):
-    println(label, s.get())
+fn show(s: shares mut int, label: StrView):
+    println(label, s)
 
 fn main():
-    show(Shared(5), "value")
+    show(shares mut 5, "value")

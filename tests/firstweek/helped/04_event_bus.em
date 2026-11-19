@@ -54,11 +54,14 @@ class ChatLog:
 
 fn main():
     bus = EventBus()
-    board = Scoreboard()
-    log = ChatLog()
-    bus.subscribe("players", owns owned fn(e) => board.on_event(e))
-    bus.subscribe("score", owns owned fn(e) => board.on_event(e))
-    bus.subscribe("chat", owns owned fn(e) => log.on_event(e))
+    board = shares mut Scoreboard()
+    log = shares mut ChatLog()
+    players = shares mut board
+    scores = shares mut board
+    chat = shares mut log
+    bus.subscribe("players", owns owned fn(e) => players.on_event(e))
+    bus.subscribe("score", owns owned fn(e) => scores.on_event(e))
+    bus.subscribe("chat", owns owned fn(e) => chat.on_event(e))
     bus.subscribe("players", owns owned fn(e) => println(f"[audit] {e!r}"))
 
     bus.publish(Event.PlayerJoined("ann"))

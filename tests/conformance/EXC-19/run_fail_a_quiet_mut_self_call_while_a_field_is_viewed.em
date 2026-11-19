@@ -19,7 +19,7 @@ class Counter:
 
 fn main():
     c = Counter()
-    alias = c
+    alias = shares mut c
     for x in c.items:
         alias.bump()
         println(x)

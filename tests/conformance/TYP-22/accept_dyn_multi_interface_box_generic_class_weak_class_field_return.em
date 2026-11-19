@@ -11,11 +11,11 @@
 #$ assert-c: contains("ember_weak_upgrade(")
 #$ assert-c: !contains("ember_box_new_copy")
 
-# One Box[dyn Observe + Bump] can return Weak[Token] through its shared slot,
+# One Box[dyn Observe + Bump] can return weakref Token through its shared slot,
 # then invoke its mutable slot on the same generic class payload. The observer
 # remains separate from the box and upgrades only against the live Token owner.
 interface Observe:
-    fn observer() -> Weak[Token]
+    fn observer() -> weakref Token
 
 interface Bump:
     fn bump() -> i32
@@ -25,12 +25,12 @@ class Token:
 
 [T]
 class Holder implements Observe, Bump:
-    weak: Weak[Token]
+    weak: weakref Token
     marker: T
     count: i32
 
-    fn observer() -> Weak[Token]:
-        return this.weak
+    fn observer() -> weakref Token:
+        return weakref this.weak
 
     fn bump() -> i32:
         this.count = this.count + 1
@@ -38,11 +38,10 @@ class Holder implements Observe, Bump:
 
 fn main():
     strong = Token(7)
-    boxed: owns dyn Observe + Bump = owns Holder[bool](Weak(strong), true, 0)
+    boxed: owns dyn Observe + Bump = owns Holder[bool](weakref strong, true, 0)
     weak = boxed.observer()
     println(boxed.bump())
-    match weak.upgrade():
-        Some(owner):
-            println(owner.value)
-        None:
-            println(0)
+    if weak exists as owner:
+        println(owner.value)
+    else:
+        println(0)

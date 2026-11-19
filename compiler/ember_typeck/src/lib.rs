@@ -988,6 +988,9 @@ fn check_round(
     checker.note_c_declarations();
     let after_bodies_mark = checker.sink.mark();
     checker.report_parameter_changes();
+    for class in checker.types.settle_thread_shared() {
+        checker.refuse_class_shared_both_ways(class);
+    }
     checker.report_unstated_safety();
     checker.report_unneeded_unsafe();
     let after_bodies = after_bodies_mark..checker.sink.mark();
@@ -1540,7 +1543,7 @@ impl ParallelWalk {
                 }
             }
             ast::ExprKind::Match { scrutinee, arms } => self.arms(checker, scrutinee, arms),
-            ast::ExprKind::RefOf { place, .. } | ast::ExprKind::CopyOf(place) => self.argument(checker, place),
+            ast::ExprKind::RefOf { place, .. } | ast::ExprKind::CopyOf(place) | ast::ExprKind::Link { value: place, .. } => self.argument(checker, place),
             // A lambda or a comprehension in the body is its own code: one that reaches a place the
             // loop writes cannot be read through.
             ast::ExprKind::Lambda(_) | ast::ExprKind::Comprehension { .. } => {}
@@ -3338,6 +3341,15 @@ struct Checker<'a> {
     /// ODR-278 — the names the body being checked assigns more than once (`[CLO-13]`'s scan): a
     /// local declared from a function and assigned again holds any function of its shape.
     reassigned: HashSet<Symbol>,
+    /// D5, `[RC-1]` — the declarations (by span) of the locals and `owns` parameters a line of their
+    /// function shares: each is made in a block of its own where it is declared, and its type is the
+    /// shared type throughout the function. Set while a body is checked; a new one asks for another
+    /// pass of the body, which writes the block.
+    block_locals: HashSet<Span>,
+    /// `[RC-1]` — the lines of this pass that share a local whose declaration has not made it an
+    /// owner. The next pass makes it one; one still here when the body is settled is a name no line
+    /// gives a value of its own (a loop's, a pattern's).
+    unmade_owners: Vec<(Span, String)>,
     /// `[CLO-2]` — set while a closure body is checked, so that a read of an
     /// enclosing local is seen as a capture rather than as an ordinary read.
     captures: Option<CaptureWatch>,
@@ -3429,6 +3441,8 @@ struct Checker<'a> {
     argument_of: Option<(Span, Symbol, Span)>,
     /// `[FN-2a]` — the place a call's `ref mut` argument names, and the parameter it is given to.
     ref_mut_argument: Option<(Span, Span)>,
+    /// `[RC-1]` — the argument being checked, when its parameter only reads it.
+    lent_argument: Option<Span>,
     /// `[FN-8]` — the names a script's statements bind: locals of the implicit `main`.
     script_locals: HashSet<Symbol>,
     /// `[EXP-5]` — the receiver of the method call an expression statement is: its result is not used.
@@ -3599,10 +3613,6 @@ struct Checker<'a> {
     /// `[THR-11]` — a scoped task's lambda, which copies the `Copy` variables it only reads
     /// (`[CLO-13]`), as one stored as a callable value does: a loop's variable lives one pass.
     scoped_task_lambda: Option<Span>,
-    /// `[WK-1]` — every compiler-known `Weak[C]` and the class handle it can
-    /// upgrade. The wrapper has a private class-pointer field, but unlike the
-    /// class handle it retains only the runtime control block.
-    weaks: HashMap<StructId, Ty>,
     /// `[CELL-5]` — every `RefCell[T]` built so far, and the `T` it holds.
     /// A transparent struct with a second field for the one-word borrow
     /// counter plus location fields for the conflicting borrow's source
@@ -4237,6 +4247,8 @@ impl<'a> Checker<'a> {
             function_symbols: HashMap::new(),
             generic_paths: HashMap::new(),
             reassigned: HashSet::new(),
+            block_locals: HashSet::new(),
+            unmade_owners: Vec::new(),
             lambdas: Vec::new(),
             comptime_answers: ComptimeAnswers::new(),
             comptime_requests: Vec::new(),
@@ -4310,6 +4322,7 @@ impl<'a> Checker<'a> {
             dyn_debug_holders: Vec::new(),
             argument_of: None,
             ref_mut_argument: None,
+            lent_argument: None,
             script_locals: HashSet::new(),
             discarded_receiver: None,
             discarded_temp_calls: Vec::new(),
@@ -4368,7 +4381,6 @@ impl<'a> Checker<'a> {
             soa_element_field: None,
             soa_groups: HashMap::new(),
             soa_gathers: HashMap::new(),
-            weaks: HashMap::new(),
             refcells: HashMap::new(),
             maybe_uninit: HashMap::new(),
             unsafe_cells: HashMap::new(),
@@ -5511,7 +5523,7 @@ impl<'a> Checker<'a> {
     fn alias_body_is_resolvable(&self, ty: &ast::TypeExpr) -> bool {
         match &ty.kind {
             ast::TypeKind::Void | ast::TypeKind::Never | ast::TypeKind::SelfType => true,
-            ast::TypeKind::Ref { inner, .. } | ast::TypeKind::Ptr { inner, .. } | ast::TypeKind::Owns(inner) => {
+            ast::TypeKind::Ref { inner, .. } | ast::TypeKind::Ptr { inner, .. } | ast::TypeKind::Owns(inner) | ast::TypeKind::Link { inner, .. } => {
                 self.alias_body_is_resolvable(inner)
             }
             ast::TypeKind::Tuple(items) => {
@@ -6476,6 +6488,16 @@ impl<'a> Checker<'a> {
                                 if self.prefixes[target] == "std.mem" && item.name.name.is("MaybeUninit") && item.alias.is_none() {
                                     continue;
                                 }
+                                // `[TYP-45]` — `SyncShared` is gone: the value says `thread_shared`.
+                                if self.prefixes[target] == "std.sync" && item.name.name.is("SyncShared") {
+                                    let edit = self.import_item_removal(import, items, item);
+                                    self.sink.emit(
+                                        Diagnostic::error(codes::E1010, item.name.span, "`SyncShared` is not a type of Ember: a value several threads own is `thread_shared T`")
+                                            .migrate_edits("`SyncShared` is no longer imported", vec![(edit, ember_diag::Replacement::Text(String::new()))]),
+                                    );
+                                    self.failed_imports[index].insert(item.alias.map(|a| a.name).unwrap_or(item.name.name));
+                                    continue;
+                                }
                                 // `[OWN-6]` — and so is `mem.forget`.
                                 if self.prefixes[target] == "std.mem" && item.name.name.is("forget") {
                                     let edit = self.import_item_removal(import, items, item);
@@ -6719,7 +6741,7 @@ impl<'a> Checker<'a> {
                         name,
                         fields: Vec::new(),
                         span: item.span,
-                        is_sync: has_attribute(&item.attrs, "sync"),
+                        is_sync: false,
                         openness: class_openness(decl.openness),
                         base: None,
                         has_drop: false,
@@ -6785,10 +6807,8 @@ impl<'a> Checker<'a> {
                 // Generic classes are outside the current collection path.
                 continue;
             };
-            self.validate_sync_class(id);
             self.validate_must_drop_class(id);
             let Some(base) = self.types.class_def(id).base else { continue };
-            self.validate_sync_base(id, base, decl.base.as_ref().map_or(decl.name.span, |b| b.span));
             // `[CLS-10]` — with no `init`, the base's constructor builds the
             // object, so every field this class adds needs a default.
             let declares_init = decl.members.iter().any(|member| {
@@ -6843,18 +6863,6 @@ impl<'a> Checker<'a> {
                     ),
                 );
             }
-        }
-    }
-
-    fn validate_sync_base(&mut self, id: ClassId, base: ClassId, span: Span) {
-        let derived = self.types.class_def(id);
-        let parent = self.types.class_def(base);
-        if derived.is_sync != parent.is_sync {
-            self.error(
-                codes::E7001,
-                span,
-                format!("class `{}` and its base `{}` must both be `@sync` or both be non-`@sync`", derived.name, parent.name),
-            );
         }
     }
 
@@ -6915,46 +6923,6 @@ impl<'a> Checker<'a> {
             .filter(|&(index, _)| !named.contains_key(&(index as u32)) && !projected.contains(&(index as u32)))
             .map(|(_, &arg)| arg)
             .collect()
-    }
-
-    fn validate_sync_class(&mut self, id: ClassId) {
-        let def = self.types.class_def(id);
-        if !def.is_sync { return; }
-        let name = def.name.as_str().rsplit('.').next().unwrap_or(def.name.as_str()).to_string();
-        let offenders = def.fields.iter().filter_map(|field| {
-            let send = self.is_send(field.ty);
-            let sync = self.is_sync(field.ty);
-            (!send || !sync).then_some((field.name, field.ty, field.ty_span, send, sync))
-        }).collect::<Vec<_>>();
-        for (field, ty, span, send, sync) in offenders {
-            let property = match (send, sync) {
-                (false, false) => "Send or Sync",
-                (false, true) => "Send",
-                (true, false) => "Sync",
-                (true, true) => unreachable!(),
-            };
-            self.sink.emit(
-                Diagnostic::error(codes::E7001, span,
-                    format!("field `{name}.{field}` has type `{}`, which is not {property}", self.types.display(ty)))
-                    .help(format!("give `{field}` a Send and Sync type before declaring `{name}` `@sync`")),
-            );
-        }
-        // `[TYP-35]` — a phantom parameter counts as a field of its type.
-        let span = self.types.class_def(id).span;
-        let class_ty = self.types.intern(TyKind::Class(id));
-        for arg in self.types.phantoms(class_ty).to_vec() {
-            let property = match (self.is_send(arg), self.is_sync(arg)) {
-                (true, true) => continue,
-                (false, false) => "Send or Sync",
-                (false, true) => "Send",
-                (true, false) => "Sync",
-            };
-            self.sink.emit(
-                Diagnostic::error(codes::E7001, span,
-                    format!("`{}` has the type argument `{}`, which is not {property}", self.types.display(class_ty), self.types.display(arg)))
-                    .note("a type parameter no field names counts for `Send` and `Sync` as a field of its type would (TYP-35)"),
-            );
-        }
     }
 
     fn qualified_in_module(&self, module: usize, name: Symbol) -> Symbol {
@@ -7696,7 +7664,7 @@ impl<'a> Checker<'a> {
                     implements: decl.implements.clone(),
                     methods: Vec::new(),
                     openness: class_openness(decl.openness),
-                    is_sync: has_attribute(&item.attrs, "sync"),
+                    is_sync: false,
                     declaring_module: self.current_module,
                 },
             );
@@ -11938,17 +11906,6 @@ impl<'a> Checker<'a> {
             "cloned" => false,
             _ => self.types.is_copy(inner) || self.implements(inner, Symbol::intern("std.core.Copy")),
         };
-        // `copy of` makes a new object of a class: as there (`copy_refused`), a copy of a handle,
-        // naming the same object, is no copy.
-        if name.name.is("copy_each") && self.holds_class_object(inner, &mut HashSet::new()) {
-            let shown = self.types.display(inner);
-            let message = format!("`copy_each` of `{shown}` items, which hold a class object, is not built by this compiler yet");
-            self.sink.emit(
-                Diagnostic::error(codes::E0900, name.span, message)
-                    .note("`copy_each` makes what `copy of` makes of each item, a new object of a class [OWN-8]; this compiler's `Clone` of a class object keeps the same one"),
-            );
-            return error;
-        }
         // D-735 — a parameter is `Copy` or `Clone` by its bounds (`T: Copy`), which the type table
         // does not know.
         let fits = if copied {
@@ -14767,10 +14724,10 @@ impl<'a> Checker<'a> {
                 .variants
                 .iter()
                 .all(|variant| variant.fields.iter().all(|field| checker.is_cloneable(field.ty))),
-            // `[OWN-8]` — class handles clone like ordinary handle copies.
-            // Their fields stay in the same object, so a shallow clone has
-            // no field-wise Clone requirements.
-            TyKind::Class(_) => true,
+            // `[TYP-36]` — a class object's `Clone` is a new object, each field cloned.
+            TyKind::Class(id) => (0..checker.types.class_field_count(*id))
+                .filter_map(|index| checker.types.class_field_at(*id, index))
+                .all(|field| checker.is_cloneable(field.ty)),
             _ => false,
         };
         self.assumed_cloneable = pending.iter().map(|(ty, _, _)| *ty).collect();
@@ -14914,8 +14871,8 @@ impl<'a> Checker<'a> {
                 ),
                 _ if target == self.common.error => {}
                 _ if matches!(self.types.kind(target), TyKind::Class(_) | TyKind::ClassInterface(_)) => self.sink.emit(
-                    Diagnostic::error(codes::E2040, at, format!("a class is `{word}` only as `@sync`: its reference counts must be atomic"))
-                        .help("declare the class `@sync`, whose fields are then checked [THR-1]"),
+                    Diagnostic::error(codes::E2040, at, format!("a class is `{word}` by its fields, which the compiler checks: nothing is written for it"))
+                        .help("to share an object between threads, make it `thread_shared` [THR-1]"),
                 ),
                 _ if !decl.members.is_empty() => self.sink.emit(
                     Diagnostic::error(codes::E2040, at, format!("`{word}` has no methods: an `unsafe extend` of it holds nothing else"))
@@ -15676,6 +15633,40 @@ impl<'a> Checker<'a> {
                 let inner = self.resolve_type(owned);
                 self.owns_type(inner, owned.span, ty.span)
             }
+            // `[TYP-45]`, `[RC-1]`, `[WK-11]` — M4 slice A: owners and links on one thread
+            // (`M4-plan.md`), of a class object or of a value in a block of its own (D4, D5).
+            ast::TypeKind::Link { kind, inner } => {
+                // `[WK-11]` — `weakref thread_shared T` is a type of its own.
+                let (shared_link, inner): (bool, &ast::TypeExpr) = match (kind, &inner.kind) {
+                    (ast::LinkKind::Weakref, ast::TypeKind::Link { kind: ast::LinkKind::ThreadShared, inner: held }) => (true, held),
+                    _ => (false, inner),
+                };
+                let target = self.resolve_type(inner);
+                if target == self.common.error {
+                    return target;
+                }
+                let kind = match kind {
+                    ast::LinkKind::Shares => ember_types::LinkKind::Shares,
+                    ast::LinkKind::SharesMut => ember_types::LinkKind::SharesMut,
+                    ast::LinkKind::Weakref if shared_link => ember_types::LinkKind::WeakrefThreadShared,
+                    ast::LinkKind::Weakref => ember_types::LinkKind::Weakref,
+                    ast::LinkKind::ThreadShared => ember_types::LinkKind::ThreadShared,
+                    other => {
+                        self.error(codes::E0900, ty.span, format!("`{}` before a type is not built by this compiler yet", other.word()));
+                        return target;
+                    }
+                };
+                if matches!(self.types.kind(target), TyKind::Dyn { .. }) {
+                    // `[WK-16]` — the kind of the object is known only while the program runs.
+                    if kind.is_weak() {
+                        self.refuse_link_to_a_kind_known_at_run_time(target, ty.span, None);
+                    } else {
+                        self.error(codes::E0900, ty.span, format!("`{} dyn` is not built by this compiler yet", kind.word()));
+                    }
+                    return self.common.error;
+                }
+                self.link_of(kind, target)
+            }
             ast::TypeKind::Ptr { mutable, inner } => {
                 let inner = self.resolve_type(inner);
                 if matches!(self.types.kind(inner), TyKind::Dyn { .. }) {
@@ -16123,12 +16114,21 @@ impl<'a> Checker<'a> {
                 None => self.common.error,
             };
         }
-        if name.is("Shared") || self.is_sync_shared_name(name) {
+        if self.is_sync_shared_name(name) {
             if !require(self, 1) {
                 return self.common.error;
             }
-            let (inner, _) = args[0];
-            return self.counted_of(inner, !name.is("Shared"));
+            let (inner, at) = args[0];
+            return self.refuse_sync_shared_type(inner, at, span);
+        }
+        // `[TYP-45]` — `Shared` is not a type of Ember: the message gives what to write, and the owner
+        // type is made, so that the rest of the program is checked.
+        if name.is("Shared") {
+            if !require(self, 1) {
+                return self.common.error;
+            }
+            let (inner, at) = args[0];
+            return self.refuse_shared_type(inner, at, span);
         }
         // `[SOA-4]` — the fixed-capacity, arena-backed form, `std.collections`'s (`[ARN-5]`).
         if resolved_name.as_str() == "std.collections.ArenaSoA" {
@@ -16149,12 +16149,13 @@ impl<'a> Checker<'a> {
             }
             return self.soa_proxy_of(soa, name.is("SoAMut"));
         }
+        // `[TYP-45]` — nor is `Weak`: a link is `weakref T`.
         if name.is("Weak") {
             if !require(self, 1) {
                 return self.common.error;
             }
             let (inner, arg_span) = args[0];
-            return self.weak_of(inner, arg_span);
+            return self.refuse_weak_type(inner, arg_span, span);
         }
         if name.is("Cell") || name.is("RefCell") {
             if !require(self, 1) {
@@ -18729,6 +18730,11 @@ impl<'a> Checker<'a> {
                 let inner = map(self, inner);
                 self.types.intern(TyKind::Ref { mutable, inner })
             }
+            // `[MONO-1]` — an owner or a link of the substituted target (its block made with it).
+            TyKind::Link { kind, target } => {
+                let target = map(self, target);
+                self.link_of(kind, target)
+            }
             TyKind::Ptr { mutable, inner } => {
                 let inner = map(self, inner);
                 self.types.intern(TyKind::Ptr { mutable, inner })
@@ -18794,10 +18800,6 @@ impl<'a> Checker<'a> {
                 if let Some((soa, mutable)) = self.soa_proxies.get(&id).copied() {
                     let soa = map(self, soa);
                     return self.soa_proxy_of(soa, mutable);
-                }
-                if let Some(inner) = self.weaks.get(&id).copied() {
-                    let inner = map(self, inner);
-                    return self.weak_of(inner, Span::DUMMY);
                 }
                 if let Some(inner) = self.cells.get(&id).copied() {
                     let inner = map(self, inner);
@@ -20438,11 +20440,7 @@ impl<'a> Checker<'a> {
         let phantoms = self.phantom_args(&decl.generic_params, decl.fields.iter().map(|field| field.ty), args);
         self.types.set_phantoms(ty, phantoms);
         if !args.iter().any(|&arg| self.types.is_generic(arg)) {
-            self.validate_sync_class(id);
             self.validate_must_drop_class(id);
-            if let Some(base) = base {
-                self.validate_sync_base(id, base, span);
-            }
         }
         self.class_default_exprs.insert(id, decl.defaults.clone());
         // Generic classes are materialized after the ordinary class-collection
@@ -21053,14 +21051,9 @@ impl<'a> Checker<'a> {
         ty
     }
 
-    /// `[HEAP-10]` — `SyncShared` is `std.sync`'s, not in the prelude: resolve it through the
-    /// imports, as `UnsafeCell`.
+    /// `[TYP-45]` — the name of what `thread_shared` replaced.
     fn is_sync_shared_name(&self, name: Symbol) -> bool {
-        self.resolve_name(name).is("std.sync.SyncShared")
-    }
-
-    fn is_sync_shared(&self, ty: Ty) -> bool {
-        matches!(self.types.kind(ty), TyKind::Struct(id) if self.sync_shareds.contains(id))
+        name.is("SyncShared")
     }
 
     fn shared_inner(&self, ty: Ty) -> Option<Ty> {
@@ -21070,62 +21063,913 @@ impl<'a> Checker<'a> {
         }
     }
 
-    /// `[HEAP-7]`, `[WK-11]` — a weak handle observes either kind of counted
-    /// owner: a nominal class handle or `Shared[T]`. Its private field keeps
-    /// the owner handle's pointer layout, while custom copy/drop glue uses the
-    /// runtime weak count rather than the strong count.
-    fn weak_of(&mut self, inner: Ty, span: Span) -> Ty {
+    /// `[TYP-45]`, D4 — the link type `kind target`, one pointer: to the object for a class target,
+    /// and otherwise to a block holding `[OBJ-1]`'s header and the value, which is `Shared[T]`'s block
+    /// (made here, so that every backend lays it out and writes its type information), with the
+    /// pointer to the value as its one logical field (`TypeTable::link_payload`).
+    fn link_of(&mut self, kind: ember_types::LinkKind, target: Ty) -> Ty {
+        if !matches!(self.types.kind(target), TyKind::Class(_)) {
+            self.counted_of(target, matches!(kind, ember_types::LinkKind::ThreadShared | ember_types::LinkKind::WeakrefThreadShared));
+            self.types.intern(TyKind::Ptr { mutable: true, inner: target });
+        }
+        self.types.intern(TyKind::Link { kind, target })
+    }
+
+    /// `[TYP-45]` (`E1010`) — `Shared[T]` named: several owners of a value on one thread are `shares T`,
+    /// which only reads it, or `shares mut T`, which may also change it, as `Shared`'s `get_mut` did;
+    /// the migration writes `shares mut T`. Inside `Weak[…]` the `Weak`'s refusal says it all
+    /// (`weakref T`). The owner type is made, so that the rest of the program is checked.
+    fn refuse_shared_type(&mut self, inner: Ty, at: Span, span: Span) -> Ty {
+        let written = self.written_line(at).unwrap_or_else(|| self.types.display(inner));
+        let in_weak = self
+            .sources
+            .get(&span.file)
+            .and_then(|source| source.text.get(..span.start as usize))
+            .is_some_and(|before| before.trim_end().ends_with("Weak["));
+        if !in_weak {
+            self.sink.emit(
+                Diagnostic::error(codes::E1010, span, format!("`Shared` is not a type of Ember: write `shares {written}` or `shares mut {written}`"))
+                    .help("several owners of a value on one thread: `shares T` reads it, `shares mut T` may also change it")
+                    .migrate("`Shared[T]` is `shares mut T`", span, format!("shares mut {written}")),
+            );
+        }
         if inner == self.common.error {
             return inner;
         }
-        let counted_owner = matches!(self.types.kind(inner), TyKind::Class(_))
-            || self.shared_inner(inner).is_some();
-        if !counted_owner {
-            self.error(
-                codes::E2020,
-                span,
-                "`Weak` requires a class handle or `Shared[T]` owner type",
-            );
-            return self.common.error;
+        self.link_of(ember_types::LinkKind::SharesMut, inner)
+    }
+
+    /// `[TYP-45]` (`E1010`) — `SyncShared[T]` named: a value several threads own is `thread_shared T`.
+    fn refuse_sync_shared_type(&mut self, inner: Ty, at: Span, span: Span) -> Ty {
+        let written = self.written_line(at).unwrap_or_else(|| self.types.display(inner));
+        self.sink.emit(
+            Diagnostic::error(codes::E1010, span, format!("`SyncShared` is not a type of Ember: write `thread_shared {written}`"))
+                .help("a value several threads own is `thread_shared T`")
+                .migrate("`SyncShared[T]` is `thread_shared T`", span, format!("thread_shared {written}")),
+        );
+        if inner == self.common.error {
+            return inner;
         }
-        let name = self.unique_instance_name("Weak", &[inner]);
-        if let Some(&ty) = self.named_types.get(&name) {
-            return ty;
+        self.link_of(ember_types::LinkKind::ThreadShared, inner)
+    }
+
+    /// `[TYP-45]` (`E1010`) — `Weak[T]` named: a link is `weakref T`, of a class object (`Weak[Node]`) or
+    /// of a value held `shares` (`Weak[Shared[Token]]` is `weakref Token`).
+    fn refuse_weak_type(&mut self, inner: Ty, at: Span, span: Span) -> Ty {
+        if inner == self.common.error {
+            return inner;
         }
-        let id = self.types.add_struct(StructDef {
-            name,
-            fields: vec![FieldDef {
-                name: Symbol::intern("value"),
-                // Counted owners are already pointer-sized handles. Wrapping
-                // one in `Ptr[O]` would create a pointer-to-handle in C.
-                ty: inner,
-                span: Span::DUMMY,
-                ty_span: Span::DUMMY,
-                has_default: false,
-                is_let: false,
-                read_only_outside: false,
-                vis: FieldVis::Private,
-            }],
-            span: Span::DUMMY,
-            // Weak handles are Copy, but their copy/drop semantics are not
-            // bitwise: code generation emits weak_retain/weak_release.
-            derives_copy: true,
-            has_drop: false,
-            drops_fields: false,
-            origin: Some((Symbol::intern("Weak"), vec![inner])),
-            declaring_module: ember_types::COMPILER_MODULE,
-        });
-        let ty = self.types.intern(TyKind::Struct(id));
-        self.named_types.insert(name, ty);
-        self.weaks.insert(id, inner);
+        let target = match *self.types.kind(inner) {
+            TyKind::Class(_) => inner,
+            TyKind::Link { kind: ember_types::LinkKind::Shares | ember_types::LinkKind::SharesMut, target } => target,
+            _ => {
+                let shown = self.types.display(inner);
+                self.error(codes::E1010, span, format!("`Weak` is not a type of Ember, and a link names a class object or a value held `shares`, not a `{shown}`"));
+                return self.common.error;
+            }
+        };
+        let written = self
+            .written_line(at)
+            .map(|text| text.strip_prefix("Shared[").and_then(|rest| rest.strip_suffix(']')).map_or_else(|| text.clone(), str::to_string))
+            .unwrap_or_else(|| self.types.display(target));
+        self.sink.emit(
+            Diagnostic::error(codes::E1010, span, format!("`Weak` is not a type of Ember: write `weakref {written}`"))
+                .help("a link that does not keep its target alive is `weakref T`")
+                .migrate("`Weak[T]` is `weakref T`", span, format!("weakref {written}")),
+        );
+        self.link_of(ember_types::LinkKind::Weakref, target)
+    }
+
+    /// `[TYP-45]` (`E1010`) — `Shared(v)`: an owner of a new value is made with `shares` or `shares mut`
+    /// before it (the migration writes `shares mut v`), and `SyncShared(v)` with `thread_shared`; the owner
+    /// is made as the words make it.
+    fn refuse_shared_value(&mut self, value: &ast::Expr, explicit: Option<Ty>, expected: Option<Ty>, span: Span, sync: bool) -> Expr {
+        use ember_types::LinkKind;
+        let written = self.written_line(value.span);
+        let (name, word, how) = if sync {
+            ("SyncShared", "thread_shared", "a value several threads own is made with `thread_shared`")
+        } else {
+            ("Shared", "shares mut", "several owners of a value on one thread are made with `shares` or `shares mut`")
+        };
+        let mut diagnostic = Diagnostic::error(codes::E1010, span, format!("`{name}` is not Ember"));
+        diagnostic = match &written {
+            Some(written) => diagnostic
+                .help(format!("{how}: `{word} {written}`"))
+                .migrate(format!("`{name}(v)` is `{word} v`"), span, format!("{word} {written}")),
+            None => diagnostic.help(format!("{how}: `{word} v`")),
+        };
+        self.sink.emit(diagnostic);
+        let (kind, wanted) = match expected.map(|ty| self.types.kind(ty).clone()) {
+            Some(TyKind::Link { kind: kind @ (LinkKind::Shares | LinkKind::SharesMut | LinkKind::ThreadShared), target }) => (kind, Some(target)),
+            _ => (if sync { LinkKind::ThreadShared } else { LinkKind::SharesMut }, None),
+        };
+        let value = match explicit.or(wanted) {
+            Some(inner) => self.check_expr(value, inner),
+            None => self.synth_committed(value),
+        };
+        if value.ty == self.common.error {
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        }
+        let link = self.link_of(kind, value.ty);
+        if matches!(self.types.kind(value.ty), TyKind::Class(_)) {
+            return Expr { ty: link, kind: ExprKind::Builtin { which: Builtin::LinkMake { kind, link }, args: vec![value] }, span };
+        }
+        let elem = value.ty;
+        let block = self.counted_of(elem, kind == LinkKind::ThreadShared);
+        Expr { ty: link, kind: ExprKind::Builtin { which: Builtin::SharedNew { elem, shared: block }, args: vec![value] }, span }
+    }
+
+    /// The whole of the line `span` starts on, its line end included.
+    fn whole_line(&self, span: Span) -> Option<Span> {
+        let source = self.sources.get(&span.file)?;
+        let start = *source.lines.get(source.line_of(span.start).checked_sub(1)?)?;
+        let end = source.text.get(start as usize..)?.find('\n').map_or(source.text.len(), |at| start as usize + at + 1);
+        Some(Span::new(span.file, start, end as u32))
+    }
+
+    /// The 1-based number and the code, trimmed, of the line `span` starts on.
+    fn line_text(&self, span: Span) -> Option<(usize, String)> {
+        let source = self.sources.get(&span.file)?;
+        let line = source.line_of(span.start);
+        let start = *source.lines.get(line.checked_sub(1)?)? as usize;
+        let end = source.text.get(start..)?.find('\n').map_or(source.text.len(), |at| start + at);
+        Some((line, Self::code_of(source.text.get(start..end)?).trim().to_string()))
+    }
+
+    /// A value's type as the noun a message says of it: "the list", "the player".
+    fn link_noun(&self, ty: Ty) -> String {
+        match self.types.kind(ty) {
+            TyKind::Vec { text: false, .. } => "list".to_string(),
+            TyKind::Vec { text: true, .. } | TyKind::Str => "text".to_string(),
+            _ => Self::common_noun(&self.types.display(ty)),
+        }
+    }
+
+    /// The name a message gives a value of type `ty` it opens or keeps (`p` for a `Player`).
+    fn link_short_name(&self, ty: Ty) -> String {
+        self.link_noun(ty).chars().next().filter(|c| c.is_alphabetic()).map_or_else(|| "v".to_string(), |c| c.to_string())
+    }
+
+    /// `[RC-1]`, `[OWN-13]` — the local a written operand names, when it is a bare name.
+    fn written_local(&self, written: &ast::Expr) -> Option<LocalId> {
+        match &unparenthesized(written).kind {
+            ast::ExprKind::Path { segments } if segments.len() == 1 => self.lookup(segments[0].name),
+            _ => None,
+        }
+    }
+
+    /// `[RC-1]`, `[OWN-13]` (`E2122`) — `shares x` or `shares mut x` of a place that has one owner and is
+    /// not a local of this function: a list element, a field, a plain parameter, or a view of a value
+    /// another name owns. Reported here, with what to write; true when refused.
+    fn refuse_owner_of_one_owner_place(&mut self, kind: ember_types::LinkKind, written: &ast::Expr, source: &Expr, span: Span) -> bool {
+        let word = kind.word();
+        let written = unparenthesized(written);
+        let place = self.written_line(written.span).unwrap_or_else(|| "it".to_string());
+        let ty = source.ty;
+        let shown = self.types.display(ty);
+        let noun = self.link_noun(ty);
+        let message = match &written.kind {
+            ast::ExprKind::IndexOrInstantiate { base, .. } => {
+                let list = self.written_line(base.span).unwrap_or_else(|| "it".to_string());
+                let plural = format!("{noun}s");
+                // The line to write: the list's own, each element made with the word.
+                let rewrite = self.written_local(base).and_then(|local| {
+                    let declared = self.locals[local.0 as usize].span;
+                    let (line, text) = self.line_text(declared)?;
+                    let open = text.find('[')?;
+                    let close = text.rfind(']')?;
+                    let elements: Vec<String> = split_top_level(&text[open + 1..close]).into_iter().map(|element| format!("{word} {element}")).collect();
+                    (!elements.is_empty()).then(|| format!("write `{}{}{}` in place of line {line}", &text[..open + 1], elements.join(", "), &text[close..]))
+                });
+                let rewrite = rewrite.unwrap_or_else(|| format!("hold `{word} {shown}` elements in it"));
+                format!("`{place}` has one owner, the list `{list}`, and no second owner can be made of one element; to let other names own the {plural}, make the list share them from the start: {rewrite}")
+            }
+            ast::ExprKind::Field { base, name } => {
+                let holder_ty = self.synth_quiet_type(base);
+                let holder = self.types.display(self.read_link_type(holder_ty));
+                let declared = self.field_declaration(base, name.name);
+                let field = name.name;
+                let at = declared.and_then(|span| self.line_of(span)).map_or_else(String::new, |line| format!(" (line {line})"));
+                format!("`{place}` has one owner, the `{holder}` that holds it, and no second owner can be made of one field; to let other names own the {noun}, make the field share it from the start: write `{field}: {word} {shown}` in `{holder}`{at}")
+            }
+            ast::ExprKind::Path { .. } => {
+                let Some(local) = self.written_local(written) else { return false };
+                let parameter = (local.0 as usize) < self.body_locals_from;
+                if parameter && self.borrowed_params.contains(&local) {
+                    let function = self.body_fn.map_or_else(|| "f".to_string(), |(name, _)| name.to_string());
+                    format!("`{place}` is the caller's `{shown}`, which `{function}` only reads, and no second owner can be made of it; let the caller give one: write `owns {place}: {word} {shown}` for the parameter, and `{word}` before the argument at each call (`{function}({word} …)`)")
+                } else if matches!(self.types.kind(self.locals[local.0 as usize].ty), TyKind::Ref { .. }) {
+                    format!("`{place}` is a view of a `{shown}` another name owns, and no second owner can be made of a view; write `{word}` before the name that owns it")
+                } else {
+                    return false;
+                }
+            }
+            _ => return false,
+        };
+        self.error(codes::E2122, span, message);
+        true
+    }
+
+    /// The type an expression has, checked with its diagnostics dropped.
+    fn synth_quiet_type(&mut self, expr: &ast::Expr) -> Ty {
+        let quiet = self.sink.mark();
+        let ty = self.synth(expr).ty;
+        self.sink.rollback(quiet);
         ty
     }
 
-    fn weak_inner(&self, ty: Ty) -> Option<Ty> {
-        match self.types.kind(ty) {
-            TyKind::Struct(id) => self.weaks.get(id).copied(),
+    /// The target of an owner or a link, the value a view names, or the type itself.
+    fn read_link_type(&self, ty: Ty) -> Ty {
+        match *self.types.kind(ty) {
+            TyKind::Link { target, .. } => target,
+            TyKind::Ref { inner, .. } => inner,
+            _ => ty,
+        }
+    }
+
+    /// Where the field `name` of what `base` names is declared.
+    fn field_declaration(&mut self, base: &ast::Expr, name: Symbol) -> Option<Span> {
+        let holder_ty = self.synth_quiet_type(base);
+        let holder = self.read_link_type(holder_ty);
+        match *self.types.kind(holder) {
+            TyKind::Struct(id) => self.types.struct_def(id).field(name).map(|(_, field)| field.span),
+            TyKind::Class(id) => (0..self.types.class_field_count(id))
+                .filter_map(|index| self.types.class_field_at(id, index))
+                .find(|field| field.name == name)
+                .map(|field| field.span),
             _ => None,
         }
+    }
+
+    /// `[RC-1]` (`E2122`) — `shares this` or `shares mut this` in a method: the object may have one
+    /// owner, which ends it with no count to test; the caller gives an owner instead.
+    fn refuse_owner_of_this(&mut self, kind: ember_types::LinkKind, span: Span) {
+        let word = kind.word();
+        let class = self.self_ty.map_or_else(|| "Self".to_string(), |ty| self.types.display(ty));
+        let method = self.body_fn.map_or_else(|| "f".to_string(), |(name, _)| name.to_string());
+        let short = self.self_ty.map_or_else(|| "x".to_string(), |ty| self.link_short_name(ty));
+        // The method's own line, made a static function that takes the owner.
+        let header = self.line_text(self.fn_decl).and_then(|(_, text)| {
+            let open = text.find('(')?;
+            let rest = &text[open + 1..];
+            let rest = if rest.trim_start().starts_with(')') { rest.trim_start().to_string() } else { format!(", {rest}") };
+            let start = text.find("fn ")?;
+            Some(format!("static {}(owns me: {word} {class}{rest}", &text[start..open]))
+        });
+        let others: String = self.body_parameter_names().into_iter().map(|name| format!(", {name}")).collect();
+        let header = header.unwrap_or_else(|| format!("static fn {method}(owns me: {word} {class}):"));
+        self.error(
+            codes::E2122,
+            span,
+            format!(
+                "no second owner of a `{class}` is made from inside its own method, since this `{class}` may have one owner; let the caller give one: write `{header}` and call it `{class}.{method}({word} {short}{others})`"
+            ),
+        );
+    }
+
+    /// The names of the parameters of the function whose body is being checked, `this` left out.
+    fn body_parameter_names(&self) -> Vec<Symbol> {
+        self.locals[..self.body_locals_from.min(self.locals.len())]
+            .iter()
+            .filter_map(|decl| decl.name)
+            .filter(|name| !name.is("this") && !name.is("self"))
+            .collect()
+    }
+
+    /// `[WK-16]` (`E2119`) — a link to a value whose kind is known only while the program runs (`dyn
+    /// I`, `owns dyn I`, `some I`, and the type `weakref dyn I`): its class fixes its header, so the
+    /// link names a base class. `held` is the name holding the value, for a `weakref x`.
+    fn refuse_link_to_a_kind_known_at_run_time(&mut self, ty: Ty, span: Span, held: Option<(&str, Ty)>) {
+        let interface = Self::interface_written(&self.types.display(ty));
+        let mut lines: Vec<String> = Vec::new();
+        let qualified = self.resolve_name(Symbol::intern(&interface));
+        if let Some(def) = self.interfaces.get(&qualified) {
+            let methods: Vec<Span> = def.methods.iter().map(|(_, def, _, _)| self.signatures[def.0 as usize].decl).collect();
+            let header = self.item_spans.get(&qualified).and_then(|&at| self.line_of(at));
+            let virtuals: Vec<String> = methods
+                .iter()
+                .filter_map(|&at| self.line_text(at))
+                .map(|(_, text)| format!("`virtual {}: pass`", text.trim_end_matches(':').trim_end()))
+                .collect();
+            let numbers: Vec<usize> = header.into_iter().chain(methods.iter().filter_map(|&at| self.line_of(at))).collect();
+            let places = match numbers.as_slice() {
+                [one] => format!("line {one}"),
+                [a, b] => format!("lines {a} and {b}"),
+                [first, .., last] => format!("lines {first} to {last}"),
+                [] => String::new(),
+            };
+            let with = if virtuals.is_empty() { String::new() } else { format!(" with {}", virtuals.join(" and ")) };
+            lines.push(format!("`open class {interface}:`{with} in place of {places}"));
+            // The classes that implement it, as declared: each derives from the base class instead.
+            let mut classes: Vec<(usize, String)> = Vec::new();
+            for module in self.module_asts.clone() {
+                for item in &module.items {
+                    let ast::ItemKind::Class(decl) = &item.kind else { continue };
+                    let written: Vec<String> = decl.implements.iter().filter_map(|named| self.written_line(named.span)).collect();
+                    if !written.iter().any(|named| named == &interface || named.ends_with(&format!(".{interface}"))) {
+                        continue;
+                    }
+                    let others: Vec<&String> = written.iter().filter(|named| *named != &interface && !named.ends_with(&format!(".{interface}"))).collect();
+                    let rest = if others.is_empty() { String::new() } else { format!(" implements {}", others.iter().map(|named| named.as_str()).collect::<Vec<_>>().join(", ")) };
+                    if let Some(line) = self.line_of(decl.name.span) {
+                        classes.push((line, format!("`class {}({interface}){rest}:` in place of line {line}", decl.name.name)));
+                    }
+                }
+            }
+            classes.sort();
+            lines.extend(classes.into_iter().map(|(_, line)| line));
+        }
+        let what = match held {
+            Some((name, held)) => format!("`{name}` holds a `{}`, a kind known only while the program runs", self.types.display(held)),
+            None => {
+                let written = self.written_line(span).unwrap_or_else(|| format!("weakref dyn {interface}"));
+                let at = self.line_of(span);
+                if let (Some(line), Some(number)) = (self.line_with(span, &format!("weakref {interface}")), at) {
+                    lines.push(format!("`{line}` in place of line {number}"));
+                }
+                format!("`{written}`{} names a kind known only while the program runs", at.map_or_else(String::new, |line| format!(" (line {line})")))
+            }
+        };
+        let fix = match lines.as_slice() {
+            [] => format!("make `{interface}` an `open class` with `virtual` methods, derive the classes from it, and link to it: `weakref {interface}`"),
+            [one] => format!("write {one}"),
+            [init @ .., last] => format!("write {}, and {last}", init.join(", ")),
+        };
+        self.error(codes::E2119, span, format!("{what}, and a `weakref` link needs a class that fixes its header; link to a base class: {fix}"));
+    }
+
+    /// An interface's name as a type names it: `Listener` for `dyn Listener` or `owns dyn Listener`.
+    fn interface_written(display: &str) -> String {
+        let mut name = display;
+        while let Some(rest) = name.strip_prefix("owns ").or_else(|| name.strip_prefix("dyn ")).or_else(|| name.strip_prefix("some ")) {
+            name = rest;
+        }
+        let name = name.split('[').next().unwrap_or(name);
+        name.rsplit('.').next().unwrap_or(name).to_string()
+    }
+
+    /// `[OWN-13]`, `[RC-1]`, `[WK-11]` — `shares x`, `shares mut x`, `weakref x` (M4 slice A): one more
+    /// owner, or a link, of what `x` names: a class object (a handle, or an owner of one; for `weakref`,
+    /// a link too), or a value in a block of its own (D5). The value is read where it is, never handed
+    /// over, except a new value, which becomes the block's.
+    fn synth_link(&mut self, kind: ast::LinkKind, value: &ast::Expr, span: Span) -> Expr {
+        self.synth_link_expecting(kind, value, None, span)
+    }
+
+    /// `synth_link`, with the target type a place wants for a new value.
+    fn synth_link_expecting(&mut self, kind: ast::LinkKind, value: &ast::Expr, wanted: Option<Ty>, span: Span) -> Expr {
+        use ember_types::LinkKind;
+        let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        // `[OWN-13]` — `weakref thread_shared this` is the one place the two words stand before a value:
+        // anywhere else the link's type comes from what `x` is.
+        let mut shared_this = false;
+        let mut value = value;
+        if matches!(kind, ast::LinkKind::Weakref)
+            && let ast::ExprKind::Link { kind: ast::LinkKind::ThreadShared, value: held } = &unparenthesized(value).kind
+        {
+            if !matches!(unparenthesized(held).kind, ast::ExprKind::SelfExpr) {
+                self.refuse_both_link_words(held, span);
+                return error;
+            }
+            shared_this = true;
+            value = held;
+        }
+        let kind = match kind {
+            ast::LinkKind::Shares => LinkKind::Shares,
+            ast::LinkKind::SharesMut => LinkKind::SharesMut,
+            ast::LinkKind::Weakref if shared_this => LinkKind::WeakrefThreadShared,
+            ast::LinkKind::Weakref => LinkKind::Weakref,
+            ast::LinkKind::ThreadShared => LinkKind::ThreadShared,
+            other => {
+                self.error(codes::E0900, span, format!("`{}` before a value is not built by this compiler yet", other.word()));
+                return self.synth(value);
+            }
+        };
+        let written = unparenthesized(value);
+        // `[RC-1]` — `shares this` and `shares mut this` are refused in every method; `thread_shared this`
+        // says every object of the class is `thread_shared` (`[OWN-13]`).
+        if matches!(kind, LinkKind::Shares | LinkKind::SharesMut) && matches!(written.kind, ast::ExprKind::SelfExpr) {
+            self.refuse_owner_of_this(kind, span);
+            return error;
+        }
+        let named = matches!(
+            written.kind,
+            ast::ExprKind::Path { .. } | ast::ExprKind::Field { .. } | ast::ExprKind::TupleField { .. } | ast::ExprKind::IndexOrInstantiate { .. } | ast::ExprKind::SelfExpr
+        );
+        let source = match wanted {
+            Some(target) if !named && target != self.common.error => self.check_expr(value, target),
+            _ => self.synth_committed(value),
+        };
+        if source.ty == self.common.error {
+            return error;
+        }
+        // `[RC-2e]` — a view of an owner (a loop's name over a list of `shares` owners) makes an
+        // owner of what the owner names: the view is read through.
+        let source = match *self.types.kind(source.ty) {
+            TyKind::Ref { inner, .. } if matches!(self.types.kind(inner), TyKind::Link { .. }) => {
+                let span = source.span;
+                Expr { ty: inner, kind: ExprKind::Deref(Box::new(source)), span }
+            }
+            _ => source,
+        };
+        let place = self.written_line(written.span).unwrap_or_else(|| "it".to_string());
+        let new_value = !is_place(&source.kind);
+        // `[OWN-13]` — a `weakref T` link counts on this thread alone, so it is made only to what no
+        // `thread_shared` value reaches.
+        if kind == LinkKind::Weakref
+            && !matches!(self.types.kind(source.ty), TyKind::Link { kind: LinkKind::ThreadShared | LinkKind::WeakrefThreadShared, .. })
+            && self.reached_through_thread_shared(&source)
+        {
+            self.error(codes::E7015, span, format!("`{place}` is reached through a value threads share, so another thread may end it, and `weakref {place}` would count its links on this thread alone; hold it `thread_shared`"));
+            return error;
+        }
+        match *self.types.kind(source.ty) {
+            // An owner makes another owner or a link; a link makes only another link, of its own kind.
+            TyKind::Link { kind: held @ (LinkKind::Weakref | LinkKind::WeakrefThreadShared), target } => {
+                if !kind.is_weak() {
+                    // `[WK-16]` — an owner of a link's target is made from the opened name.
+                    let short = self.link_short_name(target);
+                    self.error(codes::E2020, written.span, format!("`{place}` may be gone; open it: `if {place} exists as {short}:`"));
+                    return error;
+                }
+                let link = self.link_of(held, target);
+                Expr { ty: link, kind: ExprKind::Builtin { which: Builtin::LinkMake { kind: held, link }, args: vec![source] }, span }
+            }
+            TyKind::Link { kind: owner, target } => {
+                if kind == LinkKind::SharesMut && !self.may_change_through_owner(&source, owner) {
+                    self.refuse_changing_owner_of_reader(written, &source, target, span);
+                    return error;
+                }
+                // `[RC-1]`, `[THR-1]` — one kind of counting for one value.
+                if (kind == LinkKind::ThreadShared) != (owner == LinkKind::ThreadShared) && !kind.is_weak() {
+                    self.refuse_mixed_counting(kind, &place, &source, span);
+                    return error;
+                }
+                // `[WK-11]` — `weakref x` of a `thread_shared` value is a `weakref thread_shared T`.
+                let kind = if kind == LinkKind::Weakref && owner == LinkKind::ThreadShared { LinkKind::WeakrefThreadShared } else { kind };
+                let link = self.link_of(kind, target);
+                Expr { ty: link, kind: ExprKind::Builtin { which: Builtin::LinkMake { kind, link }, args: vec![source] }, span }
+            }
+            TyKind::Class(_) => {
+                if kind.is_weak() {
+                    if new_value {
+                        self.refuse_link_to_a_new_value(written, source.ty, span);
+                        return error;
+                    }
+                } else if new_value {
+                    if kind == LinkKind::ThreadShared && self.refuse_unshareable(source.ty, span) {
+                        return error;
+                    }
+                    // `[RC-1]` — a new object's one owner is the first of the owners: no count is taken.
+                    let link = self.link_of(kind, source.ty);
+                    return Expr { ty: link, kind: ExprKind::Builtin { which: Builtin::LinkAdopt { link }, args: vec![source] }, span };
+                } else if kind == LinkKind::ThreadShared {
+                    if !matches!(written.kind, ast::ExprKind::SelfExpr) {
+                        self.refuse_mixed_counting(kind, &place, &source, span);
+                        return error;
+                    }
+                    if self.refuse_unshareable(source.ty, span) {
+                        return error;
+                    }
+                } else if self.refuse_owner_of_one_owner_place(kind, written, &source, span) {
+                    return error;
+                } else if self.share_from_declaration(kind, written, &source, span) {
+                    return error;
+                }
+                let link = self.link_of(kind, source.ty);
+                Expr { ty: link, kind: ExprKind::Builtin { which: Builtin::LinkMake { kind, link }, args: vec![source] }, span }
+            }
+            _ if kind == LinkKind::ThreadShared && !new_value => {
+                self.refuse_mixed_counting(kind, &place, &source, span);
+                error
+            }
+            _ => self.synth_value_link(kind, written, source, span),
+        }
+    }
+
+    /// `[OWN-13]` — `weakref thread_shared x` of anything but `this`: `E0109` where `x` says it already,
+    /// `E7017` where `x` was not made so.
+    fn refuse_both_link_words(&mut self, value: &ast::Expr, span: Span) {
+        let place = self.written_line(value.span).unwrap_or_else(|| "it".to_string());
+        let ty = self.synth_quiet_type(value);
+        let shared = matches!(self.types.kind(ty), TyKind::Link { kind: ember_types::LinkKind::ThreadShared, .. });
+        if shared {
+            self.error(codes::E0109, span, format!("`{place}` is `thread_shared`, so a link to it is a `weakref thread_shared` link without the word; write `w = weakref {place}`"));
+        } else {
+            self.error(codes::E7017, span, format!("`{place}` was not created `thread_shared`, so no link to a shared value can name it; write `w = weakref {place}`, or create it shared: `{place} = thread_shared ...`"));
+        }
+    }
+
+    /// Whether the place is reached through a `thread_shared` owner.
+    fn reached_through_thread_shared(&self, place: &Expr) -> bool {
+        let mut current = place;
+        loop {
+            current = match &current.kind {
+                ExprKind::Field { base, .. } | ExprKind::Index { base, .. } => {
+                    if matches!(self.types.kind(base.ty), TyKind::Link { kind: ember_types::LinkKind::ThreadShared, .. }) {
+                        return true;
+                    }
+                    base
+                }
+                ExprKind::Deref(inner) => inner,
+                ExprKind::Ref { place, .. } => place,
+                _ => return false,
+            };
+        }
+    }
+
+    /// `[THR-1]` (`E7015`) — a `thread_shared` value is `Send` and `ThreadShared`, since any thread may hold
+    /// it and several may read it at once: refused where it is made, naming the part that is not.
+    fn refuse_unshareable(&mut self, ty: Ty, span: Span) -> bool {
+        use ember_types::LinkKind;
+        // A generic body is judged for each instance it is used with.
+        if self.types.is_generic(ty) || (self.is_send(ty) && self.is_sync(ty)) {
+            return false;
+        }
+        let shown = self.types.display(ty);
+        let message = match self.unshareable_part(ty, &mut HashSet::new()) {
+            Some((owner, field, part)) => {
+                let named = self.types.display(part);
+                match *self.types.kind(part) {
+                    TyKind::Link { kind: LinkKind::Weakref | LinkKind::WeakrefThreadShared, .. } => format!("`{owner}.{field}` is a `{named}` link, which stays on one thread, and a `thread_shared {shown}` may be reached from any thread; keep what it needs as a copy"),
+                    TyKind::Link { target, .. } => format!("`{owner}.{field}` is a `{named}` owner, which stays on one thread, and a `thread_shared {shown}` may be reached from any thread; write `{field}: thread_shared {}` in `{owner}`, or keep a copy of what it needs", self.types.display(target)),
+                    _ if self.is_send(part) => format!("`{owner}.{field}` is a `{named}`, which several threads may not read at once, and a `thread_shared {shown}` may be read from any thread; write `{field}: Mutex[{named}]` in `{owner}`"),
+                    _ => format!("`{owner}.{field}` is a `{named}`, which stays on one thread, and a `thread_shared {shown}` may be reached from any thread; keep what it needs as a copy"),
+                }
+            }
+            None if self.is_send(ty) => format!("several threads may not read a `{shown}` at once, and a `thread_shared` value may be read from any thread"),
+            None => format!("a `{shown}` stays on one thread, and a `thread_shared` value may be reached from any thread"),
+        };
+        self.error(codes::E7015, span, message);
+        true
+    }
+
+    /// The field, deepest first, that keeps a value of `ty` from being `Send` and `ThreadShared`: its
+    /// type's name, its own name and its type.
+    fn unshareable_part(&self, ty: Ty, seen: &mut HashSet<Ty>) -> Option<(String, Symbol, Ty)> {
+        if !seen.insert(ty) {
+            return None;
+        }
+        let fields: Vec<(Symbol, Ty)> = match *self.types.kind(ty) {
+            TyKind::Class(id) => (0..self.types.class_field_count(id)).filter_map(|index| self.types.class_field_at(id, index)).map(|field| (field.name, field.ty)).collect(),
+            TyKind::Struct(id) if self.types.struct_def(id).origin.is_none() && self.types.struct_def(id).declaring_module != ember_types::COMPILER_MODULE => self.types.struct_def(id).fields.iter().map(|field| (field.name, field.ty)).collect(),
+            _ => return None,
+        };
+        let (name, part) = fields.into_iter().find(|&(_, field)| !(self.is_send(field) && self.is_sync(field)))?;
+        self.unshareable_part(part, seen).or_else(|| Some((self.types.display(ty), name, part)))
+    }
+
+    /// M4 — a class whose objects are `thread_shared` carries no access words, and `shares mut` objects
+    /// are checked by them until M5's `[BRW-17]` replaces them, so one class is not both yet.
+    fn refuse_class_shared_both_ways(&mut self, class: ClassId) {
+        let def = self.types.class_def(class);
+        let (name, span) = (def.name, def.span);
+        self.error(codes::E0900, span, format!("class `{name}` has `thread_shared` objects and `shares mut` objects, which this compiler does not build together yet"));
+    }
+
+    /// `[THR-1]`, `[RC-1]` (`E7017`) — `thread_shared` of a value made otherwise, or `shares` of one made
+    /// `thread_shared`: its owners are counted one way from its making.
+    fn refuse_mixed_counting(&mut self, kind: ember_types::LinkKind, place: &str, source: &Expr, span: Span) {
+        let made = root_local(&source.kind).filter(|_| matches!(source.kind, ExprKind::Local(_))).and_then(|local| self.line_of(self.locals[local.0 as usize].span));
+        let at = made.map_or_else(String::new, |line| format!(" (made on line {line})"));
+        let message = if kind == ember_types::LinkKind::ThreadShared {
+            format!("`{place}` was not made `thread_shared`{at}, so its owners are counted on one thread; to share it between threads, create it shared: `{place} = thread_shared ...`")
+        } else {
+            format!("`{place}` is `thread_shared`{at}, so its owners are counted for several threads; for one more owner write `q = thread_shared {place}`, and for a name that only reads it `q = ref {place}`")
+        };
+        self.error(codes::E7017, span, message);
+    }
+
+    /// `[RC-7]`, `[OWN-13]` — whether an owner that may change the value can be made from `source`, an
+    /// owner of kind `owner`: one made `shares` only reads, and so does a plain parameter.
+    fn may_change_through_owner(&self, source: &Expr, owner: ember_types::LinkKind) -> bool {
+        if owner == ember_types::LinkKind::Shares {
+            return false;
+        }
+        !root_local(&source.kind).is_some_and(|local| self.borrowed_params.contains(&local))
+    }
+
+    /// `[OWN-13]`, `[RC-7]` (`E3023`) — `shares mut x` where `x` only reads the value: an owner made from
+    /// it only reads too.
+    fn refuse_changing_owner_of_reader(&mut self, written: &ast::Expr, source: &Expr, target: Ty, span: Span) {
+        let place = self.written_line(written.span).unwrap_or_else(|| "it".to_string());
+        let shown = self.types.display(target);
+        let noun = self.link_noun(target);
+        let changing = format!("shares mut {place}");
+        let line = self.line_text(span).map(|(_, text)| text).filter(|text| text.contains(&changing));
+        let written_line = line.clone().unwrap_or_else(|| changing.clone());
+        let reading = line.map_or_else(|| format!("shares {place}"), |text| text.replacen(&changing, &format!("shares {place}"), 1));
+        let local = root_local(&source.kind);
+        let plain = local.is_some_and(|local| self.borrowed_params.contains(&local));
+        let message = if plain {
+            format!(
+                "`{written_line}` would change the `{shown}` through `{place}`, which only reads the caller's {noun} (a plain parameter), and an owner made from it only reads too; write `{reading}`, or, to hand on an owner that may change, take one: write `owns {place}: shares mut {shown}` for the parameter, and `shares mut` before the argument at each call"
+            )
+        } else {
+            let declared = local.map(|local| self.locals[local.0 as usize].span).and_then(|at| self.line_text(at)).filter(|(_, text)| text.contains("shares "));
+            match declared {
+                Some((line, text)) => format!(
+                    "`{written_line}` would change the `{shown}` through `{place}`, which only reads it (`{text}`, line {line}), and an owner made from it only reads too; write `{reading}`, or, for two owners that both change the {noun}, write `{}` instead of line {line}",
+                    text.replacen("shares ", "shares mut ", 1)
+                ),
+                None => format!(
+                    "`{written_line}` would change the `{shown}` through `{place}`, which only reads it, and an owner made from it only reads too; write `{reading}`"
+                ),
+            }
+        };
+        self.error(codes::E3023, span, message);
+    }
+
+    /// `[TYP-45]`, `[WK-12]` (`E1010`) — `match w.upgrade():` with a `Some(p)` arm and a `None` arm, or
+    /// `if w.upgrade() exists as p:`, on a link: `upgrade` is gone, and the link is opened with `exists
+    /// as`. Reported with the rewrite (the `match` made an `if … exists as p:` and its `else:`, each
+    /// arm's body moved under it; `.upgrade()` removed before `exists as`); the link is what the
+    /// statement then opens.
+    fn refuse_upgrade_match<'e>(&mut self, scrutinee: &'e ast::Expr, arms: &[ast::MatchArm], span: Span) -> Option<&'e ast::Expr> {
+        let ast::ExprKind::MethodCall { recv, name, generic_args, args } = &unparenthesized(scrutinee).kind else { return None };
+        if !name.name.is("upgrade") || !args.is_empty() || !generic_args.is_empty() {
+            return None;
+        }
+        let link_ty = self.synth_quiet_type(recv);
+        let TyKind::Link { kind: ember_types::LinkKind::Weakref | ember_types::LinkKind::WeakrefThreadShared, target } = *self.types.kind(link_ty) else { return None };
+        let place = self.written_line(recv.span).unwrap_or_else(|| "the link".to_string());
+        let text = self.sources.get(&span.file).map(|source| source.text.clone())?;
+        let is_match = text.get(span.start as usize..).is_some_and(|rest| rest.starts_with("match"));
+        let pattern = |arm: &ast::MatchArm| text.get(arm.pattern.span.start as usize..arm.pattern.span.end as usize).map(str::trim);
+        let some = arms.iter().find(|arm| arm.guard.is_none() && pattern(arm).is_some_and(|written| written.starts_with("Some(")));
+        let opened = some
+            .and_then(|arm| pattern(arm))
+            .and_then(|written| written.strip_prefix("Some(")?.strip_suffix(')').map(str::trim).map(str::to_string))
+            .unwrap_or_else(|| self.link_short_name(target));
+        let mut refused = Diagnostic::error(codes::E1010, scrutinee.span, format!("a `weakref` link is opened with `exists as`: `if {place} exists as {opened}:`"));
+        if !is_match {
+            if text.get(recv.span.end as usize..).is_some_and(|rest| rest.starts_with(".upgrade()")) {
+                // The call replaced by its link (an empty edit would take the space after it too).
+                let call = Span::new(span.file, recv.span.start, recv.span.end + ".upgrade()".len() as u32);
+                refused = refused.migrate("`w.upgrade() exists as p` is `w exists as p`", call, place.clone());
+            }
+        } else if let Some(rewrite) = self.upgrade_match_rewrite(&text, &place, &opened, arms, span) {
+            refused = refused.migrate_edits("`match w.upgrade():` is `if w exists as p:` and `else:`", vec![rewrite]);
+        }
+        self.sink.emit(refused);
+        Some(recv)
+    }
+
+    /// The `if … exists as …:` and `else:` a `match w.upgrade():` with a `Some(p)` arm and a `None` arm
+    /// is written as, replacing the statement: each arm's body under its branch, at the branch's depth.
+    fn upgrade_match_rewrite(&self, text: &str, place: &str, opened: &str, arms: &[ast::MatchArm], span: Span) -> Option<(Span, ember_diag::Replacement)> {
+        if arms.len() != 2 || arms.iter().any(|arm| arm.guard.is_some()) {
+            return None;
+        }
+        let pattern = |arm: &ast::MatchArm| text.get(arm.pattern.span.start as usize..arm.pattern.span.end as usize).map(str::trim);
+        let some = arms.iter().find(|arm| pattern(arm).is_some_and(|written| written.starts_with("Some(")))?;
+        let none = arms.iter().find(|arm| pattern(arm) == Some("None") || pattern(arm) == Some("_"))?;
+        let line_start = |at: usize| text[..at].rfind('\n').map_or(0, |found| found + 1);
+        let indent: String = text[line_start(span.start as usize)..].chars().take_while(|c| *c == ' ').collect();
+        let inner = format!("{indent}    ");
+        let body = |arm: &ast::MatchArm| -> Option<String> {
+            match &arm.body {
+                ast::MatchArmBody::Expr(expr) => Some(format!("{inner}{}", text.get(expr.span.start as usize..expr.span.end as usize)?.trim())),
+                ast::MatchArmBody::Block(block) => {
+                    let first = block.stmts.first()?.span.start as usize;
+                    let last = block.stmts.last()?.span.end as usize;
+                    let start = line_start(first);
+                    let end = text[last..].find('\n').map_or(text.len(), |at| last + at);
+                    let lines: Vec<&str> = text.get(start..end)?.lines().collect();
+                    let depth = lines.iter().filter(|line| !line.trim().is_empty()).map(|line| line.len() - line.trim_start().len()).min()?;
+                    Some(
+                        lines
+                            .iter()
+                            .map(|line| if line.trim().is_empty() { String::new() } else { format!("{inner}{}", &line[depth..]) })
+                            .collect::<Vec<_>>()
+                            .join("
+"),
+                    )
+                }
+            }
+        };
+        // The statement ends with its last arm's code (a block's span runs on to the next line).
+        let end = arms
+            .iter()
+            .filter_map(|arm| match &arm.body {
+                ast::MatchArmBody::Block(block) => block.stmts.last().map(|stmt| stmt.span.end),
+                ast::MatchArmBody::Expr(expr) => Some(expr.span.end),
+            })
+            .max()?;
+        let rewrite = format!("if {place} exists as {opened}:\n{}\n{indent}else:\n{}", body(some)?, body(none)?);
+        Some((Span::new(span.file, span.start, end), ember_diag::Replacement::Text(rewrite)))
+    }
+
+    /// `[OWN-13]` (`E2119`) — `weakref` before a new value: it would end at the end of the line.
+    fn refuse_link_to_a_new_value(&mut self, written: &ast::Expr, ty: Ty, span: Span) {
+        let noun = self.link_noun(ty);
+        let short = self.link_short_name(ty);
+        let value = self.written_line(written.span).unwrap_or_else(|| self.types.display(ty));
+        let then = self.line_with(span, &format!("weakref {short}")).unwrap_or_else(|| format!("weakref {short}"));
+        // A value that is not a class object lives on its own once it is held `shares` (`[WK-11]`).
+        let (keep, value) = match self.types.kind(ty) {
+            TyKind::Class(_) => ("keep it in a name first", value),
+            _ => ("hold it shared in a name first", format!("shares {value}")),
+        };
+        self.error(
+            codes::E2119,
+            span,
+            format!("the {noun} would end at the end of the line and the link would find nothing; {keep}: write `{short} = {value}` above, then `{then}`"),
+        );
+    }
+
+    /// `[RC-1]`, `[WK-11]`, `[WK-16]` — the words before a value that is not a class object: an owner
+    /// of a new value is its block (`shares Counter(value=1)`); a local of this function, or an `owns`
+    /// parameter, is made in a block from the line that declares it (D5), which a second pass of the
+    /// body writes; a `weakref` needs a value held `shares` (`E2119` otherwise).
+    fn synth_value_link(&mut self, kind: ember_types::LinkKind, written: &ast::Expr, source: Expr, span: Span) -> Expr {
+        use ember_types::LinkKind;
+        let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        let ty = source.ty;
+        let place = self.written_line(written.span).unwrap_or_else(|| "it".to_string());
+        let new_value = !is_place(&source.kind);
+        // `[WK-16]` — a value whose kind is known only while the program runs.
+        let dynamic = match self.box_inner(ty) {
+            Some(inner) => matches!(self.types.kind(inner), TyKind::Dyn { .. }),
+            None => matches!(self.types.kind(ty), TyKind::Dyn { .. } | TyKind::Opaque(_)) || self.types.display(ty).starts_with("some "),
+        };
+        if kind == LinkKind::Weakref {
+            if dynamic {
+                self.refuse_link_to_a_kind_known_at_run_time(ty, span, Some((&place, ty)));
+                return error;
+            }
+            if new_value {
+                self.refuse_link_to_a_new_value(written, ty, span);
+                return error;
+            }
+            let held = self.box_inner(ty).unwrap_or(ty);
+            let shown = self.types.display(held);
+            let noun = self.link_noun(held);
+            let then = self.line_text(span).map_or_else(|| format!("weakref {place}"), |(_, text)| text);
+            let written_kind = &unparenthesized(written).kind;
+            let declared = match written_kind {
+                ast::ExprKind::Path { .. } => self.written_local(written).map(|local| self.locals[local.0 as usize].span).and_then(|at| self.line_text(at)),
+                _ => None,
+            };
+            let message = match (written_kind, self.box_inner(ty)) {
+                // `[WK-11]` — a value held `owns` lives in a block with no header.
+                (ast::ExprKind::Path { .. }, Some(_)) => match declared.filter(|(_, text)| text.contains("owns ")) {
+                    Some((line, text)) => format!(
+                        "`{place}` holds its {noun} in a block with no header, which a link cannot test; a link names a class object or a value held `shares` or `thread_shared`: write `{}` in place of line {line}, then `{then}`",
+                        text.replace("owns ", "shares ")
+                    ),
+                    None => format!("`{place}` holds its {noun} in a block with no header, which a link cannot test; a link names a class object or a value held `shares` or `thread_shared`: hold it `shares {shown}`, then `{then}`"),
+                },
+                // A local holding its value in place: shared, it lives in a block with the header.
+                (ast::ExprKind::Path { .. }, None) => match declared.filter(|(_, text)| text.contains('=')) {
+                    Some((line, text)) => {
+                        let equals = text.find('=').expect("tested above");
+                        format!(
+                            "a `weakref` link needs an object that lives on its own, and `{place}` holds its {noun} in place; share it: write `{} shares {}` in place of line {line}, then `{then}`",
+                            text[..=equals].trim_end(),
+                            text[equals + 1..].trim_start()
+                        )
+                    }
+                    None => format!("a `weakref` link needs an object that lives on its own, and `{place}` holds its {noun} in place; hold it `shares {shown}`, then `{then}`"),
+                },
+                // `[WK-16]` — a part: a field, or an element stored inline.
+                (ast::ExprKind::Field { base, .. } | ast::ExprKind::TupleField { base, .. } | ast::ExprKind::IndexOrInstantiate { base, .. }, _) => {
+                    let owner = self.written_line(base.span).unwrap_or_else(|| "it".to_string());
+                    let holder_ty = self.synth_quiet_type(base);
+                    let holder = self.read_link_type(holder_ty);
+                    if matches!(self.types.kind(holder), TyKind::Class(_)) && matches!(written_kind, ast::ExprKind::Field { .. }) {
+                        let noun = self.link_noun(holder);
+                        let line = self.line_with(span, &format!("weakref {owner}")).unwrap_or_else(|| format!("weakref {owner}"));
+                        format!("a `weakref` link needs an object that lives on its own; link to the {noun}: `{line}`")
+                    } else {
+                        format!("a `weakref` link needs an object that lives on its own, and `{place}` is a part of `{owner}`; hold it in a block of its own, `shares {shown}`, and link to that")
+                    }
+                }
+                _ => format!("a `weakref` link needs an object that lives on its own; hold the {noun} `shares {shown}` in a name, and link to that"),
+            };
+            self.error(codes::E2119, span, message);
+            return error;
+        }
+        if dynamic || self.box_inner(ty).is_some() {
+            self.error(codes::E0900, span, format!("`{}` of a `{}` is not built by this compiler yet", kind.word(), self.types.display(ty)));
+            return error;
+        }
+        // `[RC-1]` — before a new value: the value is made in its block.
+        if new_value {
+            if kind == LinkKind::ThreadShared && self.refuse_unshareable(ty, span) {
+                return error;
+            }
+            let link = self.link_of(kind, ty);
+            let block = self.counted_of(ty, kind == LinkKind::ThreadShared);
+            return Expr { ty: link, kind: ExprKind::Builtin { which: Builtin::SharedNew { elem: ty, shared: block }, args: vec![source] }, span };
+        }
+        if self.refuse_owner_of_one_owner_place(kind, written, &source, span) {
+            return error;
+        }
+        // D5 — a local of this function that owns its value, or an `owns` parameter.
+        if self.share_from_declaration(kind, written, &source, span) {
+            return error;
+        }
+        self.error(codes::E0900, span, format!("`{}` of `{place}` is not built by this compiler yet", kind.word()));
+        error
+    }
+
+    /// `[RC-1]` — `shares x` or `shares mut x` of a local of this function that owns its value (or an
+    /// `owns` parameter): it is one of the owners from the line that declares it, which the next pass of
+    /// the body writes. Whether `written` names such a local.
+    fn share_from_declaration(&mut self, kind: ember_types::LinkKind, written: &ast::Expr, source: &Expr, span: Span) -> bool {
+        let ExprKind::Local(local) = source.kind else { return false };
+        if !matches!(unparenthesized(written).kind, ast::ExprKind::Path { .. }) {
+            return false;
+        }
+        self.block_locals.insert(self.locals[local.0 as usize].span);
+        let place = self.written_line(written.span).unwrap_or_else(|| "it".to_string());
+        self.unmade_owners.push((span, format!("`{} {place}` of a name no line gives a value of its own is not built by this compiler yet", kind.word())));
+        true
+    }
+
+    /// D5 — a local's value, made in its block (`[RC-1]`): the declaration of a local a line of its
+    /// function shares, as if it said `shares`, with the type `shares mut T` throughout the function,
+    /// since the name it was first shared from keeps what it could do (`[RC-7]`).
+    fn into_block(&mut self, init: Expr) -> Expr {
+        if init.ty == self.common.error || matches!(self.types.kind(init.ty), TyKind::Link { .. } | TyKind::Ref { .. } | TyKind::Infer(_)) {
+            return init;
+        }
+        let ty = init.ty;
+        let span = init.span;
+        let link = self.link_of(ember_types::LinkKind::SharesMut, ty);
+        // A class object has its header already: its one owner becomes the first of the owners.
+        if matches!(self.types.kind(ty), TyKind::Class(_)) {
+            return Expr { ty: link, kind: ExprKind::Builtin { which: Builtin::LinkAdopt { link }, args: vec![init] }, span };
+        }
+        let block = self.counted_of(ty, false);
+        Expr { ty: link, kind: ExprKind::Builtin { which: Builtin::SharedNew { elem: ty, shared: block }, args: vec![init] }, span }
+    }
+
+    /// D5 — at a body's entry, each `owns` parameter a line of it shares, moved into its block, under
+    /// its own name: `[RC-1]`'s "the block is made at the function's entry, before any view of it is
+    /// made", so that the caller's line is unchanged.
+    fn enter_parameter_blocks(&mut self) -> Vec<Stmt> {
+        let mut entry = Vec::new();
+        for index in 0..self.body_locals_from.min(self.locals.len()) {
+            let local = LocalId(index as u32);
+            let (name, ty, span) = (self.locals[index].name, self.locals[index].ty, self.locals[index].span);
+            let Some(name) = name else { continue };
+            if !self.block_locals.contains(&span) || self.borrowed_params.contains(&local) || self.lookup(name) != Some(local) {
+                continue;
+            }
+            let init = self.into_block(Expr { ty, kind: ExprKind::Local(local), span });
+            if init.ty == ty {
+                continue;
+            }
+            let shared = self.declare(Some(name), init.ty, span);
+            entry.push(Stmt::Let { local: shared, init: Some(init) });
+        }
+        entry
+    }
+
+    /// `[RC-1]` — an owner (`shares T`, `shares mut T`) read where its value is wanted: the place of
+    /// the object's handle, which is the owner's own pointer, or of the value in its block, rooted at the
+    /// owner, so that borrows of it are borrows of the owner and no count is taken.
+    fn read_link_through(&mut self, owner: Expr) -> Expr {
+        let TyKind::Link { kind: ember_types::LinkKind::Shares | ember_types::LinkKind::SharesMut | ember_types::LinkKind::ThreadShared, target } = *self.types.kind(owner.ty) else {
+            return owner;
+        };
+        let span = owner.span;
+        let link = owner.ty;
+        if let Some(pointer) = self.types.link_payload(link) {
+            let field = Expr { ty: pointer, kind: ExprKind::Field { base: Box::new(owner), index: 0 }, span };
+            return Expr { ty: target, kind: ExprKind::Deref(Box::new(field)), span };
+        }
+        Expr { ty: target, kind: ExprKind::Field { base: Box::new(owner), index: 0 }, span }
+    }
+
+    /// `[WK-12]` — a `weakref T` link opened by `exists as`: `Some` while its target lives, of the class
+    /// object, or of an owner of the value that only reads it (`shares T`) for a value in a block.
+    fn open_link(&mut self, link: Expr) -> Expr {
+        // A view of a link (a loop's name over a list of links, a `ref` parameter) opens the link.
+        let link = match *self.types.kind(link.ty) {
+            TyKind::Ref { inner, .. } if matches!(self.types.kind(inner), TyKind::Link { kind: ember_types::LinkKind::Weakref | ember_types::LinkKind::WeakrefThreadShared, .. }) => {
+                let span = link.span;
+                Expr { ty: inner, kind: ExprKind::Deref(Box::new(link)), span }
+            }
+            _ => link,
+        };
+        let TyKind::Link { kind: weak @ (ember_types::LinkKind::Weakref | ember_types::LinkKind::WeakrefThreadShared), target } = *self.types.kind(link.ty) else {
+            return link;
+        };
+        // `[WK-11]` — the name opened from a `weakref thread_shared T` reads as a `thread_shared T`.
+        let opened = if weak == ember_types::LinkKind::WeakrefThreadShared {
+            self.link_of(ember_types::LinkKind::ThreadShared, target)
+        } else if self.types.link_payload(link.ty).is_some() {
+            self.link_of(ember_types::LinkKind::Shares, target)
+        } else {
+            target
+        };
+        let option = self.option_of(opened);
+        let TyKind::Enum(option_id) = *self.types.kind(option) else { return link };
+        let span = link.span;
+        Expr { ty: option, kind: ExprKind::Builtin { which: Builtin::LinkOpen { class: opened, option: option_id }, args: vec![link] }, span }
     }
 
     /// The safe place reached by Box auto-deref. Raw-pointer syntax never
@@ -22668,23 +23512,25 @@ impl<'a> Checker<'a> {
     /// crosses by its handle when the class is `@sync` (its counts are atomic, so C++ may copy it on
     /// any thread) and is refused otherwise, saying what lets it cross.
     fn exported_class(&mut self, ty: Ty, span: Span, what: &str) -> bool {
-        let TyKind::Class(class) = *self.types.kind(ty) else { return false };
-        if self.types.class_def(class).is_sync {
+        if let Some(class) = self.types.thread_shared_object(ty) {
             if !self.exported_classes.contains(&class) {
                 self.exported_classes.push(class);
             }
-        } else {
-            let shown = self.types.display(ty);
-            self.sink.emit(
-                Diagnostic::error(codes::E5015, span, format!("{what} is a `{shown}`, whose class is not `@sync`"))
-                    .help(format!("mark `{shown}` `@sync` to hand it to C++"))
-                    .note("an object crosses to C++ by its handle, which C++ may copy on any thread: only a `@sync` class's counts are atomic [BLD-FFI-5a], [FFI-31b]"),
-            );
+            return true;
         }
+        if !matches!(self.types.kind(ty), TyKind::Class(_)) {
+            return false;
+        }
+        let shown = self.types.display(ty);
+        self.sink.emit(
+            Diagnostic::error(codes::E5015, span, format!("{what} is a `{shown}`, which is not `thread_shared`"))
+                .help(format!("write `thread_shared {shown}` to hand it to C++"))
+                .note("C++ may copy what it is given on any thread: only a `thread_shared` value's counts are made for that [BLD-FFI-5a], [FFI-31b]"),
+        );
         true
     }
 
-    /// `[BLD-FFI-5a]` (ODR-162) — the `@sync` classes the exports hand to C and C++, and those
+    /// `[BLD-FFI-5a]` (ODR-162) — the `thread_shared` classes the exports hand to C and C++, and those
     /// their methods hand on, each with its `pub` methods (a `self` method of it or of a base, by
     /// name; `init` and `drop` are not C++'s to call), the most derived of a name first.
     fn class_exports(&self) -> Vec<(ClassId, Vec<(Symbol, DefId)>)> {
@@ -22698,8 +23544,7 @@ impl<'a> Checker<'a> {
             let mut current = Some(class);
             while let Some(owner) = current {
                 let mut found: Vec<(Symbol, DefId)> = self.methods.iter()
-                    // M1 — an object not listed is `ref mut` here, as checked: a `@sync` class's method
-                    // that changes it is `E7003`, so each exported one reads it.
+                    // `[BLD-FFI-5a]` — those a `thread_shared` name may call: each reads its object.
                     .filter(|((ty, _), entry)| matches!(self.types.kind(*ty), TyKind::Class(of) if *of == owner) && entry.from_interface.is_none()
                         && (entry.receiver == Mode::Borrow || (entry.receiver == Mode::Mut && self.signatures[entry.def.0 as usize].implicit_object)))
                     .map(|((_, name), entry)| (*name, entry.def))
@@ -22714,8 +23559,7 @@ impl<'a> Checker<'a> {
                     }
                     let signature = &self.signatures[def.0 as usize];
                     for ty in signature.params.iter().map(|(_, ty, _, _)| *ty).chain([signature.ret]) {
-                        if let TyKind::Class(other) = *self.types.kind(ty)
-                            && self.types.class_def(other).is_sync
+                        if let Some(other) = self.types.thread_shared_object(ty)
                             && !out.iter().any(|(done, _)| *done == other)
                         {
                             queue.push(other);
@@ -25167,6 +26011,8 @@ impl<'a> Checker<'a> {
         self.types.is_copy(ty)
             || self.clone_method(ty).is_some()
             || self.assumed_cloneable.contains(&ty)
+            // A type parameter by its bounds (`[T: needs Clone]`).
+            || (matches!(self.types.kind(ty), TyKind::Param { .. }) && self.implements(ty, Symbol::intern("std.core.Clone")))
             // IX.1 (ODR-237) — `Box[T]` when `T` is; `Box[dyn I]` when `I` requires `Clone`.
             || self.box_inner(ty).is_some_and(|inner| match self.types.kind(inner) {
                 TyKind::Dyn { interfaces } => interfaces.iter().any(|interface| self.requires_clone(*interface)),
@@ -25312,10 +26158,20 @@ impl<'a> Checker<'a> {
                             .collect();
                         (Expr { ty, kind: ExprKind::StructLit { struct_id: id, fields }, span }, None)
                     }
-                    TyKind::Class(id) => (
-                        Expr { ty, kind: ExprKind::Local(self_local), span },
-                        Some(id),
-                    ),
+                    // `[TYP-36]` — `@derive(Clone)` on a class makes a new object.
+                    TyKind::Class(id) => {
+                        let fields: Vec<(usize, Ty)> = (0..self.types.class_field_count(id))
+                            .filter_map(|index| self.types.class_field_at(id, index).map(|field| (index, field.ty)))
+                            .collect();
+                        let args = fields
+                            .into_iter()
+                            .map(|(index, field_ty)| {
+                                let field = Expr { ty: field_ty, kind: ExprKind::Field { base: Box::new(self_value()), index }, span };
+                                self.clone_value(field)
+                            })
+                            .collect();
+                        (Expr { ty, kind: ExprKind::Builtin { which: Builtin::ClassNew { class_id: id, init: None }, args }, span }, Some(id))
+                    }
                     TyKind::Enum(id) => {
                         let variants = self.types.enum_def(id).variants.clone();
                         let receiver = self_value;
@@ -25837,16 +26693,6 @@ impl<'a> Checker<'a> {
                 format!("`drop` runs wherever a `{shown}` ends, in safe code, so it cannot be an `unsafe fn`; write `fn drop():` and put what needs `unsafe` in it in an `unsafe:` block with a `# SAFETY:` note"),
             );
         }
-        if let TyKind::Class(id) = self.types.kind(owner)
-            && self.types.class_def(*id).is_sync
-            && !decl.name.name.is("init")
-            && !self.signatures[def.0 as usize].implicit_object
-            && self.signatures[def.0 as usize].params.first()
-                .is_some_and(|(name, _, mode, _)| name.is("self") && *mode == Mode::Mut)
-        {
-            self.error(codes::E7003, decl.name.span,
-                format!("`@sync` class `{}` cannot have a method that changes its object", self.types.display(owner)));
-        }
         self.locals = Vec::new();
         self.pack_values.clear();
         self.begin_body_marks();
@@ -26210,7 +27056,7 @@ impl<'a> Checker<'a> {
             ast::ExprKind::Unary { operand, .. }
             | ast::ExprKind::Try(operand)
             | ast::ExprKind::RefOf { place: operand, .. }
-            | ast::ExprKind::CopyOf(operand)
+            | ast::ExprKind::CopyOf(operand) | ast::ExprKind::Link { value: operand, .. }
             | ast::ExprKind::Paren(operand)
             | ast::ExprKind::Owned(operand) => Self::class_init_uses_whole_self(operand),
             ast::ExprKind::Binary { lhs, rhs, .. }
@@ -27863,6 +28709,14 @@ impl<'a> Checker<'a> {
                     (Some(expr), None) => Some(self.synth_committed(expr)),
                     (None, _) => None,
                 };
+                // D5 — a local a line of this function shares is made in its block here.
+                let (declared, init) = match init {
+                    Some(init) if self.block_locals.contains(&stmt.span) => {
+                        let init = self.into_block(init);
+                        (declared.map(|_| init.ty), Some(init))
+                    }
+                    init => (declared, init),
+                };
                 let ty = declared
                     .or_else(|| init.as_ref().map(|e| e.ty))
                     .unwrap_or(self.common.error);
@@ -28002,6 +28856,9 @@ impl<'a> Checker<'a> {
                         // is no local here (a lambda's capture, a module's item) is a whole name.
                         let whole_outer = matches!(&value.kind, ast::ExprKind::Path { segments } if segments.len() == 1 && self.lookup(segments[0].name).is_none());
                         let (init, part) = if value.id == ast::NodeId::DUMMY || whole_outer { (init, None) } else { self.part_as_view(init) };
+                        // D5 — a local a line of this function shares is made in its block here; a name
+                        // for a part is a view and owns nothing to share (`[RC-1]`, `E2122`).
+                        let init = if part.is_none() && self.block_locals.contains(&stmt.span) { self.into_block(init) } else { init };
                         self.warn_if_literal_loses_precision(value, init.ty);
                         let local = self.declare(Some(segments[0].name), init.ty, stmt.span);
                         self.note_view_name(local, value, stmt.span, part);
@@ -28898,7 +29755,15 @@ impl<'a> Checker<'a> {
             _ => (scrutinee, false),
         };
         let calls = self.changed_calls.len();
+        // `[TYP-45]`, `[WK-12]` — `w.upgrade()` is gone: a link is opened with `exists as`, which
+        // this `match` or `if … exists as` then opens, with the rewrite to it.
+        let scrutinee = match self.refuse_upgrade_match(scrutinee, arms, span) {
+            Some(link) => link,
+            None => scrutinee,
+        };
         let mut scrutinee = self.synth_committed(scrutinee);
+        // `[WK-12]` — a link is opened by `exists as`.
+        scrutinee = self.open_link(scrutinee);
         // `[FFI-24d]` — a `match` on a call whose result a header's `noexcept` change made another
         // type: its patterns are where that shows.
         if let Some((_, note)) = self.changed_calls.get(calls).cloned() {
@@ -32001,6 +32866,7 @@ impl<'a> Checker<'a> {
         };
         let outer_copies = std::mem::take(&mut self.copy_captures);
         let outer_copied = std::mem::take(&mut self.copied);
+        let outer_unmade = std::mem::take(&mut self.unmade_owners);
         let outer_body_locals = std::mem::replace(&mut self.body_locals_from, self.locals.len());
         let outer_made = std::mem::take(&mut self.made_must_drop);
         let body = loop {
@@ -32010,10 +32876,17 @@ impl<'a> Checker<'a> {
             self.open.per_use.clear();
             self.copy_captures.clear();
             self.copied = views::CopiedValues::default();
-            let body = self.check_block(block);
+            self.unmade_owners.clear();
+            // D5 — the `owns` parameters a line of the body shares, each in its block from the entry.
+            let blocks = self.block_locals.len();
+            let entry = self.enter_parameter_blocks();
+            let mut body = self.check_block(block);
+            body.stmts.splice(0..0, entry);
             // A name a count or a number relied on, that the body changes,
             // is known no more: another pass (`[STD-19]`).
             let mut fixed_one = self.forget_changed(&body);
+            // D5 — a local a line shares, found in this pass: the next one makes its block.
+            fixed_one |= self.block_locals.len() != blocks;
             let mut still_open: Vec<OpenLocal> = Vec::new();
             for (_, open) in std::mem::take(&mut self.open.locals) {
                 match open.fixed {
@@ -32025,6 +32898,12 @@ impl<'a> Checker<'a> {
                 still_open.sort_by_key(|open| (open.declared.start, open.declared.end));
                 for open in still_open {
                     self.report_open_local(&open);
+                }
+                let mut unmade = std::mem::take(&mut self.unmade_owners);
+                unmade.sort_by_key(|(span, _)| (span.start, span.end));
+                unmade.dedup_by_key(|(span, _)| *span);
+                for (span, message) in unmade {
+                    self.error(codes::E0900, span, message);
                 }
                 break body;
             }
@@ -32077,6 +32956,7 @@ impl<'a> Checker<'a> {
         }
         self.report_copied_value_changes();
         self.copied = outer_copied;
+        self.unmade_owners = outer_unmade;
         self.open = outer;
         self.reassigned = outer_reassigned;
         self.body_locals_from = outer_body_locals;
@@ -34393,7 +35273,7 @@ impl<'a> Checker<'a> {
                         ))
                         .note("over a borrowed collection the items are references [GRM-27]");
                     if self.is_cloneable(inner) {
-                        diagnostic = diagnostic.help(format!("or copy each item, `{name}.clone()`, `{collection}` staying as it was"));
+                        diagnostic = diagnostic.help(format!("or copy each item, `copy of {name}`, `{collection}` staying as it was"));
                     }
                     self.sink.emit(diagnostic);
                     return None;
@@ -36933,6 +37813,10 @@ impl<'a> Checker<'a> {
         while self.box_inner(iterable.ty).is_some_and(|inner| !matches!(self.types.kind(inner), TyKind::Dyn { .. })) && is_place(&iterable.kind) {
             iterable = self.read_box_through(iterable);
         }
+        // `[RC-1]` — and a loop over an owner of a value in a block, over the value.
+        if self.types.link_payload(iterable.ty).is_some() && is_place(&iterable.kind) {
+            iterable = self.read_link_through(iterable);
+        }
         let referent = match *self.types.kind(iterable.ty) {
             TyKind::Ref { inner, .. } => inner,
             _ => iterable.ty,
@@ -37829,6 +38713,17 @@ impl<'a> Checker<'a> {
                 found = self.read_box_through(found);
                 continue;
             }
+            // `[RC-1]` — an owner of a value in a block, given to a parameter that borrows it: the
+            // value in its block.
+            if self.types.link_payload(found.ty).is_some()
+                && matches!(self.types.kind(found.ty), TyKind::Link { kind: ember_types::LinkKind::Shares | ember_types::LinkKind::SharesMut | ember_types::LinkKind::ThreadShared, .. })
+                // `[SEL-2]` — never to a C++ smart pointer, which `E5065` refuses.
+                && self.counted_family(expected).is_none()
+                && is_place(&found.kind)
+            {
+                found = self.read_link_through(found);
+                continue;
+            }
             // A reference to a `Box` is read through too, the reference first (`for b in boxes:
             // f(b)` with `f(s: ref dyn Shape)`): `[TYP-14]` reads through both.
             if let TyKind::Ref { inner, .. } = *self.types.kind(found.ty)
@@ -37863,6 +38758,47 @@ impl<'a> Checker<'a> {
         }
         if expr.ty == expected || expected == self.common.error || expr.ty == self.common.error {
             return expr;
+        }
+        // `[RC-1]` — an owner where its object is wanted. A value in a block is read where it is: copied
+        // when `=` copies it, borrowed where a view of it is wanted, and never moved out of its block.
+        if let TyKind::Link { kind: ember_types::LinkKind::Shares | ember_types::LinkKind::SharesMut | ember_types::LinkKind::ThreadShared, target } = *self.types.kind(expr.ty) {
+            let block = self.types.link_payload(expr.ty).is_some();
+            // A new owner of an object stands for it only while it is lent to a call: a place that held
+            // the object would keep it past the owner's end.
+            let lasts = block || is_place(&expr.kind) || self.lent_argument == Some(expr.span);
+            if target == expected && lasts && (!block || (self.types.is_copy(target) && !self.types.needs_drop(target))) {
+                return self.read_link_through(expr);
+            }
+            if block
+                && is_place(&expr.kind)
+                && let TyKind::Ref { mutable, inner } = *self.types.kind(expected)
+                && inner == target
+            {
+                let span = expr.span;
+                let payload = self.read_link_through(expr);
+                if mutable {
+                    self.reject_borrowed_parameter_write(&payload, span, false);
+                }
+                return Expr { ty: expected, kind: ExprKind::Ref { place: Box::new(payload), mutable }, span };
+            }
+        }
+        // `[WK-16]`, `[TYP-45]` — a link used as its target without opening it.
+        if let TyKind::Link { kind: ember_types::LinkKind::Weakref | ember_types::LinkKind::WeakrefThreadShared, target } = *self.types.kind(expr.ty)
+            && (target == expected || matches!(*self.types.kind(expected), TyKind::Ref { inner, .. } if inner == target))
+        {
+            let place = self.written_line(expr.span).unwrap_or_else(|| "the link".to_string());
+            let short = self.link_short_name(target);
+            self.error(codes::E2020, expr.span, format!("`{place}` may be gone; open it: `if {place} exists as {short}:`"));
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span: expr.span };
+        }
+        // `[WK-16]`, `[TYP-45]` — an object stored into a `weakref` place without the word.
+        if let TyKind::Link { kind: ember_types::LinkKind::Weakref | ember_types::LinkKind::WeakrefThreadShared, target } = *self.types.kind(expected)
+            && (expr.ty == target || matches!(*self.types.kind(expr.ty), TyKind::Link { kind: ember_types::LinkKind::Shares | ember_types::LinkKind::SharesMut | ember_types::LinkKind::ThreadShared, target: held } if held == target))
+        {
+            let value = self.written_line(expr.span).unwrap_or_else(|| "it".to_string());
+            let line = self.line_with(expr.span, &format!("weakref {value}")).unwrap_or_else(|| format!("weakref {value}"));
+            self.error(codes::E2020, expr.span, format!("`=` alone would hand `{value}` over; write `{line}`"));
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span: expr.span };
         }
         // `[HEAP-9]` — an `owns T` reads as its `T`, with nothing written in between: where a
         // `ref T` is wanted its payload is borrowed, and where a `T` that `=` copies is wanted the
@@ -37961,6 +38897,28 @@ impl<'a> Checker<'a> {
                 kind: ExprKind::Cast { expr: Box::new(expr), to: expected },
                 span,
             };
+        }
+        // `[TYP-5]` item 8 — a view of a class object as a view of its base class.
+        if let (&TyKind::Ref { mutable: found, inner: derived }, &TyKind::Ref { mutable: wanted, inner: base }) =
+            (self.types.kind(expr.ty), self.types.kind(expected))
+            && found == wanted
+            && let (&TyKind::Class(derived), &TyKind::Class(base)) = (self.types.kind(derived), self.types.kind(base))
+            && derived != base
+            && self.types.class_is_subclass_of(derived, base)
+        {
+            let span = expr.span;
+            return Expr { ty: expected, kind: ExprKind::Cast { expr: Box::new(expr), to: expected }, span };
+        }
+        // `[TYP-5]` item 8 — a class object's owner or link to a base class, with its word kept: a
+        // `shares Dog` to a `shares Animal`, a `weakref Dog` to a `weakref Animal`; the same pointer.
+        if let (&TyKind::Link { kind: found, target: derived }, &TyKind::Link { kind: wanted, target: base }) =
+            (self.types.kind(expr.ty), self.types.kind(expected))
+            && found == wanted
+            && let (&TyKind::Class(derived), &TyKind::Class(base)) = (self.types.kind(derived), self.types.kind(base))
+            && self.types.class_is_subclass_of(derived, base)
+        {
+            let span = expr.span;
+            return Expr { ty: expected, kind: ExprKind::Cast { expr: Box::new(expr), to: expected }, span };
         }
         // `[OBJ-2]`/`[DSP-3]` — an implementing class coerces to the one-word
         // class-handle form of a dyn-compatible interface. Keep the same
@@ -38187,11 +39145,11 @@ impl<'a> Checker<'a> {
                         continue;
                     }
                     let shown = self.types.display(capture_ty);
-                    let mut diagnostic = Diagnostic::error(codes::E7004, span,
+                    let mut diagnostic = Diagnostic::error(self.not_send_code(capture_ty), span,
                         format!("this lambda captures `{capture}`, a `{shown}`, which is not Send, so it may not be a `{wanted_shown}`"))
                         .primary_label("made here")
                         .note("a `fn(…) + Send` value holds only what may move to another thread [CLO-10], [THR-8]");
-                    if let Some(advice) = self.sync_class_advice(capture_ty) {
+                    if let Some(advice) = self.not_send_advice(capture_ty) {
                         diagnostic = diagnostic.help(advice);
                     }
                     self.sink.emit(diagnostic);
@@ -39169,6 +40127,13 @@ impl<'a> Checker<'a> {
                 // `None` carries nothing, so only the expected type can say
                 // which `Option` it is.
                 if name.is("None") {
+                    // `[WK-11]` — a link may hold no target (`parent: weakref Node = None`): a null
+                    // pointer, which its end gives back nothing for.
+                    if let Some(wanted) = expected
+                        && matches!(self.types.kind(wanted), TyKind::Link { kind: ember_types::LinkKind::Weakref | ember_types::LinkKind::WeakrefThreadShared, .. })
+                    {
+                        return Expr { ty: wanted, kind: ExprKind::Builtin { which: Builtin::LinkNone { link: wanted }, args: Vec::new() }, span };
+                    }
                     // `[DIA-21]` P1 — Python's "no value" where the place is not an `Option`.
                     if let Some(wanted) = expected
                         && wanted != self.common.error
@@ -39502,6 +40467,8 @@ impl<'a> Checker<'a> {
                 while self.box_inner(base.ty).is_some() {
                     base = self.read_box_through(base);
                 }
+                // `[RC-1]` — an owner reads as its value.
+                let base = self.read_link_through(base);
                 let index = *index as usize;
                 let found = match self.types.kind(base.ty) {
                     TyKind::Tuple(items) => Some((items.len(), items.get(index).copied())),
@@ -39548,6 +40515,10 @@ impl<'a> Checker<'a> {
                 let mut base = self.read_through(base);
                 while self.box_inner(base.ty).is_some() {
                     base = self.read_box_through(base);
+                }
+                // `[RC-1]` — an owner of a list is indexed as the list.
+                if self.types.link_payload(base.ty).is_some() {
+                    base = self.read_link_through(base);
                 }
                 if self.soa_inner(base.ty).is_some() {
                     return self.synth_soa_element(base, args, span);
@@ -39657,6 +40628,8 @@ impl<'a> Checker<'a> {
                             // `(int, ref int)` was given to C as text).
                             let value = self.synth_committed(expr);
                             let value = self.read_through(value);
+                            // `[RC-1]` — an owner is written as its value.
+                            let value = self.read_link_through(value);
                             let value = self.range_as_repr(value);
                             // D-194 — a `String` is written as the `str` it
                             // borrows, as `print` writes it (D-191).
@@ -39915,15 +40888,17 @@ impl<'a> Checker<'a> {
                     && self.lookup(Symbol::intern("Weak")).is_none()
                     && !self.names_program_type("Weak") =>
             {
-                // D-434 — an `Option[Weak[O]]` place knows the type too,
-                // through `[TYP-5]` rule 11's `Some`.
-                let weak = expected.and_then(|ty| match self.weak_inner(ty) {
-                    Some(_) => Some(ty),
-                    None => self
+                // `[TYP-45]` — a link that holds no target is `None`, of the link type the place
+                // has; D-434 — an `Option[weakref T]` place's is the `Option`'s `None`.
+                let link = |checker: &Self, ty: Ty| matches!(checker.types.kind(ty), TyKind::Link { kind: ember_types::LinkKind::Weakref | ember_types::LinkKind::WeakrefThreadShared, .. });
+                let weak = expected.and_then(|ty| match link(self, ty) {
+                    true => Some(ty),
+                    false => self
                         .builtin_generic_origin(ty)
                         .filter(|(origin, _)| origin.is("Option"))
                         .and_then(|(_, payload)| payload.first().copied())
-                        .filter(|&inner| self.weak_inner(inner).is_some()),
+                        .filter(|&inner| link(self, inner))
+                        .map(|_| ty),
                 });
                 match (weak, expected) {
                     (Some(ty), _) => self.synth_weak_construction(ty, *name, generic_args, args, span),
@@ -40301,6 +41276,8 @@ impl<'a> Checker<'a> {
                 // before code generation.
                 let to = self.resolve_type(ty);
                 let inner = self.synth_committed(inner);
+                // `[RC-1]` — an owner of a class object is cast as the object it names.
+                let inner = self.read_link_through(inner);
                 let (source, target) = match (self.types.kind(inner.ty), self.types.kind(to)) {
                     (TyKind::Class(source), TyKind::Class(target)) => (*source, *target),
                     // `[FFI-48]` — C++ classes Ember holds as values or behind pointers: their
@@ -40368,6 +41345,15 @@ impl<'a> Checker<'a> {
             }
 
             ast::ExprKind::CopyOf(operand) => self.synth_copy_of(operand, span),
+            // `[OWN-13]`, `[RC-1]`, `[WK-11]` — M4 slice A (`M4-plan.md`).
+            ast::ExprKind::Link { kind, value } => {
+                // A new value takes the target type the place wants (`x: shares mut i32 = shares mut 5`).
+                let wanted = expected.and_then(|ty| match *self.types.kind(ty) {
+                    TyKind::Link { target, .. } => Some(target),
+                    _ => None,
+                });
+                self.synth_link_expecting(*kind, value, wanted, span)
+            }
             ast::ExprKind::Owned(inner) => self.synth_owns(inner, span),
             // `[BRW-*]` — `ref place` and `ref mut place`, the explicit forms.
             // They are needed only when initialising a `ref`-typed local or a
@@ -41000,40 +41986,14 @@ impl<'a> Checker<'a> {
         if name.is("Shared") || sync_shared {
             let shown = if sync_shared { "SyncShared" } else { "Shared" };
             if explicit.len() > 1 {
-                self.error(
-                    codes::E2020,
-                    span,
-                    format!("`{shown}` takes one type argument, found {}", explicit.len()),
-                );
+                self.error(codes::E2020, span, format!("`{shown}` takes one type argument, found {}", explicit.len()));
                 return Expr { ty: self.common.error, kind: ExprKind::Error, span };
             }
             if args.len() != 1 {
-                self.error(
-                    codes::E2020,
-                    span,
-                    format!("`{shown}` takes one argument, found {}", args.len()),
-                );
+                self.error(codes::E2020, span, format!("`{shown}` takes one argument, found {}", args.len()));
                 return Expr { ty: self.common.error, kind: ExprKind::Error, span };
             }
-            let expected_inner = expected.and_then(|ty| self.shared_inner(ty));
-            let hint = explicit.first().copied().or(expected_inner);
-            let value = match hint {
-                Some(inner) => self.check_expr(&args[0].value, inner),
-                None => self.synth_committed(&args[0].value),
-            };
-            if value.ty == self.common.error {
-                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
-            }
-            let inner = value.ty;
-            let shared = self.counted_of(inner, sync_shared);
-            return Expr {
-                ty: shared,
-                kind: ExprKind::Builtin {
-                    which: Builtin::SharedNew { elem: inner, shared },
-                    args: vec![value],
-                },
-                span,
-            };
+            return self.refuse_shared_value(&args[0].value, explicit.first().copied(), expected, span, sync_shared);
         }
 
         // `[WK-1]`/`[WK-2]` — `Weak(class_handle)` creates a weak control-block
@@ -41047,33 +42007,21 @@ impl<'a> Checker<'a> {
                 );
                 return Expr { ty: self.common.error, kind: ExprKind::Error, span };
             }
-            if args.len() != 1 {
-                self.error(
-                    codes::E2020,
-                    span,
-                    format!("`Weak` takes one argument, found {}", args.len()),
-                );
-                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            // `[TYP-45]` — `Weak` is not Ember: a link is made with `weakref x`.
+            if args.len() == 1 {
+                let value = self.written_line(args[0].value.span);
+                let mut diagnostic = Diagnostic::error(codes::E1010, span, "`Weak` is not Ember");
+                diagnostic = match &value {
+                    Some(value) => diagnostic
+                        .help(format!("a link that does not keep its target alive is made with `weakref`: `weakref {value}`"))
+                        .migrate("`Weak(x)` is `weakref x`", span, format!("weakref {value}")),
+                    None => diagnostic.help("a link that does not keep its target alive is made with `weakref`: `weakref x`"),
+                };
+                self.sink.emit(diagnostic);
+                return self.synth_link(ast::LinkKind::Weakref, &args[0].value, span);
             }
-            let expected_inner = expected.and_then(|ty| self.weak_inner(ty));
-            let hint = explicit.first().copied().or(expected_inner);
-            let value = match hint {
-                Some(inner) => self.check_expr(&args[0].value, inner),
-                None => self.synth_committed(&args[0].value),
-            };
-            let class = value.ty;
-            let weak = self.weak_of(class, value.span);
-            if weak == self.common.error {
-                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
-            }
-            return Expr {
-                ty: weak,
-                kind: ExprKind::Builtin {
-                    which: Builtin::WeakNew { class, weak },
-                    args: vec![value],
-                },
-                span,
-            };
+            self.error(codes::E2020, span, format!("`Weak` takes one argument, found {}", args.len()));
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         }
 
         // `[UNS-10]` — `std.mem.UnsafeCell(owned v)`. Its public name is
@@ -41493,6 +42441,30 @@ impl<'a> Checker<'a> {
                 let inner = self.type_from_expr(owned);
                 self.owns_type(inner, owned.span, expr.span)
             }
+            // `[TYP-45]` — and so do `shares T`, `shares mut T` and `weakref T` (`Array[shares mut
+            // Token]()`).
+            ast::ExprKind::Link { kind, value } => {
+                let (shared_link, value): (bool, &ast::Expr) = match (kind, &value.kind) {
+                    (ast::LinkKind::Weakref, ast::ExprKind::Link { kind: ast::LinkKind::ThreadShared, value: held }) => (true, held),
+                    _ => (false, value),
+                };
+                let target = self.type_from_expr(value);
+                let kind = match kind {
+                    ast::LinkKind::Shares => ember_types::LinkKind::Shares,
+                    ast::LinkKind::SharesMut => ember_types::LinkKind::SharesMut,
+                    ast::LinkKind::Weakref if shared_link => ember_types::LinkKind::WeakrefThreadShared,
+                    ast::LinkKind::Weakref => ember_types::LinkKind::Weakref,
+                    ast::LinkKind::ThreadShared => ember_types::LinkKind::ThreadShared,
+                    other => {
+                        self.error(codes::E0900, expr.span, format!("`{}` before a type is not built by this compiler yet", other.word()));
+                        return target;
+                    }
+                };
+                if target == self.common.error {
+                    return target;
+                }
+                self.link_of(kind, target)
+            }
             // `[GRM-8a]` — a tuple of types (`(int, int)`) and a fixed array
             // (`[int; 4]`) arrive as expressions too, and are read back the
             // same way (D-468).
@@ -41615,7 +42587,14 @@ impl<'a> Checker<'a> {
                 (self.common.error, name.span)
             }
         };
-        Some(self.weak_of(inner, inner_span))
+        // `[TYP-45]` — `Weak[Node]` and `Weak[Shared[Token]]` name the links `weakref Node` and `weakref
+        // Token`, whose `empty()` is refused where it is called.
+        let _ = inner_span;
+        Some(match *self.types.kind(inner) {
+            _ if inner == self.common.error => inner,
+            TyKind::Link { kind: ember_types::LinkKind::Shares | ember_types::LinkKind::SharesMut, target } => self.link_of(ember_types::LinkKind::Weakref, target),
+            _ => self.link_of(ember_types::LinkKind::Weakref, inner),
+        })
     }
 
     /// `[GRM-8]`, `[TYP-18]` — bracket arguments on a method call are parsed
@@ -41770,7 +42749,7 @@ impl<'a> Checker<'a> {
             if !self.is_send(component) {
                 let shown = self.types.display(component);
                 self.sink.emit(
-                    Diagnostic::error(codes::E7004, span, format!("{name}'s query uses `{shown}`, which is not Send"))
+                    Diagnostic::error(self.not_send_code(component), span, format!("{name}'s query uses `{shown}`, which is not Send"))
                         .note("a component `run_parallel` uses moves to another thread with its system (ODR-218) [ECS-4]"),
                 );
             }
@@ -43669,7 +44648,30 @@ impl<'a> Checker<'a> {
     /// owner (an `owns T` of a type whose contract says `threads(creator)` or `threads(main)`, held
     /// whole or as a part), `E7004` for any other.
     fn not_send_code(&self, ty: Ty) -> ember_diag::Code {
-        if self.holds_thread_bound_foreign_owner(ty, &mut HashSet::new()) { codes::E7008 } else { codes::E7004 }
+        if self.holds_thread_bound_foreign_owner(ty, &mut HashSet::new()) {
+            codes::E7008
+        } else if self.holds_one_thread_owner(ty, &mut HashSet::new()) {
+            codes::E7015
+        } else {
+            codes::E7004
+        }
+    }
+
+    /// `[THR-2]` — whether a value of `ty` holds a `shares`, `shares mut` or `weakref` owner or link.
+    fn holds_one_thread_owner(&self, ty: Ty, seen: &mut HashSet<Ty>) -> bool {
+        if !seen.insert(ty) {
+            return false;
+        }
+        match self.types.kind(ty) {
+            TyKind::Link { kind, .. } => !matches!(kind, ember_types::LinkKind::ThreadShared | ember_types::LinkKind::WeakrefThreadShared),
+            TyKind::Ref { inner, .. } => self.holds_one_thread_owner(*inner, seen),
+            TyKind::Class(id) => (0..self.types.class_field_count(*id)).filter_map(|index| self.types.class_field_at(*id, index)).any(|field| self.holds_one_thread_owner(field.ty, seen)),
+            TyKind::Struct(id) => self.types.struct_def(*id).fields.iter().any(|field| self.holds_one_thread_owner(field.ty, seen)),
+            TyKind::Enum(id) => self.types.enum_def(*id).variants.iter().flat_map(|variant| &variant.fields).any(|field| self.holds_one_thread_owner(field.ty, seen)),
+            TyKind::Tuple(items) => items.iter().any(|&item| self.holds_one_thread_owner(item, seen)),
+            TyKind::Array { elem, .. } | TyKind::ArrayN { elem, .. } | TyKind::Vec { elem, .. } => self.holds_one_thread_owner(*elem, seen),
+            _ => false,
+        }
     }
 
     fn holds_thread_bound_foreign_owner(&self, ty: Ty, seen: &mut HashSet<Ty>) -> bool {
@@ -44250,7 +45252,7 @@ impl<'a> Checker<'a> {
                     }
                 }
             }
-            ast::TypeKind::Ref { inner, .. } | ast::TypeKind::Ptr { inner, .. } | ast::TypeKind::Owns(inner) => self.induced_projections(inner, out),
+            ast::TypeKind::Ref { inner, .. } | ast::TypeKind::Ptr { inner, .. } | ast::TypeKind::Owns(inner) | ast::TypeKind::Link { inner, .. } => self.induced_projections(inner, out),
             ast::TypeKind::Tuple(items) | ast::TypeKind::Dyn(items) => {
                 items.iter().for_each(|item| self.induced_projections(item, out))
             }
@@ -44401,7 +45403,7 @@ impl<'a> Checker<'a> {
                         out.push(ty.clone());
                     }
                 }
-                ast::TypeKind::Ref { inner, .. } | ast::TypeKind::Ptr { inner, .. } | ast::TypeKind::Owns(inner) => uses(inner, out),
+                ast::TypeKind::Ref { inner, .. } | ast::TypeKind::Ptr { inner, .. } | ast::TypeKind::Owns(inner) | ast::TypeKind::Link { inner, .. } => uses(inner, out),
                 ast::TypeKind::Tuple(items) | ast::TypeKind::Dyn(items) => items.iter().for_each(|item| uses(item, out)),
                 ast::TypeKind::Array { elem, .. } => uses(elem, out),
                 ast::TypeKind::Fn { params, ret, .. } => {
@@ -44717,8 +45719,14 @@ impl<'a> Checker<'a> {
                 );
             return implied || self.generic_bounds(index, name).contains(&interface);
         }
-        // ODR-181 — `ref T` implements `Eq`, `Ord`, `Hash`, `Display` and `Debug` as `T` does.
-        if let TyKind::Ref { mutable: false, inner } = *self.types.kind(ty)
+        // ODR-181, `[TYP-36]` — `ref T`, and an owner of a `T`, implement `Eq`, `Ord`, `Hash`, `Display`
+        // and `Debug` as `T` does.
+        let viewed = match *self.types.kind(ty) {
+            TyKind::Ref { mutable: false, inner } => Some(inner),
+            TyKind::Link { kind, target } if !kind.is_weak() => Some(target),
+            _ => None,
+        };
+        if let Some(inner) = viewed
             && matches!(
                 interface.as_str(),
                 "std.core.Eq" | "std.core.Ord" | "std.collections.Hash" | "std.core.Display" | "std.core.Debug" | "Display" | "Debug"
@@ -46318,6 +47326,17 @@ impl<'a> Checker<'a> {
                 );
                 continue;
             }
+            // `[ATT-1]`, `[THR-1]` — `@sync` is gone; the migration takes its line away.
+            if name == "sync" {
+                let line = self.whole_line(attr.span).filter(|line| self.written_line(*line).is_some_and(|text| text.trim() == "@sync")).unwrap_or(attr.span);
+                self.sink.emit(
+                    Diagnostic::error(codes::E0104, attr.span, "`@sync` is gone: a class needs no mark to be shared between threads; remove `@sync`")
+                        .help("the value says `thread_shared`, and each field that changes is `guarded by` a lock or an `Atomic`")
+                        .note("[ATT-1], [THR-1]")
+                        .migrate("`@sync` is gone", line, ""),
+                );
+                continue;
+            }
             // `[ATT-1]` — an attribute Ember no longer has, with the one to write.
             let word = |arg: &ast::AttrArg| match arg {
                 ast::AttrArg::Expr(expr) => match &expr.kind {
@@ -47503,6 +48522,79 @@ impl<'a> Checker<'a> {
         self.reject_borrowed_parameter_write_as(place, span, offer_interior_mutability, false)
     }
 
+    /// `[RC-7]` (`E3023`) — a change reached through a `shares` owner, which only reads the value it
+    /// shares: what the change is, the owner, and the line that makes the owner one that may change.
+    fn reject_change_through_reader(&mut self, place: &Expr, span: Span) -> bool {
+        let mut current = place;
+        let owner = loop {
+            match &current.kind {
+                ExprKind::Field { base, index: 0 }
+                    if matches!(self.types.kind(base.ty), TyKind::Link { kind: ember_types::LinkKind::Shares | ember_types::LinkKind::ThreadShared, target } if matches!(self.types.kind(*target), TyKind::Class(_))) =>
+                {
+                    break &**base;
+                }
+                ExprKind::Deref(inner) => {
+                    if let ExprKind::Field { base, index: 0 } = &inner.kind
+                        && self.types.link_payload(base.ty).is_some()
+                        && matches!(self.types.kind(base.ty), TyKind::Link { kind: ember_types::LinkKind::Shares | ember_types::LinkKind::ThreadShared, .. })
+                    {
+                        break &**base;
+                    }
+                    current = inner;
+                }
+                ExprKind::Field { base, .. } | ExprKind::Index { base, .. } => current = base,
+                ExprKind::Ref { place, .. } => current = place,
+                _ => return false,
+            }
+        };
+        let TyKind::Link { kind: owner_kind, target } = *self.types.kind(owner.ty) else { return false };
+        let noun = self.link_noun(target);
+        let shown = self.types.display(target);
+        let change = self.written_line(span).unwrap_or_else(|| "this change".to_string());
+        let held = self.written_line(owner.span).unwrap_or_else(|| "the owner".to_string());
+        // `[THR-1]` — a `thread_shared` value changes only through what is made for it.
+        if owner_kind == ember_types::LinkKind::ThreadShared {
+            let made = root_local(&owner.kind).filter(|_| matches!(owner.kind, ExprKind::Local(_))).and_then(|local| self.line_of(self.locals[local.0 as usize].span));
+            let at = made.map_or_else(String::new, |line| format!(" (line {line})"));
+            self.sink.emit(
+                Diagnostic::error(codes::E7014, span, format!("`{held}` is shared between threads{at}, so no owner changes it directly, and `{change}` does"))
+                    .help(format!("set it where the {noun} is made, `{held} = thread_shared {shown}(...)`, or keep the state in an `Atomic` or under a lock")),
+            );
+            return true;
+        }
+        let mut refused = Diagnostic::error(codes::E3023, span, format!("`{change}` changes the {noun}, but `{held}` only reads the {noun} it shares"))
+            .note("an owner made with `shares` only reads the value; one made with `shares mut`, and the name it was first shared from, change it [RC-7]");
+        let declared = root_local(&owner.kind).filter(|_| matches!(owner.kind, ExprKind::Local(_)));
+        if let Some(local) = declared {
+            let parameter = (local.0 as usize) < self.body_locals_from;
+            let declaration = self.locals[local.0 as usize].span;
+            if parameter {
+                refused = refused.help(format!("to change it through `{held}`, take an owner that may change: `owns {held}: shares mut {shown}`"));
+            } else if let Some((line, text)) = self.line_text(declaration).filter(|(_, text)| text.contains("shares ")) {
+                refused = refused.help(format!("to change it through `{held}`, write `{}` in place of line {line}", text.replacen("shares ", "shares mut ", 1)));
+            }
+        } else if let ExprKind::Field { base, .. } = &owner.kind {
+            let holder = self.read_link_type(base.ty);
+            let field = held.rsplit('.').next().unwrap_or(&held).to_string();
+            let at = match *self.types.kind(holder) {
+                TyKind::Class(id) => (0..self.types.class_field_count(id))
+                    .filter_map(|index| self.types.class_field_at(id, index))
+                    .find(|declared| declared.name.as_str() == field)
+                    .map(|declared| declared.span),
+                TyKind::Struct(id) => self.types.struct_def(id).field(Symbol::intern(&field)).map(|(_, declared)| declared.span),
+                _ => None,
+            };
+            let holder_shown = self.types.display(holder);
+            let line = at.and_then(|at| self.line_of(at)).map_or_else(String::new, |line| format!(" (line {line})"));
+            refused = refused.help(format!(
+                "to change it through the {}, write `{field}: shares mut {shown}` in `{holder_shown}`{line}, and make its owner with `shares mut`",
+                self.link_noun(holder)
+            ));
+        }
+        self.sink.emit(refused);
+        true
+    }
+
     /// `[BRW-14]` (N174) — the message for a parameter given a new value: the local of your own
     /// (`new_n`, or `new_n_2` and on where the name is taken), made by the refused line itself where
     /// that line is a plain `=` at the top level of the body and no line above reads the parameter,
@@ -47613,6 +48705,9 @@ impl<'a> Checker<'a> {
         offer_interior_mutability: bool,
         assigns: bool,
     ) -> bool {
+        if self.reject_change_through_reader(place, span) {
+            return true;
+        }
         let Some(local) = root_local(&place.kind) else { return false };
         if !self.borrowed_params.contains(&local) {
             return false;
@@ -47807,28 +48902,6 @@ impl<'a> Checker<'a> {
             match &current.kind {
                 ExprKind::Field { base, index } => {
                     if let TyKind::Class(id) = *self.types.kind(base.ty) {
-                        if self.types.class_def(id).is_sync {
-                            let initializing = self.class_init_field_index(current).is_some()
-                                && self.class_init.as_ref().is_some_and(|state| !state.whole_used);
-                            if !initializing {
-                                let (field, suggestion) = self.types.class_field_at(id, *index)
-                                    .map(|f| {
-                                        let wrapper = if matches!(self.types.kind(f.ty), TyKind::Int(_) | TyKind::Uint(_)) {
-                                            "Atomic[int]".to_string()
-                                        } else {
-                                            format!("Mutex[{}]", self.types.display(f.ty))
-                                        };
-                                        (f.name, wrapper)
-                                    })
-                                    .unwrap_or((Symbol::intern("field"), "Mutex[T]".to_string()));
-                                self.sink.emit(
-                                    Diagnostic::error(codes::E7003, span,
-                                        format!("cannot write field `{field}` of an `@sync` class after `init` or after using `this` as a whole"))
-                                        .help(format!("wrap `{field}` in `{suggestion}` for mutation after `init`")),
-                                );
-                                return;
-                            }
-                        }
                         let field = self.types.class_field_at_info(id, *index).map(
                             |(owner_id, field)| {
                                 (
@@ -49166,11 +50239,11 @@ impl<'a> Checker<'a> {
     }
 
     /// `[OWN-8]` — `E2116` when `copy of` cannot copy a `ty` as itself, `text` the value as written:
-    /// a view, whose text or items are another's, or a type with no `Clone`. A value holding a class
-    /// object is `E0900` until a class object's `Clone` makes a new object (M4).
+    /// a view, whose text or items are another's, or a type with no `Clone`.
     fn copy_refused(&mut self, ty: Ty, text: &str, span: Span) -> bool {
         let shown = self.types.display(ty);
-        if self.types.is_view(ty) {
+        // A read-only view is `Copy`: its copy is one more view of the same thing (verdict 68).
+        if self.types.is_view(ty) && !self.types.is_copy(ty) {
             let help = if self.is_text(ty) {
                 format!("to make your own copy write `String({text})`")
             } else {
@@ -49178,16 +50251,6 @@ impl<'a> Checker<'a> {
             };
             let message = format!("`{text}` is a view of what another value holds, so `copy of` cannot copy it");
             self.sink.emit(Diagnostic::error(codes::E2116, span, message).help(help));
-            return true;
-        }
-        // `copy of player` makes a new object; this compiler's `Clone` of a class object is still
-        // 0.9.10's, a copy of its handle naming the same object, which would be no copy at all.
-        if self.holds_class_object(ty, &mut HashSet::new()) {
-            let message = format!("`copy of` a `{shown}`, which holds a class object, is not built by this compiler yet");
-            self.sink.emit(
-                Diagnostic::error(codes::E0900, span, message)
-                    .note("`copy of` makes a new object [OWN-8]; this compiler's `Clone` of a class object keeps the same one"),
-            );
             return true;
         }
         if let Some(inner) = self.foreign_owner_inner(ty) {
@@ -49214,32 +50277,6 @@ impl<'a> Checker<'a> {
         !has_clone
     }
 
-    /// Whether a value of `ty` holds a class object as its own part: one itself, or a field, an
-    /// element or a payload that is one (not through a view or a pointer).
-    fn holds_class_object(&self, ty: Ty, seen: &mut HashSet<Ty>) -> bool {
-        if !seen.insert(ty) {
-            return false;
-        }
-        match self.types.kind(ty) {
-            TyKind::Class(_) | TyKind::ClassInterface(_) => true,
-            TyKind::Struct(id) => {
-                let fields: Vec<Ty> = self.types.struct_def(*id).fields.iter().map(|field| field.ty).collect();
-                self.box_inner(ty).is_some_and(|inner| self.holds_class_object(inner, seen))
-                    || fields.into_iter().any(|field| self.holds_class_object(field, seen))
-            }
-            TyKind::Enum(id) => {
-                let fields: Vec<Ty> = self.types.enum_def(*id).variants.iter().flat_map(|variant| variant.fields.iter().map(|field| field.ty)).collect();
-                fields.into_iter().any(|field| self.holds_class_object(field, seen))
-            }
-            TyKind::Tuple(items) => items.clone().into_iter().any(|item| self.holds_class_object(item, seen)),
-            TyKind::Vec { elem, .. } | TyKind::Array { elem, .. } | TyKind::ArrayN { elem, .. } => {
-                let elem = *elem;
-                self.holds_class_object(elem, seen)
-            }
-            _ => false,
-        }
-    }
-
     /// `[GRM-43]`, `[OWN-8]` — `copy of e` is `e`'s clone: a `Copy` value itself, a type with `Clone`
     /// its `clone`. What it cannot copy as itself is refused (`copy_refused`).
     fn synth_copy_of(&mut self, operand: &ast::Expr, span: Span) -> Expr {
@@ -49261,6 +50298,37 @@ impl<'a> Checker<'a> {
         // `[OWN-9]`, `[OWN-8]` — a copy of the program's own, never the place itself: a `Copy` type's
         // `clone` is the place, which an `owns` argument would hand over (`f(copy of n)` keeps `n`).
         Self::a_value(copy)
+    }
+
+    /// `[OWN-8]`, `[CLI-20]` (`E1010`) — `x.clone()` written at a use is `copy of x`, the one way a copy
+    /// is asked for; `fn clone` stays what `copy of` runs. A method of that name that is no `Clone` is
+    /// the program's own. The compiler's own calls of `clone` carry no such name in the source.
+    fn refuse_written_clone(&mut self, receiver: &Expr, recv_span: Span, name: ast::Ident, generic_args: &[ast::GenericArg], args: &[ast::Arg], span: Span) {
+        if !name.name.is("clone") || !args.is_empty() || !generic_args.is_empty() || self.generated_files.contains(&span.file) {
+            return;
+        }
+        if self.written_line(name.span).as_deref() != Some("clone") {
+            return;
+        }
+        let ty = match *self.types.kind(receiver.ty) {
+            TyKind::Ref { inner, .. } => inner,
+            _ => receiver.ty,
+        };
+        if !self.is_cloneable(ty) && !self.implements(ty, Symbol::intern("std.core.Clone")) {
+            return;
+        }
+        let Some(written) = self.written_line(recv_span) else {
+            self.error(codes::E1010, name.span, "`.clone()` is not Ember: a copy is written `copy of` before the value");
+            return;
+        };
+        // `copy of` binds as `-` does, so a call or a field after the copy needs brackets round it.
+        let next = self.sources.get(&span.file).and_then(|source| source.text.get(span.end as usize..)).and_then(|rest| rest.chars().next());
+        let line = if matches!(next, Some('.' | '[' | '(')) { format!("(copy of {written})") } else { format!("copy of {written}") };
+        self.sink.emit(
+            Diagnostic::error(codes::E1010, name.span, format!("`.clone()` is not Ember: a copy is written `copy of {written}`"))
+                .help(format!("write `{line}`"))
+                .migrate("`x.clone()` is `copy of x`", span, line),
+        );
     }
 
     /// `[OWN-9]` — `m[k] = v` is an `=` line: `v` is given to `index_set` as `=` gives it, a number
@@ -49482,6 +50550,7 @@ impl<'a> Checker<'a> {
         expected: Option<Ty>,
         span: Span,
     ) -> Expr {
+        self.refuse_written_clone(&receiver, recv_span, name, generic_args, args, span);
         // `[CELL-7]` — a guard reads through to its contents, so a method on
         // `T` is found through `Ref[T]`/`RefMut[T]`. Unwrap first; the
         // unwrapped receiver derefs through the guard's field, keeping the
@@ -49644,20 +50713,6 @@ impl<'a> Checker<'a> {
             self.named_interface_call = outer;
             return call;
         }
-        // `[WK-3]` — a weak handle exposes only `upgrade`; it must not
-        // auto-dereference to the object because that would make a dead
-        // control block look like a live class handle.
-        if let Some(class) = self.weak_inner(receiver.ty) {
-            if !explicit.is_empty() {
-                self.error(
-                    codes::E2020,
-                    span,
-                    format!("`{}` takes no type arguments, found {}", name.name, explicit.len()),
-                );
-                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
-            }
-            return self.synth_weak_method(receiver, class, name, args, span);
-        }
         // `[HEAP-4]` — Shared does not auto-dereference. Its explicit `get`
         // boundary forms an ordinary shared reference rooted at the strong
         // owner, preserving liveness and borrow facts for later analysis.
@@ -49743,6 +50798,36 @@ impl<'a> Checker<'a> {
             while self.box_inner(receiver.ty).is_some() {
                 receiver = self.read_box_through(receiver);
             }
+        }
+        // `[TYP-45]`, `[TYP-14]` — an owner reads as its value: `Shared`'s `get` and `get_mut` are gone.
+        if args.is_empty()
+            && (name.name.is("get") || name.name.is("get_mut"))
+            && let TyKind::Link { kind: ember_types::LinkKind::Shares | ember_types::LinkKind::SharesMut | ember_types::LinkKind::ThreadShared, target } = *self.types.kind(receiver.ty)
+            && self.lookup_method(target, name.name).is_none()
+        {
+            let written = if name.name.is("get") { "`.get()`" } else { "`.get_mut()`" };
+            let (owner, held) = (self.types.display(receiver.ty), self.types.display(target));
+            let mut refused = Diagnostic::error(codes::E2072, span, format!("a `{owner}` reads as a `{held}`; remove {written}"));
+            // The call replaced by its owner (an empty edit would take the space after it too).
+            if let Some(shown) = self.written_line(receiver.span) {
+                refused = refused.migrate("`.get()` of an owner removed", Span::new(span.file, receiver.span.start, span.end), shown);
+            }
+            self.sink.emit(refused);
+            return self.read_link_through(receiver);
+        }
+        // `[RC-1]` — an owner's methods are its object's.
+        receiver = self.read_link_through(receiver);
+        // `[WK-12]`, `[WK-16]` — a link is opened before its target is used; `upgrade` is gone.
+        if let TyKind::Link { kind: ember_types::LinkKind::Weakref | ember_types::LinkKind::WeakrefThreadShared, target } = *self.types.kind(receiver.ty) {
+            let place = self.written_line(receiver.span).unwrap_or_else(|| "the link".to_string());
+            let short = self.link_short_name(target);
+            let open = format!("if {place} exists as {short}:");
+            if name.name.is("upgrade") {
+                self.error(codes::E1010, span, format!("a `weakref` link is opened with `exists as`: `{open}`"));
+            } else {
+                self.error(codes::E2020, receiver.span, format!("`{place}` may be gone; open it: `{open}`"));
+            }
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         }
         // `[TYP-22]` — once the receiver is an interface reference, method
         // lookup is a vtable lookup rather than a concrete `DefId` call. The
@@ -51373,6 +52458,15 @@ impl<'a> Checker<'a> {
         {
             base = self.read_box_through(base);
         }
+        // `[RC-1]` — an owner reads as its object.
+        base = self.read_link_through(base);
+        // `[WK-16]` — a link is opened before its target is used.
+        if let TyKind::Link { kind: ember_types::LinkKind::Weakref | ember_types::LinkKind::WeakrefThreadShared, target } = *self.types.kind(base.ty) {
+            let place = self.written_line(base.span).unwrap_or_else(|| "the link".to_string());
+            let short = self.link_short_name(target);
+            self.error(codes::E2020, base.span, format!("`{place}` may be gone; open it: `if {place} exists as {short}:`"));
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        }
         match *self.types.kind(base.ty) {
             TyKind::Struct(id) => match self.types.struct_def(id).field(name.name) {
                 Some((index, field)) => {
@@ -52025,7 +53119,6 @@ impl<'a> Checker<'a> {
             ("Box", [inner]) => self.box_of(*inner),
             ("Shared", [inner]) => self.counted_of(*inner, false),
             ("SyncShared", [inner]) => self.counted_of(*inner, true),
-            ("Weak", [inner]) => self.weak_of(*inner, Span::DUMMY),
             ("Cell", [inner]) => self.cell_of(*inner),
             ("MaybeUninit", [inner]) => self.maybe_uninit_of(*inner),
             ("std.mem.UnsafeCell", [inner]) => self.unsafe_cell_of(*inner),
@@ -53561,6 +54654,7 @@ impl<'a> Checker<'a> {
         match which {
             Builtin::BoxNew { .. }
             | Builtin::SharedNew { .. }
+            | Builtin::LinkAdopt { .. }
             | Builtin::IntoRaw { .. }
             | Builtin::FmtSinkClose
             | Builtin::CellIntoInner
@@ -54126,50 +55220,8 @@ impl<'a> Checker<'a> {
         }
     }
 
-    /// `[WK-3]` — `upgrade` asks the runtime to acquire a strong reference if
-    /// the object is still live, then produces the corresponding `Option[C]`.
-    fn synth_weak_method(
-        &mut self,
-        receiver: Expr,
-        class: Ty,
-        name: ast::Ident,
-        args: &[ast::Arg],
-        span: Span,
-    ) -> Expr {
-        let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
-        if !name.name.is("upgrade") {
-            self.error(
-                codes::E2072,
-                name.span,
-                format!("`Weak[{}]` has no method named `{}`", self.types.display(class), name.name),
-            );
-            return error;
-        }
-        if !args.is_empty() {
-            self.error(
-                codes::E2020,
-                span,
-                format!("`upgrade` takes 0 arguments, found {}", args.len()),
-            );
-            return error;
-        }
-        let option_ty = self.option_of(class);
-        let TyKind::Enum(option) = *self.types.kind(option_ty) else {
-            unreachable!("option_of must return an enum")
-        };
-        Expr {
-            ty: option_ty,
-            kind: ExprKind::Builtin {
-                which: Builtin::WeakUpgrade { class, option },
-                args: vec![receiver],
-            },
-            span,
-        }
-    }
-
-    /// `[WK-1]` — `Weak[C].empty()` creates a non-upgradeable weak handle
-    /// without allocating a control block. It is a type-associated operation,
-    /// not a method on an existing weak value.
+    /// `[TYP-45]`, `[WK-11]` — `Weak.empty()` / `Weak[C].empty()`, gone from Ember: refused with the
+    /// rewrite to `None`, and made as the link (`ty`, or the `Option` of one) that holds no target.
     fn synth_weak_construction(
         &mut self,
         ty: Ty,
@@ -54179,7 +55231,9 @@ impl<'a> Checker<'a> {
         span: Span,
     ) -> Expr {
         let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
-        let Some(_) = self.weak_inner(ty) else { return error };
+        if ty == self.common.error {
+            return error;
+        }
         if !generic_args.is_empty() {
             self.error(
                 codes::E2020,
@@ -54204,9 +55258,27 @@ impl<'a> Checker<'a> {
             );
             return error;
         }
+        // `[TYP-45]`, `[WK-11]` — `Weak` is not Ember: a link that holds no target is `None`.
+        // A new name given one says its type, which `None` alone does not: `w: weakref T = None`.
+        let fresh = self.bound_name(span).filter(|(name, _)| self.lookup(Symbol::intern(name)).is_none());
+        let refused = Diagnostic::error(codes::E1010, span, "`Weak.empty()` is not Ember: a link that holds no target is `None`");
+        let refused = match fresh {
+            Some((_, at)) => refused.migrate_edits(
+                "`w = Weak[T].empty()` is `w: weakref T = None`",
+                vec![
+                    (Span::new(at.file, at.end, at.end), ember_diag::Replacement::Text(format!(": {}", self.types.display(ty)))),
+                    (span, ember_diag::Replacement::Text("None".to_string())),
+                ],
+            ),
+            None => refused.migrate("`Weak.empty()` is `None`", span, "None"),
+        };
+        self.sink.emit(refused);
+        if let TyKind::Enum(id) = *self.types.kind(ty) {
+            return Expr { ty, kind: ExprKind::EnumLit { enum_id: id, variant: 0, fields: Vec::new() }, span };
+        }
         Expr {
             ty,
-            kind: ExprKind::Builtin { which: Builtin::WeakEmpty { weak: ty }, args: Vec::new() },
+            kind: ExprKind::Builtin { which: Builtin::LinkNone { link: ty }, args: Vec::new() },
             span,
         }
     }
@@ -54324,74 +55396,28 @@ impl<'a> Checker<'a> {
         span: Span,
     ) -> Expr {
         let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
-        let sync = self.is_sync_shared(receiver.ty);
-        let mutable = match name.name.as_str() {
-            "get" => false,
-            "get_mut" if !sync => true,
-            _ => {
-                let kind = if sync { "SyncShared" } else { "Shared" };
-                let mut diagnostic = Diagnostic::error(
-                    codes::E2072,
-                    name.span,
-                    format!("`{kind}[{}]` has no method named `{}`", self.types.display(inner), name.name),
-                );
-                if sync && name.name.is("get_mut") {
-                    diagnostic = diagnostic.note("a `SyncShared` gives `get` only: mutate through the value's own locks or atomics [HEAP-10]");
-                }
-                self.sink.emit(diagnostic);
-                return error;
-            }
-        };
-        let method = if mutable { "get_mut" } else { "get" };
-        if !args.is_empty() {
-            self.error(
-                codes::E2020,
-                span,
-                format!("`{method}` takes 0 arguments, found {}", args.len()),
+        // `[HEAP-10]` — only `SyncShared[T]` is such a struct (a `shares T` owner is a link): `get`.
+        if !name.name.is("get") {
+            let mut diagnostic = Diagnostic::error(
+                codes::E2072,
+                name.span,
+                format!("`SyncShared[{}]` has no method named `{}`", self.types.display(inner), name.name),
             );
+            if name.name.is("get_mut") {
+                diagnostic = diagnostic.note("a `SyncShared` gives `get` only: mutate through the value's own locks or atomics [HEAP-10]");
+            }
+            self.sink.emit(diagnostic);
             return error;
         }
-        if mutable {
-            // A `mut` parameter is already a `ref mut Shared[T]` inside its
-            // callee. Borrow through that caller-owned reference directly:
-            // re-borrowing its dereferenced temporary would make a returned
-            // payload reference appear to derive from local storage instead
-            // of from the parameter. Ordinary local receivers still need the
-            // usual `mut self` adjustment.
-            let receiver = match &receiver.kind {
-                ExprKind::Deref(base)
-                    if matches!(self.types.kind(base.ty), TyKind::Ref { mutable: true, .. }) =>
-                {
-                    receiver
-                }
-                _ => {
-                    let receiver = self.pass_receiver(receiver, Mode::Mut, span);
-                    let TyKind::Ref { mutable: true, inner: shared } =
-                        *self.types.kind(receiver.ty)
-                    else {
-                        return error;
-                    };
-                    Expr {
-                        ty: shared,
-                        kind: ExprKind::Deref(Box::new(receiver)),
-                        span,
-                    }
-                }
-            };
-            let payload = self.read_shared_through(receiver);
-            let ty = self.types.intern(TyKind::Ref { mutable: true, inner });
-            return Expr {
-                ty,
-                kind: ExprKind::Ref { place: Box::new(payload), mutable: true },
-                span,
-            };
+        if !args.is_empty() {
+            self.error(codes::E2020, span, format!("`get` takes 0 arguments, found {}", args.len()));
+            return error;
         }
-
         if !is_place(&receiver.kind) {
             self.error(
                 codes::E2140,
                 span,
-                "`Shared.get` needs an owner place so its returned reference cannot outlive a temporary",
+                "`SyncShared.get` needs an owner place so its returned reference cannot outlive a temporary",
             );
             return error;
         }
@@ -54704,13 +55730,17 @@ impl<'a> Checker<'a> {
     }
 
     /// `[THR-3]` — the payload type, if this is the `std.sync` lock type `origin` of one.
-    /// `[SEL-2]` — whose count a smart-pointer type uses: `Some(false)` for Ember's `Shared`,
-    /// `SyncShared` and `Weak`, `Some(true)` for C++'s `std.ffi.CppShared` and `std.ffi.CppWeak`.
+    /// `[SEL-2]`, `[WK-14]` — whose count a smart-pointer type uses: `Some(false)` for Ember's
+    /// owners and links (`shares T`, `shares mut T`, `weakref T`, `SyncShared[T]`), `Some(true)` for
+    /// C++'s `std.ffi.CppShared` and `std.ffi.CppWeak`.
     fn counted_family(&self, ty: Ty) -> Option<bool> {
+        if matches!(self.types.kind(ty), TyKind::Link { .. }) {
+            return Some(false);
+        }
         let TyKind::Struct(id) = *self.types.kind(ty) else { return None };
         match &self.types.struct_def(id).origin {
             Some((name, args)) if args.len() == 1 => match name.as_str() {
-                "Shared" | "SyncShared" | "Weak" => Some(false),
+                "SyncShared" => Some(false),
                 "std.ffi.CppShared" | "std.ffi.CppWeak" => Some(true),
                 _ => None,
             },
@@ -54735,7 +55765,7 @@ impl<'a> Checker<'a> {
             )
             .primary_label(format!("this is `{found}`"))
             .note(format!("`{counted_here}` is counted by Ember and `{cpp_side}` by C++; a conversion would leave each count believing it owns the object, and both would free it [SEL-2]"))
-            .help("keep each object on its own side: an Ember value in a `Shared`, a `std::shared_ptr` C++ made in a `CppShared`, and share the object itself through a reference or a C++ call"),
+            .help("keep each object on its own side: an Ember value held `shares`, a `std::shared_ptr` C++ made in a `CppShared`, and share the object itself through a reference or a C++ call"),
         )
     }
 
@@ -55696,7 +56726,7 @@ impl<'a> Checker<'a> {
         if !self.is_send(ret) {
             let ret_shown = self.types.display(ret);
             self.sink.emit(
-                Diagnostic::error(codes::E7004, args[0].span, format!("the task returns a `{ret_shown}`, which is not Send"))
+                Diagnostic::error(self.not_send_code(ret), args[0].span, format!("the task returns a `{ret_shown}`, which is not Send"))
                     .note("`join` takes the result on another thread [THR-11]"),
             );
             refused = true;
@@ -56353,7 +57383,7 @@ impl<'a> Checker<'a> {
                 TyKind::Ref { .. } => continue,
                 _ if !self.is_send(ty) => {
                     let shown = self.types.display(ty);
-                    (codes::E7004, format!("the parallel loop's chunks capture `{capture}`, a `{shown}`, which is not Send"))
+                    (self.not_send_code(ty), format!("the parallel loop's chunks capture `{capture}`, a `{shown}`, which is not Send"))
                 }
                 _ => continue,
             };
@@ -56463,7 +57493,7 @@ impl<'a> Checker<'a> {
                     let mut diagnostic =
                         Diagnostic::error(self.not_send_code(ty), arg_span, format!("{} captures `{capture}`, a `{ty_shown}`, which is not Send", words.who))
                             .note(words.moves_note);
-                    if let Some(advice) = self.sync_class_advice(ty) {
+                    if let Some(advice) = self.not_send_advice(ty) {
                         diagnostic = diagnostic.help(advice);
                     }
                     self.sink.emit(diagnostic);
@@ -56507,11 +57537,11 @@ impl<'a> Checker<'a> {
                     );
                     refused = true;
                 } else if send && !self.is_send(capture_ty) {
-                    let mut diagnostic = Diagnostic::error(codes::E7004, arg_span,
+                    let mut diagnostic = Diagnostic::error(self.not_send_code(capture_ty), arg_span,
                         format!("the callback `{}` captures `{capture}`, a `{shown}`, which is not Send", callback.param))
                         .help(format!("if C calls it on one thread, say so in its contract: `param({}, callback(…), threads(main))` or `threads(creator)`", callback.param))
                         .note("C may call a callback from any thread [FFI-22]");
-                    if let Some(advice) = self.sync_class_advice(capture_ty) {
+                    if let Some(advice) = self.not_send_advice(capture_ty) {
                         diagnostic = diagnostic.help(advice);
                     }
                     self.sink.emit(diagnostic);
@@ -56854,7 +57884,7 @@ impl<'a> Checker<'a> {
                     let mut diagnostic =
                         Diagnostic::error(code, arg_span, format!("{} {verb} `{capture}`, a `{ty_shown}`, which is not {marker}", words.scoped_who))
                             .note(words.scoped_note);
-                    if let Some(advice) = self.sync_class_advice(ty) {
+                    if let Some(advice) = self.not_send_advice(ty) {
                         diagnostic = diagnostic.help(advice);
                     }
                     self.sink.emit(diagnostic);
@@ -56873,23 +57903,12 @@ impl<'a> Checker<'a> {
         refused
     }
 
-    /// `[THR-2]` — for a handle of a class that is not `@sync`: `@sync` offered when every field
-    /// is `Send` and `Sync` (`[THR-1]` could hold), else the field that keeps it from being.
-    fn sync_class_advice(&self, ty: Ty) -> Option<String> {
+    /// `[THR-8]` — for an object that is not `Send`: the field that keeps it from being.
+    fn not_send_advice(&self, ty: Ty) -> Option<String> {
         let TyKind::Class(id) = *self.types.kind(ty) else { return None };
-        let def = self.types.class_def(id);
-        if def.is_sync {
-            return None;
-        }
         let name = self.types.class_display_name(id);
-        match def.fields.iter().find(|f| !(self.is_send(f.ty) && self.is_sync(f.ty))) {
-            None => Some(format!("declare it `@sync class {name}`: its fields are all `Send` and `Sync` [THR-1]")),
-            Some(field) => Some(format!(
-                "`@sync` would not help: `{name}.{}` is a `{}`, which is not `Send` and `Sync` [THR-1]",
-                field.name,
-                self.types.display(field.ty)
-            )),
-        }
+        let field = (0..self.types.class_field_count(id)).filter_map(|index| self.types.class_field_at(id, index)).find(|field| !self.is_send(field.ty))?;
+        Some(format!("`{name}.{}` is a `{}`, which is not `Send` [THR-8]", field.name, self.types.display(field.ty)))
     }
 
     /// `[THR-10]` — `JoinHandle[R]`, whose end detaches the thread (the backend's drop).
@@ -56930,7 +57949,7 @@ impl<'a> Checker<'a> {
         if !self.is_send(ret) {
             let ret_shown = self.types.display(ret);
             self.sink.emit(
-                Diagnostic::error(codes::E7004, args[0].span, format!("the thread's function returns a `{ret_shown}`, which is not Send"))
+                Diagnostic::error(self.not_send_code(ret), args[0].span, format!("the thread's function returns a `{ret_shown}`, which is not Send"))
                     .note("`join` takes the result on another thread [THR-10]"),
             );
             refused = true;
@@ -57669,7 +58688,7 @@ impl<'a> Checker<'a> {
                 let mut diagnostic = Diagnostic::error(self.not_send_code(capture_ty), span, format!("this lambda captures `{capture}`, a `{shown}`, which is not Send"))
                     .primary_label("passed here")
                     .note("the parameter takes only what may move to another thread [CLO-10], [THR-8]");
-                if let Some(advice) = self.sync_class_advice(capture_ty) {
+                if let Some(advice) = self.not_send_advice(capture_ty) {
                     diagnostic = diagnostic.help(advice);
                 }
                 self.sink.emit(diagnostic);
@@ -60330,6 +61349,10 @@ impl<'a> Checker<'a> {
         if !through_shared_ref && !class_handle {
             self.reject_borrowed_parameter_write(&receiver, span, false);
         }
+        // `[RC-7]`, `[THR-1]` — but an owner that only reads does not change its object.
+        if class_handle {
+            self.reject_change_through_reader(&receiver, span);
+        }
         if !is_place(&receiver.kind) {
             self.error(
                 codes::E2140,
@@ -61043,9 +62066,9 @@ impl<'a> Checker<'a> {
         };
         if mode == Mode::Owned {
             // `[STD-19]`, ODR-240 (verdict 150) — a function from a variable lent to the standard
-            // library takes no word. (A value made with `shares` or `weakref` takes none either,
-            // verdict 160: such values are not parsed yet, M4.)
-            if owned.is_some() || self.lent_callable_args.contains(&arg.span) {
+            // library takes no word; `[OWN-9]` (verdict 160) — nor does a value made in the call with
+            // a word that makes an owner or a link, which says what is given.
+            if owned.is_some() || self.lent_callable_args.contains(&arg.span) || matches!(unparenthesized(arg).kind, ast::ExprKind::Link { .. }) {
                 return;
             }
             let function = self.declaring_function(declared).unwrap_or_else(|| "the function".to_string());
@@ -61183,6 +62206,10 @@ impl<'a> Checker<'a> {
         if lends_named && matches!(value.kind, ast::ExprKind::Path { .. }) {
             return value;
         }
+        // `[OWN-9]` — `ROSTER.push(weakref this)`: the word says what is given.
+        if matches!(unparenthesized(value).kind, ast::ExprKind::Link { .. }) {
+            return value;
+        }
         if self.written_call && value.id != ast::NodeId::DUMMY && !self.generated_files.contains(&value.span.file) {
             let a_place = matches!(value.kind, ast::ExprKind::Path { .. } | ast::ExprKind::Field { .. } | ast::ExprKind::IndexOrInstantiate { .. } | ast::ExprKind::SelfExpr);
             self.missing_owns_word(value, None, a_place, function, first);
@@ -61273,6 +62300,14 @@ impl<'a> Checker<'a> {
     /// `check_argument` for a parameter whose passing the callee decides
     /// (`param_by_address`, D-284).
     fn check_argument_by(&mut self, arg: &ast::Expr, param_ty: Ty, mode: Mode, by_address: bool) -> Expr {
+        let lent = (mode == Mode::Borrow).then_some(arg.span);
+        let outer = std::mem::replace(&mut self.lent_argument, lent);
+        let checked = self.check_argument_as(arg, param_ty, mode, by_address);
+        self.lent_argument = outer;
+        checked
+    }
+
+    fn check_argument_as(&mut self, arg: &ast::Expr, param_ty: Ty, mode: Mode, by_address: bool) -> Expr {
         let declared_here = self.word_of.filter(|(argument, _)| *argument == arg.span).map(|(_, declared)| declared);
         if let Some((argument, declared)) = self.word_of
             && argument == arg.span
@@ -62753,6 +63788,8 @@ impl<'a> Checker<'a> {
                 None => {
                     let value = self.synth_committed(&arg.value);
                     let value = self.read_through(value);
+                    // `[RC-1]` — an owner prints as its value.
+                    let value = self.read_link_through(value);
                     let value = self.range_as_repr(value);
                     let value = if matches!(*self.types.kind(value.ty), TyKind::Vec { text: true, .. })
                     {
@@ -63101,7 +64138,7 @@ impl<'a> Checker<'a> {
         if matches!(op, ast::BinOp::Is | ast::BinOp::IsNot)
             && let Some(left) = self.referent(&lhs)
             && let Some(right) = self.referent(&rhs)
-            && !matches!(self.types.kind(left), TyKind::Class(_) | TyKind::ClassInterface(_))
+            && !matches!(self.types.kind(left), TyKind::Class(_) | TyKind::ClassInterface(_) | TyKind::Link { .. })
         {
             let lhs = Self::the_reference(lhs);
             let rhs = Self::the_reference(rhs);
@@ -63154,6 +64191,14 @@ impl<'a> Checker<'a> {
         while !dyn_boxes && self.box_inner(rhs.ty).is_some() {
             rhs = self.read_box_through(rhs);
         }
+        // `[RC-1]` — an owner of a value in a block is an operand as its value; `is` asks about the owners.
+        let identity = matches!(op, ast::BinOp::Is | ast::BinOp::IsNot);
+        if !identity && self.types.link_payload(lhs.ty).is_some() {
+            lhs = self.read_link_through(lhs);
+        }
+        if !identity && self.types.link_payload(rhs.ty).is_some() {
+            rhs = self.read_link_through(rhs);
+        }
         // `[SIMD-8]` — a lane-wise operator on two `std.simd` vectors or masks.
         (lhs, rhs) = match self.synth_simd_binary(hir_op, lhs, rhs, span) {
             Ok(call) => return call,
@@ -63180,10 +64225,18 @@ impl<'a> Checker<'a> {
             if self.is_option(rhs.ty) && names_none(lhs_ast) {
                 return self.option_test(rhs, present, span);
             }
-            // Any other operand that is not a handle (two references were
+            // `[EXP-9]`, `[TYP-36]` — an owner of a class object names that object; two owners of a value
+            // in a block are the same when their block is.
+            if self.types.link_payload(lhs.ty).is_none() {
+                lhs = self.read_link_through(lhs);
+            }
+            if self.types.link_payload(rhs.ty).is_none() {
+                rhs = self.read_link_through(rhs);
+            }
+            // Any other operand that is not a handle or a link (two references were
             // compared above) is `E2150`.
             let handle = |this: &Self, ty: Ty| {
-                matches!(this.types.kind(ty), TyKind::Class(_) | TyKind::ClassInterface(_)) || ty == this.common.error
+                matches!(this.types.kind(ty), TyKind::Class(_) | TyKind::ClassInterface(_) | TyKind::Link { .. }) || ty == this.common.error
             };
             if !handle(self, lhs.ty) || !handle(self, rhs.ty) {
                 let shown = if handle(self, lhs.ty) { self.types.display(rhs.ty) } else { self.types.display(lhs.ty) };
@@ -63195,6 +64248,7 @@ impl<'a> Checker<'a> {
                 return Expr { ty: self.common.error, kind: ExprKind::Error, span };
             }
             let compatible = match (self.types.kind(lhs.ty), self.types.kind(rhs.ty)) {
+                (TyKind::Link { .. }, TyKind::Link { .. }) => lhs.ty == rhs.ty,
                 (TyKind::Class(left), TyKind::Class(right)) if left == right => true,
                 (TyKind::Class(left), TyKind::Class(right))
                     if self.types.class_is_subclass_of(*left, *right) =>
@@ -63858,7 +64912,7 @@ fn type_names(ty: &ast::TypeExpr, out: &mut HashSet<Symbol>) {
                 }
             }
         }
-        ast::TypeKind::Ref { inner, .. } | ast::TypeKind::Ptr { inner, .. } | ast::TypeKind::Owns(inner) => type_names(inner, out),
+        ast::TypeKind::Ref { inner, .. } | ast::TypeKind::Ptr { inner, .. } | ast::TypeKind::Owns(inner) | ast::TypeKind::Link { inner, .. } => type_names(inner, out),
         ast::TypeKind::Tuple(items) | ast::TypeKind::Dyn(items) => {
             for item in items {
                 type_names(item, out);
@@ -64282,7 +65336,7 @@ fn type_expr_names(ty: &ast::TypeExpr, out: &mut Vec<Symbol>) {
                 }
             }
         }
-        ast::TypeKind::Ref { inner, .. } | ast::TypeKind::Ptr { inner, .. } | ast::TypeKind::Owns(inner) => type_expr_names(inner, out),
+        ast::TypeKind::Ref { inner, .. } | ast::TypeKind::Ptr { inner, .. } | ast::TypeKind::Owns(inner) | ast::TypeKind::Link { inner, .. } => type_expr_names(inner, out),
         ast::TypeKind::Tuple(items) | ast::TypeKind::Dyn(items) => {
             for item in items {
                 type_expr_names(item, out);
@@ -64357,7 +65411,7 @@ fn collect_projection_paths(ty: &ast::TypeExpr, out: &mut Vec<(Symbol, ast::Iden
                 }
             }
         }
-        ast::TypeKind::Ref { inner, .. } | ast::TypeKind::Ptr { inner, .. } | ast::TypeKind::Owns(inner) => collect_projection_paths(inner, out),
+        ast::TypeKind::Ref { inner, .. } | ast::TypeKind::Ptr { inner, .. } | ast::TypeKind::Owns(inner) | ast::TypeKind::Link { inner, .. } => collect_projection_paths(inner, out),
         ast::TypeKind::Tuple(items) | ast::TypeKind::Dyn(items) => {
             items.iter().for_each(|item| collect_projection_paths(item, out))
         }
@@ -64431,6 +65485,7 @@ fn is_place(kind: &ExprKind) -> bool {
         ExprKind::Local(_) | ExprKind::Index { .. } => true,
         ExprKind::Field { base, .. } => is_place(&base.kind),
         ExprKind::Deref(_) => true,
+        // `[RC-1]` — a class object read through an owner is the object the owner names, where it is.
         _ => false,
     }
 }
@@ -64779,7 +65834,7 @@ impl ShareWalk<'_> {
                     }
                 }
             }
-            ast::TypeKind::Ref { inner, .. } | ast::TypeKind::Ptr { inner, .. } | ast::TypeKind::Owns(inner) | ast::TypeKind::SomeType(inner) => self.ty(inner),
+            ast::TypeKind::Ref { inner, .. } | ast::TypeKind::Ptr { inner, .. } | ast::TypeKind::Owns(inner) | ast::TypeKind::Link { inner, .. } | ast::TypeKind::SomeType(inner) => self.ty(inner),
             ast::TypeKind::Tuple(items) | ast::TypeKind::Dyn(items) => {
                 for item in items {
                     self.ty(item);
@@ -64889,7 +65944,7 @@ impl ShareWalk<'_> {
                 self.ty(ty);
             }
             E::Try(inner) | E::Paren(inner) | E::Owned(inner) | E::Comptime(inner) | E::AssumeNoalloc(inner) => self.expr(inner),
-            E::RefOf { place, .. } | E::CopyOf(place) => self.expr(place),
+            E::RefOf { place, .. } | E::CopyOf(place) | E::Link { value: place, .. } => self.expr(place),
             E::OptChain { base, generic_args, args, .. } => {
                 self.expr(base);
                 for arg in generic_args {
@@ -65052,7 +66107,7 @@ fn type_shaped(expr: &ast::Expr) -> bool {
             | ast::ExprKind::IndexOrInstantiate { .. }
             | ast::ExprKind::Tuple(_)
             | ast::ExprKind::ArrayRepeat { .. }
-    ) || matches!(&expr.kind, ast::ExprKind::Owned(inner) if type_shaped(inner))
+    ) || matches!(&expr.kind, ast::ExprKind::Owned(inner) | ast::ExprKind::Link { value: inner, .. } if type_shaped(inner))
 }
 
 fn has_attribute(attrs: &[ast::Attribute], name: &str) -> bool {
@@ -65122,7 +66177,6 @@ const ATTRIBUTE_TABLE: &[(&[&str], &[&str], bool)] = &[
     (&["bench"], &["fn"], false),
     // `[TYP-34]` — documentation only: a view type is inferred.
     (&["view"], &["struct", "enum"], true),
-    (&["sync"], &["class"], true),
     (&["reflect"], &["struct", "enum", "class"], true),
     (&["attribute"], &["struct"], true),
     (&["ser"], &["field"], true),
@@ -67085,6 +68139,28 @@ struct CaptureWatch {
     /// declared: the closure's local standing for it is declared there too, so the variable
     /// counts as read where the closure reads it (`L1001`).
     item_spans: HashMap<Symbol, Span>,
+}
+
+/// The comma-separated items of `text` at its top level, trimmed: `Player(), Player(hp=2)`'s two,
+/// commas inside brackets, parentheses, braces and quotes left alone.
+fn split_top_level(text: &str) -> Vec<String> {
+    let mut items = Vec::new();
+    let (mut depth, mut quoted, mut start) = (0i32, false, 0);
+    for (at, c) in text.char_indices() {
+        match c {
+            '"' => quoted = !quoted,
+            '(' | '[' | '{' if !quoted => depth += 1,
+            ')' | ']' | '}' if !quoted => depth -= 1,
+            ',' if !quoted && depth == 0 => {
+                items.push(text[start..at].trim().to_string());
+                start = at + 1;
+            }
+            _ => {}
+        }
+    }
+    items.push(text[start..].trim().to_string());
+    items.retain(|item| !item.is_empty());
+    items
 }
 
 /// An expression without the parentheses around it: `(0..10)` is `0..10`.

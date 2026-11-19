@@ -21,16 +21,16 @@ class Node:
     fn drop():
         println("drop", this.v)
 
-fn take(owns n: Node):
+fn take(owns n: shares mut Node):
     println("took", n.v)
 
 fn main():
     a = Node(1)
-    take(owns a)
+    take(shares mut a)
     println("after", a.v)
-    take(owns Node(2))
+    take(shares mut Node(2))
     println("after the temporary")
     c = Node(3)
-    take(owns c)
+    take(shares mut c)
     mem.drop(c)
     println("after mem.drop")

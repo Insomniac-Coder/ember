@@ -21,9 +21,9 @@ struct Recipe:
 
     fn scaled(servings: int) -> Recipe:
         factor = servings as float / this.servings as float
-        result = Recipe(title=this.title.clone(), servings=servings)
+        result = Recipe(title=copy of this.title, servings=servings)
         for ing in this.ingredients:
-            result.ingredients.push(owns Ingredient(name=ing.name.clone(), amount=ing.amount * factor, unit=ing.unit))
+            result.ingredients.push(owns Ingredient(name=copy of ing.name, amount=ing.amount * factor, unit=ing.unit))
         return result
 
 fn tidy(amount: float, unit: Unit) -> (float, Unit):

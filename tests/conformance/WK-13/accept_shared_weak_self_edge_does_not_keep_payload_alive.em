@@ -8,15 +8,13 @@
 #$ assert-c: contains(ember_release((ember_obj_header*)
 
 struct Node:
-    weak: Weak[Shared[Node]]
+    weak: weakref Node
     value: i32
 
     fn drop():
         println(this.value)
 
 fn main():
-    node = Shared(Node(Weak[Shared[Node]].empty(), 7))
-    alias = node
-    payload = node.get_mut()
-    payload.weak = Weak(alias)
-    println(payload.value)
+    node = shares mut Node(None, 7)
+    node.weak = weakref node
+    println(node.value)

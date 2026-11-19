@@ -19,7 +19,7 @@ class Bag:
 
 fn main():
     b = Bag[int](1)
-    c = b
+    c = shares mut b
     v = b.items[..]
     c.grow(5)
     println(v)

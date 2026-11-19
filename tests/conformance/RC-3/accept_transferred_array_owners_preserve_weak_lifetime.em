@@ -6,7 +6,7 @@
 #$ stdout: cleared
 #$ stdout: expired
 
-# A fresh temporary transfers to the Array. Weak observations must still see
+# A fresh temporary transfers to the Array. `weakref` observations must still see
 # a live object until clear, then an expired object after its final owner ends.
 class Token:
     id: i32
@@ -17,12 +17,14 @@ class Token:
 fn main():
     tokens: Array[Token] = Array[Token]()
     tokens.push(owns Token(7))
-    weak = Weak(tokens[0])
-    match weak.upgrade():
-        Some(value) => println("live", value.id)
-        None => println("unexpected expiration")
+    weak = weakref tokens[0]
+    if weak exists as value:
+        println("live", value.id)
+    else:
+        println("unexpected expiration")
     tokens.clear()
     println("cleared")
-    match weak.upgrade():
-        Some(value) => println("unexpected owner", value.id)
-        None => println("expired")
+    if weak exists as value:
+        println("unexpected owner", value.id)
+    else:
+        println("expired")

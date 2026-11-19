@@ -12,7 +12,7 @@
 # `[OPT-1]`'s escape analysis follows a handle through calls and stops at what it cannot prove.
 # A `Passed` given to a function that gives it to another, neither keeping it, is in the frame.
 # A `Returned` whose method returns `self` may outlive the function, and a `Weakened` with a `Weak`
-# made of it would leave the weak handle pointing into a frame that is gone: both are on the heap.
+# made of it would leave the link pointing into a frame that is gone: both are on the heap.
 
 class Passed:
     v: int
@@ -20,7 +20,7 @@ class Passed:
 class Returned:
     v: int
 
-    fn same() -> Returned:
+    fn same() owns this -> Returned:
         return this
 
 class Weakened:
@@ -43,7 +43,7 @@ fn returned() -> int:
 
 fn weakened() -> int:
     w = Weakened(5)
-    _weak = Weak(w)
+    _weak = weakref w
     return w.v
 
 fn main():

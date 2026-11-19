@@ -402,7 +402,7 @@ impl Writer<'_> {
             | ast::ExprKind::AssumeNoalloc(base)
             | ast::ExprKind::Unary { operand: base, .. }
             | ast::ExprKind::RefOf { place: base, .. }
-            | ast::ExprKind::CopyOf(base) => self.lift_expr(base, enclosing),
+            | ast::ExprKind::CopyOf(base) | ast::ExprKind::Link { value: base, .. } => self.lift_expr(base, enclosing),
             ast::ExprKind::IndexOrInstantiate { base, args } => {
                 self.lift_expr(base, enclosing);
                 for arg in args {
@@ -891,7 +891,7 @@ fn replace_self(ty: &mut ast::TypeExpr, owner: &ast::TypeExpr) {
                 }
             }
         }
-        ast::TypeKind::Ref { inner, .. } | ast::TypeKind::Ptr { inner, .. } | ast::TypeKind::Owns(inner) => replace_self(inner, owner),
+        ast::TypeKind::Ref { inner, .. } | ast::TypeKind::Ptr { inner, .. } | ast::TypeKind::Owns(inner) | ast::TypeKind::Link { inner, .. } => replace_self(inner, owner),
         ast::TypeKind::Array { elem, .. } => replace_self(elem, owner),
         ast::TypeKind::Tuple(items) | ast::TypeKind::Dyn(items) => {
             for item in items {
@@ -1219,7 +1219,7 @@ impl Rewriter<'_> {
             | ast::ExprKind::AssumeNoalloc(base)
             | ast::ExprKind::Unary { operand: base, .. }
             | ast::ExprKind::RefOf { place: base, .. }
-            | ast::ExprKind::CopyOf(base) => self.expr(base, Place::Operand),
+            | ast::ExprKind::CopyOf(base) | ast::ExprKind::Link { value: base, .. } => self.expr(base, Place::Operand),
             ast::ExprKind::IndexOrInstantiate { base, args } => {
                 self.expr(base, Place::Operand);
                 for arg in args {

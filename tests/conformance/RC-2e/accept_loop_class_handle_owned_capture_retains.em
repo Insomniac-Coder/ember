@@ -1,7 +1,7 @@
 #$ test: run-pass
 #$ rules: RC-1, RC-2e, CLO-1, CLO-2, CTL-1, CTL-2, RNG-4
 #$ profiles: debug, development, release
-#$ assert-c-count: contains("ember_retain_plain((ember_obj_header*)") == 2
+#$ assert-c-count: contains("ember_retain_plain((ember_obj_header*)") == 1
 #$ assert-c-count: contains("ember_retain((ember_obj_header*)") == 0
 #$ stdout: 7
 
@@ -14,9 +14,9 @@ class Token:
     value: i32
 
 fn main():
-    tokens: Array[Token] = Array[Token]()
-    tokens.push(owns Token(7))
+    tokens: Array[shares Token] = Array[shares Token]()
+    tokens.push(owns shares Token(7))
     for token in tokens:
-        copy: Token = token
+        copy: shares Token = shares token
         task = owned fn() => copy.value
         println(task())

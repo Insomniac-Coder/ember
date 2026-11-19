@@ -15,19 +15,17 @@ struct Token:
     fn drop():
         println(this.value)
 
-fn expired_copy() -> Weak[Shared[Token]]:
-    first = Shared(Token(7))
-    second = first
-    observed = second.get()
-    println(observed.value)
-    weak = Weak(second)
+fn expired_copy() -> weakref Token:
+    first = shares mut Token(7)
+    second = shares first
+    println(second.value)
+    weak = weakref second
     copy = weak
     return copy
 
 fn main():
     stale = expired_copy()
-    match stale.upgrade():
-        Some(_):
-            println(0)
-        None:
-            println(42)
+    if stale exists as _:
+        println(0)
+    else:
+        println(42)

@@ -37,7 +37,7 @@ class Carried:
 fn read(p: Local) -> int:
     return p.twice()
 
-fn store(ref mut list: Array[Kept], k: Kept):
+fn store(ref mut list: Array[Kept], owns k: Kept):
     list.push(owns k)
 
 fn turns(n: int) -> int:
@@ -50,7 +50,7 @@ fn turns(n: int) -> int:
 fn kept(n: int) -> int:
     list: Array[Kept] = []
     for i in 0..n:
-        store(ref mut list, Kept(i))
+        store(ref mut list, owns Kept(i))
     return list.len()
 
 fn carried(n: int) -> int:

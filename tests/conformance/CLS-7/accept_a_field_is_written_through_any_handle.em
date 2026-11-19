@@ -29,7 +29,7 @@ fn main():
     println(o.inner.value)
     h = Holder([1, 2])
     h.values = [7]
-    alias = h
+    alias = shares mut h
     alias.values.push(owns 8)
     r = ref mut h.values
     r.push(owns 9)

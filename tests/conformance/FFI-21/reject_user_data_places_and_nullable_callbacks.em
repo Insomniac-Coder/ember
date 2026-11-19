@@ -48,8 +48,8 @@ unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definiti
     safe fn maybe_on_main(visit: Option[extern "C" fn(*mut void, c_int)], data: *mut void)
 
 fn main():
-    counter = Counter()
-    passes_on(Some(owned fn(x: c_int): println(counter.count + x)))    #$ error[E7004]: captures `counter`, a `Counter`, which is not Send
+    counter = shares mut Counter()
+    passes_on(Some(owned fn(x: c_int): println(counter.count + x)))    #$ error[E7015]: captures `counter`, a `shares mut Counter`, which is not Send
     passes_on(None)
     passes_on(Some(fn(x: c_int): println(x)))
     n: c_int = 2
@@ -57,7 +57,7 @@ fn main():
     maybe(Some(f))    #$ error[E7004]: may hold anything, so it is not Send
     maybe(None)
     maybe(Some(fn(x: c_int): println(x)))
-    maybe(Some(owned fn(x: c_int): println(counter.count + x)))    #$ error[E7004]: captures `counter`, a `Counter`, which is not Send
+    maybe(Some(owned fn(x: c_int): println(counter.count + x)))    #$ error[E7015]: captures `counter`, a `shares mut Counter`, which is not Send
     maybe_on_main(Some(owned fn(x: c_int): println(counter.count + x)))
 
 fn passes_on(hook: Option[fn(c_int)]):

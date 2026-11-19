@@ -12,7 +12,6 @@ class Node:
 class Parent:
     child: Node
 
-@derive(Copy)
 struct Pair:
     a: Node
     b: int
@@ -22,12 +21,12 @@ class Holder:
 
 fn main():
     p = Parent(Node(1))
-    q = p
+    q = shares mut p
     r = ref p.child.v #$ error[E3060]: this temporary is dropped at the end of its statement while it is still borrowed
     q.child = Node(2)
     println(r)
     h = Holder(Pair(Node(5), 0))
-    g = h
+    g = shares mut h
     s = ref h.pair.a.v #$ error[E3060]: this temporary is dropped at the end of its statement while it is still borrowed
     g.pair = Pair(Node(6), 1)
     println(s)

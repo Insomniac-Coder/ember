@@ -17,7 +17,7 @@ extend StrView implements Keyed[String]:
 
 extend String implements Keyed[String]:
     fn make_key() -> String:
-        return this.clone()
+        return copy of this
 
 [Q: needs Keyed[String]]
 fn conv_concrete(q: Q) -> String:

@@ -20,6 +20,7 @@ struct Square:
 enum Rect:
     Sized(float, float)
 
+@derive(Clone)
 class Tile:
     size: float
 
@@ -57,10 +58,10 @@ fn show(shapes: Span[owns dyn Shape]):
 
 fn main():
     shapes: Array[owns dyn Shape] = [owns Square(2.0, "a"), owns Rect.Sized(2.0, 3.0), owns 1.0, owns Tile(0.5)]
-    copies = shapes.clone()
+    copies = copy of shapes
     show(shapes.as_span())
     show(copies.as_span())
     scene = Scene(owns Square(3.0, "b"))
-    other = scene.clone()
+    other = copy of scene
     scene.shape = owns Square(2.0, "c")
     println(other.shape.area(), scene.shape.area())

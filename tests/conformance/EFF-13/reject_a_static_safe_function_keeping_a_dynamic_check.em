@@ -29,7 +29,7 @@ fn peek(h: Holder) -> int:
 
 fn main():
     b = Bag([])
-    c = b
+    c = shares mut b
     fill(ref mut b, ref mut c)
     # A loop over the field holds a read of it, so a write to a `Bag` can
     # conflict somewhere: the checks in `fill` cannot be removed (`[EXC-3]`).

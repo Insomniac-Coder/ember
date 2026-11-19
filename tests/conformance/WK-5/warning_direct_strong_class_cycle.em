@@ -9,7 +9,7 @@ class Parent:
     child: Child
 
 class Child:
-    parent: Parent
+    parent: shares mut Parent
 
 fn main():
     return

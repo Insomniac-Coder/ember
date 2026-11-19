@@ -4,7 +4,6 @@
 #$ stdout: 42
 #$ assert-c: contains(EMBER_TI_SYNC)
 # The type-info flag selects the runtime's atomic count operations.
-@sync
 class Token:
     value: int
 
@@ -12,6 +11,6 @@ class Token:
         this.value = 42
 
 fn main():
-    token = Token()
+    token = thread_shared Token()
     copy = token
     println(copy.value)

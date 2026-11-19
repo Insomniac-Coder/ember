@@ -18,5 +18,5 @@ fn use_view(v: Span[int], other: Bag) -> int:
 
 fn main():
     b = Bag()
-    c = b
+    c = shares mut b
     println(use_view(b.items, c))

@@ -7,35 +7,34 @@
 #$ assert-c: contains("ember_weak_release(")
 #$ assert-c: contains("ember_weak_upgrade(")
 
-# A Weak[Token] copied out through ref dyn Observe remains non-owning after the
+# A weakref Token copied out through ref dyn Observe remains non-owning after the
 # borrowed generic class and its final Token owner leave the helper. The caller
 # observes the expired upgrade path without any class-owner resurrection.
 interface Observe:
-    fn observer() -> Weak[Token]
+    fn observer() -> weakref Token
 
 class Token:
     value: i32
 
 [T]
 class Holder implements Observe:
-    weak: Weak[Token]
+    weak: weakref Token
     marker: T
 
-    fn observer() -> Weak[Token]:
-        return this.weak
+    fn observer() -> weakref Token:
+        return weakref this.weak
 
-fn inspect(value: ref dyn Observe) -> Weak[Token]:
+fn inspect(value: ref dyn Observe) -> weakref Token:
     return value.observer()
 
-fn expired() -> Weak[Token]:
+fn expired() -> weakref Token:
     strong = Token(7)
-    holder = Holder[bool](Weak(strong), true)
+    holder = Holder[bool](weakref strong, true)
     return inspect(ref holder)
 
 fn main():
     weak = expired()
-    match weak.upgrade():
-        Some(_):
-            println(0)
-        None:
-            println(7)
+    if weak exists as _:
+        println(0)
+    else:
+        println(7)
