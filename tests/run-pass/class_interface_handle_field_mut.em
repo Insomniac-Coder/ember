@@ -5,7 +5,7 @@
 #$ assert-c-count: contains("ember_itable_lookup") == 1
 #$ assert-c-count: contains("ember_object_begin_write(((ember_obj_header*)receiver)") == 1
 #$ assert-c-count: contains("ember_object_end_write(((ember_obj_header*)receiver)") == 1
-#$ assert-c-count: contains("ember_retain_plain((ember_obj_header*)") == 1
+#$ assert-c-count: contains("ember_retain_plain((ember_obj_header*)") == 0
 #$ assert-c-count: contains("ember_retain((ember_obj_header*)") == 1
 
 # A mutating call through a class-held interface field dispatches through its

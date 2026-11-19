@@ -815,8 +815,70 @@ impl<'a> Builder<'a> {
         self.statement_temps.truncate(mark);
     }
 
+    /// `[RC-2b]` — the `ref mut` names whose every value is a place of this function's own, with no
+    /// object or owner on the way to it: while one lives nothing else reaches what it names, so that
+    /// needs no count of its own.
+    fn own_place_views(&self, body: &'a hir::Block) -> Vec<hir::LocalId> {
+        let own_place = |place: &hir::Expr| {
+            let mut current = place;
+            loop {
+                current = match &current.kind {
+                    hir::ExprKind::Field { base, .. } | hir::ExprKind::EnumField { base, .. } | hir::ExprKind::Index { base, .. } => {
+                        if self.counted_handle(base.ty) {
+                            return false;
+                        }
+                        base
+                    }
+                    hir::ExprKind::Local(local) => return !matches!(self.types.kind(self.function.local(*local).ty), TyKind::Ref { .. } | TyKind::Span { .. }),
+                    _ => return false,
+                };
+            }
+        };
+        let mut found: std::collections::HashMap<hir::LocalId, bool> = std::collections::HashMap::new();
+        let mut note = |local: hir::LocalId, value: &hir::Expr| {
+            let own = matches!(&value.kind, hir::ExprKind::Ref { place, mutable: true } if own_place(place));
+            let entry = found.entry(local).or_insert(true);
+            *entry = *entry && own;
+        };
+        let mut seen: std::collections::HashSet<*const hir::Block> = std::collections::HashSet::new();
+        let mut pending = vec![body];
+        while let Some(block) = pending.pop() {
+            if !seen.insert(block as *const hir::Block) {
+                continue;
+            }
+            for stmt in &block.stmts {
+                match stmt {
+                    hir::Stmt::Let { local, init: Some(init) } => note(*local, init),
+                    hir::Stmt::Assign { place, value } => {
+                        if let hir::ExprKind::Local(local) = place.kind {
+                            note(local, value);
+                        }
+                    }
+                    hir::Stmt::If { then_block, else_block, .. } | hir::Stmt::While { body: then_block, else_block, .. } => {
+                        pending.push(then_block);
+                        pending.extend(else_block.iter());
+                    }
+                    hir::Stmt::ForRange { body, else_block, .. } => {
+                        pending.push(body);
+                        pending.extend(else_block.iter());
+                    }
+                    hir::Stmt::Block(inner) | hir::Stmt::Defer(inner) => pending.push(inner),
+                    _ => {}
+                }
+                hir::visit_stmt(stmt, &mut |expr| {
+                    if let hir::ExprKind::Block { block, .. } = &expr.kind {
+                        pending.push(block);
+                    }
+                });
+            }
+        }
+        found.into_iter().filter(|&(_, own)| own).map(|(local, _)| local).collect()
+    }
+
     /// Lower `body`, the function's (given apart from it: `lower_with` takes it from the program).
     fn build(&mut self, body: &'a hir::Block) {
+        let views = self.own_place_views(body);
+        self.mut_param_locals.extend(views);
         self.lower_block(body);
         // A function whose body falls off the end returns the (void) return
         // slot as it stands. `[FN-8]`'s `main` is the common case. Owned

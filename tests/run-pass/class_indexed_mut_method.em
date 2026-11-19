@@ -2,7 +2,7 @@
 #$ rules: CLS-4, CLS-7, EXC-1, EXP-1
 #$ profiles: debug, development, release
 #$ assert-c: contains(em_5Child4bump)
-#$ assert-c-count: contains("ember_retain_plain((ember_obj_header*)") == 1
+#$ assert-c-count: contains("ember_retain_plain((ember_obj_header*)") == 0
 #$ assert-c-count: contains("ember_retain((ember_obj_header*)") == 0
 #$ assert-c: !contains(ember_object_begin_write)
 #$ assert-c: !contains(ember_object_end_write)

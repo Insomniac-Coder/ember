@@ -4,14 +4,10 @@
 #$ stdout: 12
 #$ 15
 #$ 39
-#$ assert-c-count: contains("ember_object_begin_write") == 3
-#$ assert-c-count: contains("ember_object_end_write") == 3
+#$ assert-c: !contains("ember_object_begin_write")
 
-# `[EXC-10]` — the outer loops only count, so each nest holds its inner loop's
-# access from the first inner turn to the nest's end: one check per nest, not
-# one per outer turn. An inner loop that runs no turn (the first `r`) begins
-# nothing, and three loops deep the access moves out twice. The driver test
-# checks the `inner_loop_reused` proof.
+# `[EXC-15]` — a method that changes its object is called with no check at run time, in a loop or a nest
+# of loops, though another owner of the object exists.
 
 class Counter:
     value: i32

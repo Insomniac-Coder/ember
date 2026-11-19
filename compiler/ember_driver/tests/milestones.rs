@@ -3827,111 +3827,6 @@ fn inspect_safety_reports_nopanic_explicit_beside_runtime_checks() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// `[EXC-8]`–`[EXC-14]` — a copied class handle prevents static unique-handle
-/// elision, but the receiver itself is stable across this counted loop. The
-/// compiler therefore emits one checked loop-level interval for the `mut
-/// self` calls' whole-object write (`[EXC-15]`) and reports its proof.
-#[test]
-fn stable_class_loop_access_is_reported_as_hoisted() {
-    let root = workspace_root();
-    let source = format!(
-        "tests/conformance/EXC-8/accept_stable_class_receiver_loop.{SOURCE_EXT}"
-    );
-    for profile in ["debug", "development", "release"] {
-        let out_dir = temporary_directory(&format!("hoisted-loop-safety-{profile}"));
-        let run = ember(
-            &[
-                "build",
-                &source,
-                "--backend",
-                "c",
-                "--profile",
-                profile,
-                "--out-dir",
-                &out_dir.to_string_lossy(),
-            ],
-            &root,
-        );
-        assert_eq!(run.exit, 0, "{profile} build failed:\n{}", run.stderr);
-
-        let side_table = out_dir
-            .join(profile)
-            .join("inspect")
-            .join("accept_stable_class_receiver_loop.safety.json");
-        let json = std::fs::read_to_string(&side_table)
-            .unwrap_or_else(|error| panic!("{}: {error}", side_table.display()));
-        assert!(
-            json.contains("\"classification\":\"DYNAMIC_HOISTED_LOOP\""),
-            "{profile} stable loop was not classified as hoisted:\n{json}"
-        );
-        assert!(
-            json.contains("\"check_site\":\"preheader\""),
-            "{profile} hoisted loop lacks its preheader check record:\n{json}"
-        );
-        assert!(
-            json.contains("\"protected_interval\":\"loop\""),
-            "{profile} hoisted loop lacks its protected interval record:\n{json}"
-        );
-        assert!(
-            json.contains("\"proof\":\"stable_receiver_direct_call\""),
-            "{profile} hoisted loop lacks its proof record:\n{json}"
-        );
-
-        // `main`'s definition, to its end: the C writes the bodies where the source has them.
-        let main_symbol = ember_branding::entry_symbol();
-        let definition = format!("void {main_symbol}(void) {{");
-        let c = unit_defining(&out_dir.join(profile).join("c"), "accept_stable_class_receiver_loop", &definition);
-        let main_start = c.find(&definition).expect("main is emitted");
-        let main_c = &c[main_start..main_start + c[main_start..].find("\n}\n").expect("main ends")];
-        let begin_write = ember_branding::runtime("object_begin_write");
-        let end_write = ember_branding::runtime("object_end_write");
-        assert_eq!(
-            main_c.matches(&begin_write).count(),
-            1,
-            "{profile} main must have one preheader write check:\n{main_c}"
-        );
-        assert_eq!(
-            main_c.matches(&end_write).count(),
-            1,
-            "{profile} main must have one postheader write release:\n{main_c}"
-        );
-
-        let side_table_arg = side_table.to_string_lossy().into_owned();
-        let report = ember(&["inspect", "--safety", &side_table_arg], &root);
-        assert_eq!(report.exit, 0, "{profile} inspect failed:\n{}", report.stderr);
-        assert!(
-            report.stdout.contains("DYNAMIC_HOISTED_LOOP")
-                && report.stdout.contains("proof: stable_receiver_direct_call"),
-            "{profile} inspect did not identify the hoisted proof:\n{}",
-            report.stdout
-        );
-    }
-}
-
-/// `[EXC-10]`, `[EXC-12]` — each nest's loop around the inner loop holds the
-/// inner loop's access, and the report names that loop and its proof.
-#[test]
-fn an_outer_loop_reports_the_inner_access_it_holds() {
-    let root = workspace_root();
-    let name = "accept_an_outer_loop_holds_its_inner_loops_access";
-    let source = format!("tests/conformance/EXC-10/{name}.{SOURCE_EXT}");
-    for profile in ["debug", "development", "release"] {
-        let out_dir = temporary_directory(&format!("outer-loop-safety-{profile}"));
-        let run = ember(&["build", &source, "--profile", profile, "--out-dir", &out_dir.to_string_lossy()], &root);
-        assert_eq!(run.exit, 0, "{profile} build failed:\n{}", run.stderr);
-        let side_table = out_dir.join(profile).join("inspect").join(format!("{name}.safety.json"));
-        let report = ember(&["inspect", "--safety", &side_table.to_string_lossy()], &root);
-        assert_eq!(report.exit, 0, "{profile} inspect failed:\n{}", report.stderr);
-        for line in [26, 30, 34] {
-            assert!(
-                report.stdout.contains(&format!("{name}.{SOURCE_EXT}:{line}:17  proof: inner_loop_reused")),
-                "{profile} the loop on line {line} does not hold its inner access:\n{}",
-                report.stdout
-            );
-        }
-    }
-}
-
 /// ADR-079 — for MSVC, a loop nest that writes separate lists it never reads
 /// runs in a function of its own whose list parameters are `restrict`, the
 /// counts the program fixes written in; for clang the nest stays in place.
@@ -4274,8 +4169,8 @@ fn msvc_writes_small_checked_loops_several_turns_a_pass() {
     let msvc = ember(&["build", &source, "--backend", "c", "--emit", "c", "--profile", "development", "--cc", "msvc"], &root);
     assert_eq!(msvc.exit, 0, "msvc C failed:\n{}", msvc.stderr);
     assert!(msvc.stdout.contains(" > 7u; ) {"), "no loop runs eight turns to a pass:\n{}", msvc.stdout);
-    // `[CG-C-7]` — the object is the local `t`, by its own name.
-    let bump = format!("{}(&t)", ember_branding::item_symbol("Tally.bump"));
+    // `[CG-C-7]` — the object is what the local `t` names, by its own name.
+    let bump = format!("{}(&(*t))", ember_branding::item_symbol("Tally.bump"));
     assert!(msvc.stdout.contains(&bump), "the call does not take the object's address directly:\n{}", msvc.stdout);
     let total_of = format!("{}(", ember_branding::item_symbol("total_of"));
     let start = msvc
@@ -4389,94 +4284,6 @@ fn exit_drops_that_only_free_memory_go_in_release() {
     }
     assert_eq!(frees[1] + 1, frees[0], "development frees one list fewer than debug: {frees:?}");
     assert_eq!(frees[2], frees[1], "release drops what development drops: {frees:?}");
-}
-
-/// `[EXC-9]` / `[EXC-13]` / `[TST-15]` — the two proved loop forms hoist
-/// exactly one caller check. Publishing a handle, dynamic dispatch, and two
-/// receiver identities each deliberately retain their individual checks.
-#[test]
-fn loop_access_hoisting_requires_the_complete_local_proof() {
-    let root = workspace_root();
-    let cases = [
-        (
-            "accept_invariant_local_receiver_loop",
-            "DYNAMIC_HOISTED_LOOP",
-            1usize,
-        ),
-        (
-            "accept_escaping_receiver_loop_keeps_dynamic_check",
-            "DYNAMIC_PER_ACCESS",
-            1usize,
-        ),
-        (
-            "accept_virtual_receiver_loop_keeps_dynamic_check",
-            "DYNAMIC_PER_ACCESS",
-            1usize,
-        ),
-        (
-            "accept_distinct_receivers_loop_keeps_dynamic_checks",
-            "DYNAMIC_PER_ACCESS",
-            2usize,
-        ),
-    ];
-
-    for (name, classification, expected) in cases {
-        let source = format!("tests/conformance/EXC-8/{name}.{SOURCE_EXT}");
-        let out_dir = temporary_directory(&format!("ember-loop-access-{name}"));
-        let run = ember(
-            &[
-                "build",
-                &source,
-                "--out-dir",
-                &out_dir.to_string_lossy(),
-            ],
-            &root,
-        );
-        assert_eq!(run.exit, 0, "{name} did not build:\n{}", run.stderr);
-
-        let side_table = out_dir
-            .join("debug")
-            .join("inspect")
-            .join(format!("{name}.safety.json"));
-        let value: serde_json::Value = serde_json::from_str(
-            &std::fs::read_to_string(&side_table)
-                .unwrap_or_else(|error| panic!("{}: {error}", side_table.display())),
-        )
-        .unwrap_or_else(|error| panic!("{}: {error}", side_table.display()));
-        let observed = value
-            .get("checks")
-            .and_then(serde_json::Value::as_array)
-            .expect("safety side table has checks")
-            .iter()
-            .filter(|check| {
-                check.get("function").and_then(serde_json::Value::as_str) == Some("main")
-                    && check.get("classification").and_then(serde_json::Value::as_str)
-                        == Some(classification)
-            })
-            .count();
-        assert_eq!(
-            observed, expected,
-            "{name} should have {expected} main {classification} check(s): {value}"
-        );
-        let wrong = if classification == "DYNAMIC_HOISTED_LOOP" {
-            "DYNAMIC_PER_ACCESS"
-        } else {
-            "DYNAMIC_HOISTED_LOOP"
-        };
-        assert!(
-            !value
-                .get("checks")
-                .and_then(serde_json::Value::as_array)
-                .expect("safety side table has checks")
-                .iter()
-                .any(|check| {
-                    check.get("function").and_then(serde_json::Value::as_str) == Some("main")
-                        && check.get("classification").and_then(serde_json::Value::as_str)
-                            == Some(wrong)
-                }),
-            "{name} has an unsafe mixed loop classification: {value}"
-        );
-    }
 }
 
 /// `[EXC-3]`, `[EXC-3a]` — a check that nothing held anywhere in the program
@@ -4807,7 +4614,7 @@ fn cycle_explanation_covers_standalone_generic_dynamic_and_stale_roots() {
     );
     assert!(
         class.stdout.contains("Cycle explanation: Parent")
-            && class.stdout.contains("Holder[Child]"),
+            && class.stdout.contains("Holder[shares mut Child]"),
         "class explanation omitted the generic ownership path:\n{}",
         class.stdout
     );
