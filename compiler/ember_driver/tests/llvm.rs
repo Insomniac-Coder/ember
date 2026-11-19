@@ -406,7 +406,7 @@ fn clo_1_a_lambda_in_an_adapter_is_called_directly() {
         "\
 fn main():
     xs = [1, 2, 3]
-    it = xs.iter().map(owns fn(x: ref int) -> int => x * 2)
+    it = xs.iter().map(owns fn(ref x: int) -> int => x * 2)
     total = 0
     for v in it:
         total += v

@@ -1,6 +1,6 @@
 #$ test: run-pass
-#$ stdout: 4
 #$ rules: FN-1, GRM-41
+#$ stdout: 4
 # `[FN-1]` — only the top of a parameter's type is refused; a `ref` inside one is a view type.
 
 fn first(ref xs: Array[int]) -> Option[ref int]:

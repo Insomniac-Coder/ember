@@ -390,6 +390,8 @@ pub struct Param {
     /// `[FN-1]` — `const ref mut`: a `Mut` parameter that is never given another ref (`[BRW-14]`).
     /// Nothing gives a parameter another ref yet (A2-8), so it is checked as `ref mut` is.
     pub is_const: bool,
+    /// `[FN-1]` — written `ref x: T`: its type here is the view of `T`, which the word stands for.
+    pub view: bool,
     pub kind: ParamKind,
     pub default: Option<Expr>,
     pub span: Span,

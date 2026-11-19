@@ -2282,7 +2282,7 @@ fn clause_lambda(pattern: &ast::Pattern, body: ast::Expr, span: Span) -> ast::Ex
     let infer = || ast::TypeExpr { id: ast::NodeId::DUMMY, kind: ast::TypeKind::Infer, span };
     // A name bound as the parameter keeps its written span: each clause function a generator
     // expression makes binds it again, and it is one binding (`L1001`).
-    let param = |name: ast::Ident| ast::Param {
+    let param = |name: ast::Ident| ast::Param { view: false,
         id: ast::NodeId::DUMMY,
         mode: ast::Mode::Borrow,
         is_const: false,
@@ -37565,7 +37565,7 @@ impl<'a> Checker<'a> {
                                 is_owned: false,
                                 params: params
                                     .iter()
-                                    .map(|name| ast::Param {
+                                    .map(|name| ast::Param { view: false,
                                         id: ast::NodeId::DUMMY,
                                         mode: ast::Mode::Borrow,
                                         is_const: false,
@@ -57399,7 +57399,7 @@ impl<'a> Checker<'a> {
             };
             stmts.push(ast::Stmt { id: dummy, attrs: Vec::new(), kind: ast::StmtKind::Expr(at(ast::ExprKind::Jump(ast::Jump::Return(Some(Box::new(value)))))), span });
         }
-        let param = |text: &str, this: &Self| ast::Param {
+        let param = |text: &str, this: &Self| ast::Param { view: false,
             id: dummy,
             mode: ast::Mode::Borrow,
             is_const: false,
@@ -57538,7 +57538,7 @@ impl<'a> Checker<'a> {
             }).collect();
             if parts.len() == 1 { parts.into_iter().next().expect("one") } else { ast::TypeExpr { id: dummy, kind: ast::TypeKind::Tuple(parts), span } }
         };
-        let param = |text: &str, this: &Self| ast::Param {
+        let param = |text: &str, this: &Self| ast::Param { view: false,
             id: dummy,
             mode: ast::Mode::Borrow,
             is_const: false,
@@ -62564,6 +62564,19 @@ impl<'a> Checker<'a> {
             let value = self.check_expr_through(arg, param_ty, true);
             return self.borrow_argument(value, param_ty);
         }
+        // `[FN-1]` — `ref x: T` takes what a plain parameter takes, with no word at the call: the value
+        // is viewed where it is.
+        if mode == Mode::Borrow
+            && let TyKind::Ref { mutable: false, inner } = *self.types.kind(param_ty)
+            && !matches!(self.types.kind(inner), TyKind::Dyn { .. } | TyKind::Opaque(_))
+            && !matches!(arg.kind, ast::ExprKind::RefOf { .. })
+        {
+            let found = self.synth_quiet_type(arg);
+            if !matches!(self.types.kind(found), TyKind::Ref { .. } | TyKind::Error) {
+                let value = self.check_expr_through(arg, inner, true);
+                return self.borrow_argument(value, inner);
+            }
+        }
         if mode != Mode::Mut {
             return self.check_expr_through(arg, param_ty, mode == Mode::Borrow);
         }
@@ -63206,7 +63219,7 @@ impl<'a> Checker<'a> {
             is_owned: false,
             params: names
                 .iter()
-                .map(|(name, _)| ast::Param {
+                .map(|(name, _)| ast::Param { view: false,
                     id: ast::NodeId::DUMMY,
                     mode: ast::Mode::Borrow,
                     is_const: false,

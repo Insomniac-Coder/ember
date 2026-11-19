@@ -563,7 +563,7 @@ impl Writer<'_> {
             if form == "env" {
                 lifted.params.insert(
                     0,
-                    ast::Param {
+                    ast::Param { view: false,
                         id: ast::NodeId::DUMMY,
                         mode: ast::Mode::Owned,
                         is_const: false,
@@ -729,7 +729,7 @@ impl Writer<'_> {
             });
             modes.push(mode);
             args.push(value);
-            body_params.push(ast::Param { id: ast::NodeId::DUMMY, mode: param_mode, is_const: param.is_const, kind: ast::ParamKind::Named { name, ty }, default: None, span: param.span });
+            body_params.push(ast::Param { view: false, id: ast::NodeId::DUMMY, mode: param_mode, is_const: param.is_const, kind: ast::ParamKind::Named { name, ty }, default: None, span: param.span });
         }
         self.frames.push((Symbol::intern(&qualified), modes));
         // `[CORO-3]` — a frame is move-only, and what a copy, a comparison or
@@ -1357,7 +1357,7 @@ fn reference(ty: ast::TypeExpr, mutable: bool) -> ast::TypeExpr {
 }
 
 fn receiver(mode: ast::Mode, span: Span) -> ast::Param {
-    ast::Param { id: ast::NodeId::DUMMY, mode, is_const: false, kind: ast::ParamKind::Receiver { ty: None, implicit: false }, default: None, span }
+    ast::Param { view: false, id: ast::NodeId::DUMMY, mode, is_const: false, kind: ast::ParamKind::Receiver { ty: None, implicit: false }, default: None, span }
 }
 
 /// `fn name(params) [-> ret]: body`.

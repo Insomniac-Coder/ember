@@ -1123,7 +1123,7 @@ impl Parser<'_> {
             let id = self.next_id();
             let mode = if owns_this { Mode::Owned } else { Mode::Mut };
             let kind = ParamKind::Receiver { ty: None, implicit: true };
-            params.insert(0, Param { id, mode, is_const: false, kind, default: None, span: name.span });
+            params.insert(0, Param { id, mode, is_const: false, view: false, kind, default: None, span: name.span });
         }
 
         // `[GRM-41]` — `from` before the result type is out of order (`E0118`): read on, in order.
@@ -1231,6 +1231,7 @@ impl Parser<'_> {
                 id,
                 mode,
                 is_const,
+                view: false,
                 kind: ParamKind::Receiver { ty, implicit: false },
                 default: None,
                 span: start.to(self.prev_span()),
@@ -1257,6 +1258,7 @@ impl Parser<'_> {
             id,
             mode,
             is_const,
+            view: reads,
             kind: ParamKind::Named { name, ty },
             default,
             span: start.to(self.prev_span()),

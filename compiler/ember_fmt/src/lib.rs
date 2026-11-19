@@ -819,6 +819,7 @@ impl Printer<'_> {
     fn param(&mut self, param: &ast::Param) -> String {
         let once = matches!(&param.kind, ast::ParamKind::Named { ty, .. } if matches!(ty.kind, ast::TypeKind::Fn { once: true, .. }));
         let mode = match param.mode {
+            ast::Mode::Borrow if param.view => "ref ",
             ast::Mode::Borrow => "",
             ast::Mode::Mut if param.is_const => "const ref mut ",
             ast::Mode::Mut => "ref mut ",
@@ -830,7 +831,7 @@ impl Printer<'_> {
             ast::ParamKind::Receiver { .. } => format!("{mode}self"),
             ast::ParamKind::Named { name, ty } => {
                 let runtime = if self.runtime_params.contains(&param.id) { "runtime " } else { "" };
-                format!("{mode}{}: {runtime}{}", self.name(*name), self.type_expr(ty))
+                format!("{mode}{}: {runtime}{}", self.name(*name), self.type_expr(written_type(param, ty)))
             }
         }
     }
@@ -1465,6 +1466,7 @@ impl Printer<'_> {
     /// A lambda's parameter: its type only where it was written (`[TYP-23]` infers the rest).
     fn lambda_param(&self, param: &ast::Param) -> String {
         let mode = match param.mode {
+            ast::Mode::Borrow if param.view => "ref ",
             ast::Mode::Borrow => "",
             ast::Mode::Mut if param.is_const => "const ref mut ",
             ast::Mode::Mut => "ref mut ",
@@ -1473,7 +1475,7 @@ impl Printer<'_> {
         match &param.kind {
             ast::ParamKind::Receiver { .. } => format!("{mode}self"),
             ast::ParamKind::Named { name, ty } if matches!(ty.kind, ast::TypeKind::Infer) => format!("{mode}{}", self.name(*name)),
-            ast::ParamKind::Named { name, ty } => format!("{mode}{}: {}", self.name(*name), self.type_expr(ty)),
+            ast::ParamKind::Named { name, ty } => format!("{mode}{}: {}", self.name(*name), self.type_expr(written_type(param, ty))),
         }
     }
 
@@ -1546,5 +1548,13 @@ fn import_rank(path: &str) -> u8 {
         1
     } else {
         2
+    }
+}
+
+/// `[FN-1]` — the type as written: `ref x: T` holds the view of `T` in the tree.
+fn written_type<'a>(param: &ast::Param, ty: &'a ast::TypeExpr) -> &'a ast::TypeExpr {
+    match &ty.kind {
+        ast::TypeKind::Ref { inner, .. } if param.view => inner,
+        _ => ty,
     }
 }

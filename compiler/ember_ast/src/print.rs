@@ -233,9 +233,11 @@ impl Printer {
                     // A method's object it does not list (`[FN-4]`).
                     ParamKind::Receiver { implicit: true, .. } => format!("{mode}this"),
                     ParamKind::Receiver { .. } => format!("{mode}self"),
-                    ParamKind::Named { name, ty } => {
-                        format!("{mode}{}: {}", name.name, type_str(ty))
-                    }
+                    // `ref x: T` holds the view of `T` in the tree; `T` is what was written.
+                    ParamKind::Named { name, ty } => match &ty.kind {
+                        TypeKind::Ref { inner, .. } if param.view => format!("{mode}{}: {}", name.name, type_str(inner)),
+                        _ => format!("{mode}{}: {}", name.name, type_str(ty)),
+                    },
                 }
             })
             .collect();

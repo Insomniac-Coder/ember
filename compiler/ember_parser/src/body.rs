@@ -2205,6 +2205,7 @@ impl Parser<'_> {
                 id,
                 mode,
                 is_const,
+                view: reads,
                 kind: ParamKind::Named { name, ty },
                 default: None,
                 span: start.to(self.prev_span()),
