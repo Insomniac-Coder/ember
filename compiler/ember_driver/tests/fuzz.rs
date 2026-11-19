@@ -519,8 +519,43 @@ enum Op {
 
 const ARRAYS: usize = 3;
 
-/// What the model says of `ops[at]`: `None` if it is allowed, else the codes its error has.
-fn verdict(ops: &[Op], at: usize) -> Option<&'static [&'static str]> {
+/// What the model says of `ops[at]`: `None` if it is allowed, else the operation its error is reported
+/// at and the codes it has.
+fn verdict(ops: &[Op], at: usize) -> Option<(usize, &'static [&'static str])> {
+    // `[BRW-17]`, `[OWN-3]` — a push or a hand-over while only read-only views of the array are live
+    // ends them: the error is `E3060`, at the first later use of one.
+    if let Op::Push { array } | Op::Move { array, .. } = ops[at] {
+        let shared_use = ops[at + 1..].iter().position(|later| {
+            matches!(*later, Op::Use { holder } if ops[..at].iter().any(|op| matches!(*op, Op::View { holder: h, array: a } if h == holder && a == array)))
+        });
+        let lent = ops[..at].iter().any(|op| {
+            matches!(*op, Op::Lend { holder, array: a } if a == array && ops[at + 1..].iter().any(|later| matches!(later, Op::Use { holder: h } if *h == holder)))
+        });
+        if let Some(offset) = shared_use
+            && !lent
+            && !moved_before(ops, at, array)
+        {
+            return Some((at + 1 + offset, &["E3060"]));
+        }
+    }
+    verdict_here(ops, at).map(|codes| (at, codes))
+}
+
+/// Whether `array` was moved before `at` and not given a value since.
+fn moved_before(ops: &[Op], at: usize, array: usize) -> bool {
+    let mut moved = false;
+    for op in &ops[..at] {
+        match *op {
+            Op::Move { array: a, .. } if a == array => moved = true,
+            Op::Assign { array: a } if a == array => moved = false,
+            _ => {}
+        }
+    }
+    moved
+}
+
+/// The codes of an error reported at `ops[at]` itself.
+fn verdict_here(ops: &[Op], at: usize) -> Option<&'static [&'static str]> {
     // Each holder's array, whether its loan is mutable, and whether it is used after `at`.
     let live = |array: usize, mutable_only: bool| {
         ops[..at].iter().any(|op| {
@@ -639,9 +674,9 @@ fn borrow_function(rng: &mut Rng, name: &str, reject: bool) -> (Vec<String>, Opt
             let mut candidate = ops.clone();
             candidate.insert(at, op);
             let others_fine = (0..candidate.len()).filter(|&i| i != at).all(|i| verdict(&candidate, i).is_none());
-            if let (Some(codes), true) = (verdict(&candidate, at), others_fine) {
+            if let (Some((reported, codes)), true) = (verdict(&candidate, at), others_fine) {
                 ops = candidate;
-                rejected = Some((at, codes));
+                rejected = Some((reported, codes));
                 break;
             }
         }
