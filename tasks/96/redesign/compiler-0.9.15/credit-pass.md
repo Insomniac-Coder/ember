@@ -23,4 +23,4 @@ not credited, with the clause that is missing and the milestone that builds it.
 | RC-2 | its item (b): opening a `weakref` still counts (`RC-2b`) | M5 |
 | RC-7 | `sharedref mut`, and the access words | M5, M6b |
 | WK-1 | `E3032` | M7 |
-| WK-3 | the object is ended before its `drop` runs, seen through a link opened in `drop` | M7 |
+| WK-3 | a link opened in `drop` already finds the object ended; what is missing is a `thread_shared` value ended at its making thread's next check point (`[RC-4]` points 4 and 5), which needs biased counting | M6b |

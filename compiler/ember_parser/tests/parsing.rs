@@ -146,7 +146,7 @@ fn the_formatter_leaves_out_what_a_scripts_question_mark_adds() {
 println(n)
 ";
     let mut map = SourceMap::new();
-    let file = map.add("script.em".to_string(), text.to_string());
+    let file = map.add("script".to_string(), text.to_string());
     let mut sink = Sink::new();
     let lexed = ember_lexer::lex(file, text, &mut sink);
     let module = ember_parser::parse(file, text, lexed.tokens, &mut sink);

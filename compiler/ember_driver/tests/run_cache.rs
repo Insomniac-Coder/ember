@@ -27,7 +27,7 @@ fn a_kept_run_is_given_only_for_the_same_program_and_input() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("run-cache");
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).expect("the folder is made");
-    let (file, kept) = (dir.join("kept.em"), dir.join("kept"));
+    let (file, kept) = (dir.join(ember_branding::source_file("kept")), dir.join("kept"));
     let source = |n: i32| format!("fn main():\n    println({n}, input())\n");
     std::fs::write(&file, source(1)).expect("the program is written");
     let fresh = |name: &str| dir.join(name);
