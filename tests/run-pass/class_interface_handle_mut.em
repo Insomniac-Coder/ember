@@ -2,7 +2,6 @@
 #$ rules: OBJ-2, DSP-3, EXC-1, IFC-1
 #$ profiles: debug, development, release
 #$ stdout: 42
-#$ assert-c: contains(ember_itable_lookup)
 #$ assert-c: contains(ember_object_begin_write)
 #$ assert-c: contains(ember_object_end_write)
 
@@ -20,5 +19,5 @@ class Counter implements Accumulator:
         return this.value
 
 fn main():
-    counter: Accumulator = Counter(41)
+    counter: owns dyn Accumulator = owns Counter(41)
     println(counter.bump())

@@ -729,7 +729,6 @@ fn check_round(
     // `K: Hash` needs `String`'s); it is offered each one again. One whose
     // hidden arguments those implementations answer is filled in then.
     checker.implementations_known = true;
-    checker.report_early_interface_types();
     checker.extend_early_instances();
     checker.complete_early_instances();
     checker.class_methods_recorded = true;
@@ -3556,10 +3555,8 @@ struct Checker<'a> {
     /// from a generic tuple extension over its elements' implementations) is named, and filled
     /// in once they can (`complete_early_instances`).
     implementations_known: bool,
-    /// `[DIA-21]` P22 — each interface named as a type before the implementations were known,
-    /// with where; and the interfaces reported as implemented by values only, whose uses then say
-    /// nothing more (`[DIA-14]`).
-    early_interface_types: Vec<(Symbol, Span, Span, bool)>,
+    /// `[DIA-21]` P22 — the interfaces named bare as a type (`E2173`), whose uses then say nothing more
+    /// (`[DIA-14]`); the field is `values_only_interfaces`.
     /// Inside a function's parameter types (`dyn I` is a view there, `[OBJ-2]`).
     in_param_type: u32,
     /// The written type being resolved, outermost first: where `Array[Shape]` begins, for a message that
@@ -4377,7 +4374,6 @@ impl<'a> Checker<'a> {
             struct_hidden: HashMap::new(),
             concrete_instances: HashMap::new(),
             implementations_known: false,
-            early_interface_types: Vec::new(),
             type_root: None,
             in_param_type: 0,
             values_only_interfaces: HashSet::new(),
@@ -14497,21 +14493,13 @@ impl<'a> Checker<'a> {
     /// latter is unsized and needs a fat pointer, while this form is a counted
     /// class owner whose vtable is found through TypeInfo under `[DSP-3]`.
     fn class_interface_type(&mut self, interface: Symbol, span: Span) -> Ty {
-        // `[DIA-21]` P22 (ODR-182) — an interface whose implementations are values, not classes;
-        // asked once they are known.
+        // `[OBJ-2]`, `[IFC-5]`, `[GRM-8b]` — a bare interface name in a type position does not say who owns the value:
+        // `E2173`, a parameter's type and an instantiation's argument included.
         let root = self.type_root.unwrap_or(span);
-        if !self.implementations_known {
-            self.early_interface_types.push((interface, span, root, self.in_param_type > 0));
-        } else if let Some(diagnostic) = self.interface_of_values(interface, span, root, self.in_param_type > 0) {
-            self.values_only_interfaces.insert(interface);
-            self.sink.emit(diagnostic);
-            return self.common.error;
-        }
-        if let Some(reason) = self.dyn_incompatibility(interface) {
-            self.sink.emit(Diagnostic::error(codes::E2050, span, self.dyn_refusal(interface, &reason)));
-            return self.common.error;
-        }
-        self.types.intern(TyKind::ClassInterface(interface))
+        let diagnostic = self.bare_interface_diagnostic(interface, span, root, self.in_param_type > 0);
+        self.values_only_interfaces.insert(interface);
+        self.sink.emit(diagnostic);
+        self.common.error
     }
 
     /// Turn a type/interface member into a signature. `self_ty` is `None`

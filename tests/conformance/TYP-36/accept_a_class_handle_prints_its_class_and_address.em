@@ -3,7 +3,6 @@
 #$ profiles: debug, development, release
 #$ stdout: <Token at <Token at
 #$ <Dog at
-#$ <Token at
 #$ [<Token at
 # `[TYP-36]` — a class handle has no `Display` but has `Debug`: its class and
 # address. Printing falls back to it (`[STD-9]`), and the class is the
@@ -34,6 +33,4 @@ fn main():
     println(f"{token}"[0..9], f"{token!r}"[0..9])
     pet: Animal = Dog()
     println(f"{pet}"[0..7])
-    named: Named = Token(id=2)
-    println(f"{named}"[0..9])
     println(f"{[token]}"[0..10])

@@ -5,6 +5,6 @@ error[E2173]: `Shape` is an interface, so `Shape` does not say who owns the shap
    |                ^^^^^
    |
    = help: `owns dyn Shape` holds the value alone in a block of its own (`owns v` makes one); with `shares dyn Shape` other names own it too, and each is made `shares`; `ref dyn Shape` is a view; or take a type parameter, `[T: needs Shape]`, and pass the value itself
-   = note: an interface's name as a type is a class handle typed by it [OBJ-2]; a value of a type implementing `Shape` has its own size, which `dyn Shape` keeps behind a pointer (ODR-182)
+   = note: an interface's name as a type does not say who owns its values [OBJ-2]; a value of a type implementing `Shape` has its own size, which `dyn Shape` keeps behind a pointer
 
 error: could not compile due to 1 error(s)

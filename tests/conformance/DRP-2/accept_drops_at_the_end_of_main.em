@@ -36,7 +36,7 @@ fn main():
     quiet: Array[Quiet] = []
     for i in 0..3:
         quiet.push(owns Quiet(i, []))
-    named: Array[Named] = []
+    named: Array[owns dyn Named] = []
     named.push(owns Loud(7))
     loud = Loud(2)
     println(f"{len(quiet)} {len(named)}")

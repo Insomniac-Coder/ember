@@ -3,7 +3,6 @@
 #$ profiles: debug, development, release
 #$ stdout: 42
 #$ assert-c: contains(em_vt_dyn_5Child_for_5Pixel)
-#$ assert-c-count: contains(ember_itable_lookup) == 1
 
 # A Child class handle exposes the parent-first Child table through its TypeInfo.
 interface Parent:
@@ -22,9 +21,9 @@ class Pixel implements Parent, Child:
     fn child() -> i32:
         return this.right
 
-fn total(value: Child) -> i32:
+fn total(value: dyn Child) -> i32:
     return value.parent() + value.child()
 
 fn main():
     pixel = Pixel(20, 22)
-    println(total(pixel))
+    println(total(ref pixel))

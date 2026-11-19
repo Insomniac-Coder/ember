@@ -2,7 +2,6 @@
 #$ rules: DSP-3, OBJ-2
 #$ profiles: debug, development, release
 #$ stdout: 42
-#$ assert-c-count: contains(ember_itable_lookup) == 1
 
 # `[DSP-3]` permits a per-handle hidden lookup cache: both calls below use the
 # unchanged one-word `Render` handle and therefore share its interface table.
@@ -15,9 +14,9 @@ class Pixel implements Render:
     fn render() -> i32:
         return this.value
 
-fn render_twice(value: Render) -> i32:
+fn render_twice(value: dyn Render) -> i32:
     return value.render() + value.render()
 
 fn main():
     pixel = Pixel(21)
-    println(render_twice(pixel))
+    println(render_twice(ref pixel))
