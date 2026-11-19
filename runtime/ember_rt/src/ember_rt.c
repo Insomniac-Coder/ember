@@ -91,6 +91,7 @@ static bool rl_tx_active(void);
 #endif
 #if defined(EMBER_RELOAD_INSTANCES)
 static void rl_tx_note_object(struct ember_obj_header* object);
+static void rl_tx_forget_object(struct ember_obj_header* object);
 #endif
 static EMBER_RT_THREAD_LOCAL uint32_t g_attached_generation;
 /* Identity is a TLS epoch, not an OS thread id that can be reused. It is
@@ -3142,6 +3143,7 @@ static void rl_live_insert(ember_obj_header* object) {
 }
 
 static void rl_live_remove(ember_obj_header* object) {
+    rl_tx_forget_object(object);
     rl_live_lock();
     if (object->live_prev != NULL) {
         object->live_prev->live_next = object->live_next;
@@ -11980,6 +11982,20 @@ static void rl_tx_note_object(ember_obj_header* object) {
         return;
     }
     g_rl_tx.objects[g_rl_tx.object_count++] = object;
+}
+
+/* [HR-37] An object `migrate_from` made and ended itself is gone: a failed reload must not take
+ * it off the live list a second time. */
+static void rl_tx_forget_object(ember_obj_header* object) {
+    if (!g_rl_tx.active) {
+        return;
+    }
+    for (size_t index = g_rl_tx.object_count; index-- > 0;) {
+        if (g_rl_tx.objects[index] == object) {
+            g_rl_tx.objects[index] = g_rl_tx.objects[--g_rl_tx.object_count];
+            return;
+        }
+    }
 }
 #endif
 
