@@ -476,6 +476,32 @@ pub fn text_mark(span: Span) -> String {
     format!("\u{1}={}:{}:{}\u{2}", span.file.0, span.start, span.end)
 }
 
+/// The code of the line `span` starts on, trimmed and without its comment: the line a message quotes
+/// (`[DIA-2]`: "`enemies[0].hp = 1` (line 24)"), for a message written where the source is not at hand.
+pub fn line_code_mark(span: Span) -> String {
+    format!("\u{1}#{}:{}\u{2}", span.file.0, span.start)
+}
+
+/// A line's code: up to a `#` that is outside every string and character literal.
+fn code_of(text: &str) -> &str {
+    let mut quote = None;
+    let mut escaped = false;
+    for (at, c) in text.char_indices() {
+        match (quote, c) {
+            (Some(_), '\\') if !escaped => {
+                escaped = true;
+                continue;
+            }
+            (Some(q), c) if c == q && !escaped => quote = None,
+            (None, '"' | '\'') => quote = Some(c),
+            (None, '#') => return &text[..at],
+            _ => {}
+        }
+        escaped = false;
+    }
+    text
+}
+
 fn has_line_marks(d: &Diagnostic) -> bool {
     let marked = |text: &str| text.contains('\u{1}');
     marked(&d.message)
@@ -514,6 +540,18 @@ fn expand_marks(text: &str, map: &SourceMap) -> String {
         out.push_str(&rest[..open]);
         let after = &rest[open + 1..];
         let Some(close) = after.find('\u{2}') else { break };
+        if let Some(at) = after[..close].strip_prefix('#') {
+            let code = at.split_once(':').and_then(|(file, start)| {
+                let file = map.get(FileId(file.parse().ok()?))?;
+                let start: u32 = start.parse().ok()?;
+                let line_start = file.text.get(..start as usize)?.rfind('\n').map_or(0, |at| at + 1);
+                let line_end = file.text.get(start as usize..)?.find('\n').map_or(file.text.len(), |at| start as usize + at);
+                Some(code_of(file.text.get(line_start..line_end)?).trim().to_string())
+            });
+            out.push_str(&code.unwrap_or_else(|| "?".to_string()));
+            rest = &after[close + 1..];
+            continue;
+        }
         if let Some(range) = after[..close].strip_prefix('=') {
             let mut parts = range.split(':').map(|part| part.parse::<u32>().ok());
             let text = match (parts.next().flatten(), parts.next().flatten(), parts.next().flatten()) {

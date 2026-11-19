@@ -14,6 +14,11 @@ to `tests/conformance/<RULE>/` when it is built.
   (E3021's row of the code table, `[ALC-5]`). 44 older tests moved from `E3021` at the change to `E3060` at the
   use; the ui case moved from B3 to B7. Calls of written functions that reshape wait for the summaries (M6a). The
   bank's 23 passing files are in `tests/conformance/`; BRW-2 credited.
+- **A2-4b, `E3021`'s text, done for a named view** (2026-11-19): "`enemies[0].hp = 1` (line 24) changes the enemy
+  `boss` reads (`boss = enemies[0]`, line 22), and `boss` is used on line 25; change it after `boss`'s last use, or
+  write `boss = ref mut enemies[0]` and change it through `boss`: `boss.hp = 1`" (`ember_diag::line_code_mark`
+  quotes a line's code). A view a call made (a temporary borrower) keeps the old text. Left: one mistake given two
+  `E3021`s (`xs[0] = 9` while `m = xs.as_mut_span()` is used: a read and a write of `xs`, `[DIA-26]`).
 - **A2-3 mostly done** (round 7's H4, `lanes/a.md`): part names are views, re-pointing, names that keep their place,
   `const ref mut`, BRW-13 credited. Left: the `Cell` refusal (BRW-15.1), a `ref mut dst: MutSpan` parameter by
   address (BRW-14.8), BRW-1's `E3021` text for a part name, a part of a `packed` struct.

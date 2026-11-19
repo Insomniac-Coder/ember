@@ -20,5 +20,5 @@ fn main():
     d = Derived()
     r = ref d
     v = r.view()
-    d = Derived()      #$ error[E3021]: `d` cannot be written while it is borrowed
+    d = Derived()      #$ error[E3021]: `d = Derived()` (line 23) changes the derived `r` reads (`r = ref d`, line 21)
     println(v)

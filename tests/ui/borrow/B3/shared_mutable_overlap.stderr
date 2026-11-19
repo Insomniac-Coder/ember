@@ -1,14 +1,13 @@
-error[E3021]: `value` cannot be written while it is borrowed
+error[E3021]: `value = 5` (line 4) changes the number `view` reads (`view: ref i32 = ref value`, line 3), and `view` is used on line 5; change it after `view`'s last use
  --> tests/ui/borrow/B3/shared_mutable_overlap.em:4:13
   |
 3 |     view: ref i32 = ref value
-  |                     --------- borrow of `value` starts here
+  |                     --------- `view` reads it from here
 4 |     value = 5
-  |             ^ conflicting access here
+  |             ^ this changes what the view reads
 5 |     println(view)
-  |             ---- used here
+  |             ---- `view` is used here
   |
-  = help: end the borrow before this: `view` is what keeps it alive, so shorten its last use or put it in a block of its own
-  = note: a borrow lasts until its last use, not to the end of the scope (BRW-2)
+  = help: move the change below `view`'s last use, where the borrow has ended
 
 error: could not compile due to 1 error(s)

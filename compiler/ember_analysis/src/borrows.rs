@@ -5118,6 +5118,49 @@ fn check_point(
                 }
                 continue;
             }
+            // `[BRW-1]` — a change of what a named read-only view reads while it is still used:
+            // `E3021` at the change, naming the change, the view's line and its next use, and the
+            // two ways out ("`enemies[0].hp = 1` (line 24) changes the enemy `boss` reads (`boss =
+            // enemies[0]`, line 22), and `boss` is used on line 25; ...").
+            if matches!(access, Access::Write)
+                && !loan.capability.is_mut()
+                && !loan.arena_scope
+                && let Some(later) = later
+                && let Some(view) = body.local(loan.borrower).name.clone()
+                && !loan_held_by_for_iterator(body, regions, loan, point)
+                && !crate::dyn_kinds::held_by_a_dyn_call(body, &form.sites, loan.borrower)
+            {
+                if !repeated {
+                    let noun = viewed_noun(types, place_ty(body, types, loan_place));
+                    let viewed = place_name(body, types, loan_place);
+                    let through = field_suffix(body, types, loan_place, place).filter(|_| !viewed.contains('…')).map(|suffix| {
+                        format!(
+                            ", or write `{view} = ref mut {viewed}` and change it through `{view}`: `{view}{suffix} = {}`",
+                            ember_diag::text_mark(span)
+                        )
+                    });
+                    sink.emit_classified(
+                        Diagnostic::error(
+                            codes::E3021,
+                            span,
+                            format!(
+                                "`{}` (line {}) changes the {noun} `{view}` reads (`{}`, line {}), and `{view}` is used on line {}; change it after `{view}`'s last use{}",
+                                ember_diag::line_code_mark(span),
+                                ember_diag::line_mark(span),
+                                ember_diag::line_code_mark(loan.span),
+                                ember_diag::line_mark(loan.span),
+                                ember_diag::line_mark(later),
+                                through.unwrap_or_default()
+                            ),
+                        )
+                        .primary_label("this changes what the view reads")
+                        .secondary(loan.span, format!("`{view}` reads it from here"))
+                        .secondary(later, format!("`{view}` is used here"))
+                        .help(format!("move the change below `{view}`'s last use, where the borrow has ended")),
+                    );
+                }
+                continue;
+            }
             // `[CTL-2]` survives `for` desugaring as an explicit semantic
             // fact on the synthesized iterator local. A mutable access to the
             // iterable while that local holds this loan is E3020/B2. A
@@ -5719,6 +5762,50 @@ fn reshapes_at(body: &Body, types: &TypeTable, point: Point, place: &Place, acce
         }
         _ => false,
     }
+}
+
+/// What a message calls a viewed value: "the enemy", "the list", "the number".
+fn viewed_noun(types: &TypeTable, ty: Ty) -> String {
+    match types.kind(ty) {
+        TyKind::Vec { text: true, .. } | TyKind::Str => "text".to_string(),
+        TyKind::Vec { .. } | TyKind::Array { .. } | TyKind::ArrayN { .. } => "list".to_string(),
+        TyKind::Struct(_) | TyKind::Enum(_) | TyKind::Class(_) => {
+            let shown = types.display(ty);
+            let name = shown.split('[').next().unwrap_or(&shown).rsplit('.').next().unwrap_or(&shown);
+            let mut out = String::new();
+            for (at, c) in name.char_indices() {
+                if c.is_uppercase() && at > 0 {
+                    out.push(' ');
+                }
+                out.extend(c.to_lowercase());
+            }
+            out
+        }
+        _ if types.is_numeric(ty) => "number".to_string(),
+        _ => "value".to_string(),
+    }
+}
+
+/// The fields `place` goes on to past `base` (`.hp` for `enemies[0].hp` past `enemies[0]`), when it
+/// goes on only through named fields: what a change through a view's own name writes after it.
+fn field_suffix(body: &Body, types: &TypeTable, base: &Place, place: &Place) -> Option<String> {
+    if place.local != base.local || !place.projection.starts_with(&base.projection) {
+        return None;
+    }
+    let mut ty = place_ty(body, types, base);
+    let mut out = String::new();
+    for projection in &place.projection[base.projection.len()..] {
+        let Projection::Field(index) = projection else { return None };
+        let field = match types.kind(ty) {
+            TyKind::Struct(id) => types.struct_def(*id).fields.get(*index)?.clone(),
+            TyKind::Class(id) => types.class_def(*id).fields.get(*index)?.clone(),
+            _ => return None,
+        };
+        out.push('.');
+        out.push_str(field.name.as_str());
+        ty = field.ty;
+    }
+    (!out.is_empty()).then_some(out)
 }
 
 fn place_ty(body: &Body, types: &TypeTable, place: &Place) -> Ty {

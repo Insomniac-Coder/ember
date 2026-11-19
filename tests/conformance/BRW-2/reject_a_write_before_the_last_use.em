@@ -6,5 +6,5 @@
 fn main():
     x: i32 = 1
     r: ref i32 = ref x
-    x = 5                  #$ error[E3021]: `x` cannot be written while it is borrowed
+    x = 5                  #$ error[E3021]: `x = 5` (line 9) changes the number `r` reads (`r: ref i32 = ref x`, line 8)
     println(r)
