@@ -10650,7 +10650,9 @@ impl<'a> Checker<'a> {
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         };
         let Some((_, variant)) = self.types.enum_def(opaque_id).variant(name.name) else {
-            self.error(codes::E1010, name.span, format!("`{shown}` has no variant `{}`", name.name));
+            let diagnostic = Diagnostic::error(codes::E1010, name.span, format!("`{shown}` has no variant `{}`", name.name));
+            let names: Vec<(String, String)> = self.variant_name_suggestions(opaque_id, name.name, name.span).into_iter().map(|variant| (variant.clone(), variant)).collect();
+            self.sink.emit(name_suggestions::nearest_help(diagnostic, &names, name.span));
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         };
         let fields: Vec<Ty> = variant.fields.iter().map(|field| field.ty).collect();
@@ -27797,7 +27799,14 @@ impl<'a> Checker<'a> {
     /// ranking handles same-file proximity and cross-file canonical identity.
     /// Names like `written` that are in scope; for a value (`values`), not
     /// an interface, which is never one.
-    fn name_suggestions(&self, written: Symbol, use_span: Span, values: bool) -> Vec<String> {
+    /// Whether the source text goes on with a `.` right after `span` (`Color` in `Color.Red`).
+    fn followed_by_dot(&self, span: Span) -> bool {
+        self.sources.get(&span.file).and_then(|source| source.text.get(span.end as usize..)).is_some_and(|rest| rest.starts_with('.'))
+    }
+
+    /// `before_dot`: the name is written where a type may stand as the start of a path
+    /// (`Color` in `Color.Red`, or a call that builds one); a type is no value anywhere else.
+    fn name_suggestions(&self, written: Symbol, use_span: Span, values: bool, before_dot: bool) -> Vec<String> {
         let mut seen = HashSet::new();
         let local_candidates = self
             .scopes
@@ -27823,13 +27832,14 @@ impl<'a> Checker<'a> {
                     if values && self.interfaces.contains_key(qualified) {
                         return None;
                     }
-                    // `[DIA-24]` — where a type is expected, only types.
+                    // `[DIA-24]` — where a type is expected, only types; where a value is, a type only
+                    // before a `.`.
                     let is_type = self.named_types.contains_key(qualified)
                         || self.generic_structs.contains_key(qualified)
                         || self.generic_enums.contains_key(qualified)
                         || self.generic_classes.contains_key(qualified)
                         || self.interfaces.contains_key(qualified);
-                    if !values && !is_type {
+                    if (!values && !is_type) || (values && !before_dot && is_type) {
                         return None;
                     }
                     let declaration = self.item_spans.get(qualified)?;
@@ -28412,7 +28422,7 @@ impl<'a> Checker<'a> {
         written: Symbol,
         use_span: Span,
     ) -> Diagnostic {
-        let names: Vec<(String, String)> = self.name_suggestions(written, use_span, false).into_iter().map(|name| (name.clone(), name)).collect();
+        let names: Vec<(String, String)> = self.name_suggestions(written, use_span, false, false).into_iter().map(|name| (name.clone(), name)).collect();
         diagnostic = name_suggestions::nearest_help(diagnostic, &names, use_span);
         self.add_import_suggestions(diagnostic, written, false)
     }
@@ -28533,6 +28543,17 @@ impl<'a> Checker<'a> {
                 declaration,
                 canonical_name: format!("{}.{method}", self.types.display(owner)),
             })
+        });
+        name_suggestions::rank(written.as_str(), use_span, candidates)
+    }
+
+    /// `[DIA-24]` — the nearest variants of an enum to a name it has no variant for (`Color.Rd`).
+    fn variant_name_suggestions(&self, id: EnumId, written: Symbol, use_span: Span) -> Vec<String> {
+        let definition = self.types.enum_def(id);
+        let candidates = definition.variants.iter().map(|variant| name_suggestions::Candidate {
+            name: variant.name.as_str().to_owned(),
+            declaration: variant.span,
+            canonical_name: format!("{}.{}", definition.name, variant.name),
         });
         name_suggestions::rank(written.as_str(), use_span, candidates)
     }
@@ -40428,7 +40449,7 @@ impl<'a> Checker<'a> {
                         .help(format!("`{name}` is a local of the script's implicit `main`, which no function reads: take it as a parameter, make it a `const` if it never changes, a `static`, or a `static mut` for a module variable that functions change"))
                         .note("the statements at file scope form the body of an implicit `fn main()`, so the names they bind are its locals, not module variables [FN-8], [STA-1]");
                 }
-                let names: Vec<(String, String)> = self.name_suggestions(name, segments[0].span, true).into_iter().map(|name| (name.clone(), name)).collect();
+                let names: Vec<(String, String)> = self.name_suggestions(name, segments[0].span, true, segments.len() > 1 || self.followed_by_dot(segments[0].span)).into_iter().map(|name| (name.clone(), name)).collect();
                 diagnostic = name_suggestions::nearest_help(diagnostic, &names, segments[0].span);
                 let diagnostic = self.add_import_suggestions(diagnostic, name, true);
                 self.sink.emit(diagnostic);
@@ -42493,7 +42514,7 @@ impl<'a> Checker<'a> {
                 format!("cannot find `{name}` in this scope"),
             );
             if segments.len() == 1 {
-                let names: Vec<(String, String)> = self.name_suggestions(name, name_span, true).into_iter().map(|name| (name.clone(), name)).collect();
+                let names: Vec<(String, String)> = self.name_suggestions(name, name_span, true, true).into_iter().map(|name| (name.clone(), name)).collect();
                 diagnostic = name_suggestions::nearest_help(diagnostic, &names, name_span);
                 diagnostic = self.add_import_suggestions(diagnostic, name, true);
             } else {
@@ -49384,11 +49405,10 @@ impl<'a> Checker<'a> {
         let ty = self.types.intern(TyKind::Enum(id));
         let Some((index, variant)) = self.types.enum_def(id).variant(name.name) else {
             let enum_name = self.types.enum_def(id).name;
-            self.error(
-                codes::E1010,
-                name.span,
-                format!("`{enum_name}` has no variant `{}`", name.name),
-            );
+            let diagnostic = Diagnostic::error(codes::E1010, name.span, format!("`{enum_name}` has no variant `{}`", name.name));
+            let nearest = self.variant_name_suggestions(id, name.name, name.span);
+            let names: Vec<(String, String)> = nearest.into_iter().map(|variant| (variant.clone(), variant)).collect();
+            self.sink.emit(name_suggestions::nearest_help(diagnostic, &names, name.span));
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         };
         let field_names: Vec<Symbol> = variant.fields.iter().map(|f| f.name).collect();
