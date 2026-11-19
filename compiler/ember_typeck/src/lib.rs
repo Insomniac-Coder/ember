@@ -3129,6 +3129,9 @@ struct Checker<'a> {
     /// (`Result[U, String]`), and what an `Ok(…)`/`Err(…)`/`Some(…)` that is its whole body takes of it.
     lambda_result_hint: Option<Ty>,
     wrapper_hint: Option<Ty>,
+    /// `[TYP-23]` — the expected result of the lambda whose body is this conditional: each branch that is
+    /// `Ok(…)`, `Err(…)` or `Some(…)` takes its known parts, and the branches meet at what they fix together.
+    ternary_hint: Option<Ty>,
     /// D-546 — each lambda's last value checked without an error, by its
     /// span (`synth_lambda`).
     lambda_values: HashMap<Span, Expr>,
@@ -4299,6 +4302,7 @@ impl<'a> Checker<'a> {
             lambda_depth: 0,
             lambda_result_hint: None,
             wrapper_hint: None,
+            ternary_hint: None,
             lambda_values: HashMap::new(),
             skipped_instances: 0,
             opaque_lambdas: HashSet::new(),
@@ -18862,7 +18866,8 @@ impl<'a> Checker<'a> {
             && let Some((_, hinted)) = self.builtin_generic_origin(hint)
         {
             let value = self.synth_committed(&args[0].value);
-            let known = |checker: &Self, at: usize| hinted.get(at).copied().filter(|&ty| !checker.types.is_generic(ty)).unwrap_or(checker.common.void);
+            let open = self.open_part();
+            let known = |checker: &Self, at: usize| hinted.get(at).copied().filter(|&ty| !checker.types.is_generic(ty)).unwrap_or(open);
             let ty = match which {
                 0 => self.option_of(value.ty),
                 1 => self.result_of(value.ty, known(self, 1)),
@@ -31700,6 +31705,7 @@ impl<'a> Checker<'a> {
     ) -> Expr {
         let bool_ty = self.common.bool_;
         let never = self.common.never;
+        let result_hint = self.ternary_hint.take();
         // `[GRM-16]` — a jump may be the whole of a branch
         // (`v = x if ok else return 7`): that arm is the jump, as a `match`
         // arm's is, and the other gives the value.
@@ -31759,8 +31765,15 @@ impl<'a> Checker<'a> {
                 (then_v, else_v)
             }
             None => {
-                let mut then_v = self.synth(then_expr);
-                let mut else_v = self.synth(else_expr);
+                let (mut then_v, mut else_v) = match result_hint {
+                    // `[TYP-23]` — each branch takes the expected result's known parts, and one that leaves a part open
+                    // (`Ok(v)` has no error type of its own) takes it from the other.
+                    Some(hint) => {
+                        let (then_v, else_v) = (self.synth_result_position(then_expr, hint), self.synth_result_position(else_expr, hint));
+                        self.meet_branches(then_v, else_v)
+                    }
+                    None => (self.synth(then_expr), self.synth(else_expr)),
+                };
                 let then_lit = self.types.is_untyped_literal(then_v.ty);
                 let else_lit = self.types.is_untyped_literal(else_v.ty);
                 if then_lit && else_lit && (self.types.is_float(then_v.ty) || self.types.is_float(else_v.ty)) {
@@ -43336,7 +43349,8 @@ impl<'a> Checker<'a> {
         // `[TYP-18]` — a parameter no argument mentions must be written out.
         let mut substitution = Vec::new();
         for (index, param) in generics.iter().enumerate() {
-            match solved[index] {
+            // `[TYP-23]` — a part neither the expected result nor the body fixed is still open.
+            match solved[index].filter(|&ty| !self.mentions_open_part(ty)) {
                 Some(ty) => substitution.push(ty),
                 None => {
                     self.error(
@@ -43816,7 +43830,8 @@ impl<'a> Checker<'a> {
         }
         let mut substitution = Vec::new();
         for (index, param) in generics.iter().enumerate() {
-            match solved[index] {
+            // `[TYP-23]` — a part neither the expected result nor the body fixed is still open.
+            match solved[index].filter(|&ty| !self.mentions_open_part(ty)) {
                 Some(ty) => substitution.push(ty),
                 None => {
                     self.error(
@@ -53507,6 +53522,86 @@ impl<'a> Checker<'a> {
         symbol.strip_prefix(ember_branding::mangle_prefix().as_str()).map(str::to_string).unwrap_or(symbol)
     }
 
+    /// `[TYP-23]` — a type no part of a program wrote and nothing has yet fixed: the part of an `Ok(…)`, `Err(…)` or
+    /// `Some(…)` that its value does not give and the expected result does not know. A conditional's other branch may
+    /// fix it; one still open at the end of a lambda's result is `E2060`.
+    fn open_part(&mut self) -> Ty {
+        self.types.intern(TyKind::Param { index: u32::MAX, name: Symbol::intern("_") })
+    }
+
+    fn is_open_part(&self, ty: Ty) -> bool {
+        matches!(self.types.kind(ty), TyKind::Param { index: u32::MAX, .. })
+    }
+
+
+    /// `[TYP-23]` — what two branches' types fix together: equal parts stay, an open part takes the other's.
+    fn meet_open(&mut self, a: Ty, b: Ty) -> Option<Ty> {
+        if a == b || self.is_open_part(b) {
+            return Some(a);
+        }
+        if self.is_open_part(a) {
+            return Some(b);
+        }
+        let ((origin, x), (other, y)) = (self.builtin_generic_origin(a)?, self.builtin_generic_origin(b)?);
+        if origin != other || x.len() != y.len() {
+            return None;
+        }
+        match (origin.as_str(), x.as_slice(), y.as_slice()) {
+            ("Option", [x], [y]) => {
+                let inner = self.meet_open(*x, *y)?;
+                Some(self.option_of(inner))
+            }
+            ("Result", [xo, xe], [yo, ye]) => {
+                let ok = self.meet_open(*xo, *yo)?;
+                let err = self.meet_open(*xe, *ye)?;
+                Some(self.result_of(ok, err))
+            }
+            _ => None,
+        }
+    }
+
+    /// `[TYP-23]` — a branch that is `Ok(…)`, `Err(…)` or `Some(…)`, made again at the type its sibling's parts fix.
+    fn retype_wrapper(&self, expr: Expr, ty: Ty) -> Expr {
+        if expr.ty == ty {
+            return expr;
+        }
+        match (expr.kind, self.types.kind(ty)) {
+            (ExprKind::EnumLit { variant, fields, .. }, &TyKind::Enum(enum_id)) => Expr { ty, kind: ExprKind::EnumLit { enum_id, variant, fields }, span: expr.span },
+            (kind, _) => Expr { kind, ..expr },
+        }
+    }
+
+    fn meet_branches(&mut self, then_v: Expr, else_v: Expr) -> (Expr, Expr) {
+        match self.meet_open(then_v.ty, else_v.ty) {
+            Some(joined) => (self.retype_wrapper(then_v, joined), self.retype_wrapper(else_v, joined)),
+            None => (then_v, else_v),
+        }
+    }
+
+    /// `[TYP-23]` — an expression in the result position of a lambda given an expected result with open parts
+    /// (`Result[U, E]`): an `Ok(…)`, `Err(…)` or `Some(…)` takes the known parts of it, and a conditional's branches
+    /// are each in the result position.
+    fn synth_result_position(&mut self, expr: &ast::Expr, hint: Ty) -> Expr {
+        match &expr.kind {
+            ast::ExprKind::Call { callee, .. }
+                if matches!(&callee.kind, ast::ExprKind::Path { segments } if segments.len() == 1 && matches!(segments[0].name.as_str(), "Ok" | "Err" | "Some")) =>
+            {
+                self.wrapper_hint = Some(hint);
+            }
+            ast::ExprKind::Ternary { .. } => self.ternary_hint = Some(hint),
+            _ => {}
+        }
+        let value = self.synth(expr);
+        self.wrapper_hint = None;
+        self.ternary_hint = None;
+        value
+    }
+
+    /// Whether an `Option` or `Result` still has an open part (`open_part`).
+    fn mentions_open_part(&self, ty: Ty) -> bool {
+        self.is_open_part(ty) || self.builtin_generic_origin(ty).is_some_and(|(origin, args)| matches!(origin.as_str(), "Option" | "Result") && args.iter().any(|&arg| self.mentions_open_part(arg)))
+    }
+
     fn synth_lambda_fresh(&mut self, lambda: &ast::Lambda, expected: Option<Ty>, span: Span, reserved: Option<DefId>) -> Expr {
         // `[TYP-23]` — an expected result that is an `Option` or a `Result` with open parts is no
         // type to force on the body, but its known parts reach an `Ok(…)` that is the body.
@@ -54072,16 +54167,17 @@ impl<'a> Checker<'a> {
                     // `fn(ref String) -> ref String`, as it is with the result type written. Read
                     // through, the `String` was moved out of the borrowed parameter (`E3013`).
                     None => {
-                        if let Some(hint) = hint
-                            && let ast::ExprKind::Call { callee, .. } = &expr.kind
-                            && let ast::ExprKind::Path { segments } = &callee.kind
-                            && let [only] = segments.as_slice()
-                            && matches!(only.name.as_str(), "Ok" | "Err" | "Some")
-                        {
-                            self.wrapper_hint = Some(hint);
-                        }
-                        let value = self.synth_committed(expr);
+                        let value = match hint {
+                            Some(hint) => {
+                                let value = self.synth_result_position(expr, hint);
+                                let value = self.commit(value);
+                                self.warn_if_literal_loses_precision(expr, value.ty);
+                                value
+                            }
+                            None => self.synth_committed(expr),
+                        };
                         self.wrapper_hint = None;
+                        self.ternary_hint = None;
                         match value.kind {
                             ExprKind::Deref(reference)
                                 if matches!(self.types.kind(reference.ty), TyKind::Ref { .. })
