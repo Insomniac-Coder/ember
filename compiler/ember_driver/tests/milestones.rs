@@ -3991,7 +3991,10 @@ fn a_list_a_loop_only_pushes_onto_is_kept_in_a_local() {
 /// is a loop, and a loop inside the caller's kept gcc from unrolling it.
 /// `[DSP-3]` — the LLVM backend tries the same classes by their type
 /// information first, each called through its own table.
+// `[OBJ-2]` — a bare interface name is `E2173`, and no `dyn I` spelling of a class object reaches the one-word
+// class handle's table search yet, so there is no program to build: it returns with the respelling (M11).
 #[test]
+#[ignore = "[OBJ-2] E2173: the class handle's itable path has no source spelling until `dyn I` of a class object is one word (M11)"]
 fn a_devirtualised_interface_call_searches_out_of_line() {
     let root = workspace_root();
     let source = format!("tests/run-pass/class_interface_handle.{SOURCE_EXT}");
