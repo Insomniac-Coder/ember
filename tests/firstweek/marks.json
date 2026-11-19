@@ -10,12 +10,12 @@
     "helps": ["R1:P24", "R2:P25", "R2:P21", "R2:P6", "R2:P3", "R3:P26"]
   },
   "03_scene_graph.em": {
-    "mark": "rejected", "shape": "none:E1010", "codes": ["E1010", "E2020"], "after_helps": "accepted",
+    "mark": "rejected", "shape": "none:E1010", "codes": ["E1010", "E2020", "E3013"], "after_helps": "accepted",
     "shapes": ["P23"],
     "helps": ["R1:P23", "R2:O2"]
   },
   "04_event_bus.em": {
-    "mark": "rejected", "shape": "B3", "codes": ["E0100", "E3021"], "after_helps": "accepted",
+    "mark": "rejected", "shape": "B3", "codes": ["E0100", "E3021", "E3040"], "after_helps": "accepted",
     "shapes": ["P28", "B3"],
     "helps": ["R1:P28", "R2:B3"]
   },
@@ -80,7 +80,7 @@
     "helps": ["R1:P22", "R2:P6", "R2:O2"]
   },
   "17_linked_list.em": {
-    "mark": "rejected", "shape": "P1", "codes": ["E1010", "E2072"], "after_helps": "accepted",
+    "mark": "rejected", "shape": "P1", "codes": ["E1010", "E2072", "E3013", "E3021", "E3040"], "after_helps": "accepted",
     "shapes": ["P1", "P3", "P6"],
     "helps": ["R1:P1", "R1:P3", "R1:P6"]
   },
@@ -125,7 +125,7 @@
     "helps": ["R1:P6", "R1:P1", "R2:N1"]
   },
   "26_game_entities.em": {
-    "mark": "rejected", "shape": "P1", "codes": ["E1010", "E3023"], "after_helps": "accepted",
+    "mark": "rejected", "shape": "P1", "codes": ["E1010", "E3013", "E3023"], "after_helps": "accepted",
     "shapes": ["P1", "B4"],
     "helps": ["R1:P1", "R1:B4"]
   },
@@ -145,7 +145,7 @@
     "helps": ["R1:P25", "R1:P3", "R1:P5", "R2:P26", "R3:O2", "R3:O1"]
   },
   "30_binary_search_tree.em": {
-    "mark": "rejected", "shape": "P1", "codes": ["E0008", "E1010", "E2020", "E2072", "E3013"], "after_helps": "accepted",
+    "mark": "rejected", "shape": "P1", "codes": ["E0008", "E1010", "E2020", "E2072", "E3013", "E3023", "E3040"], "after_helps": "accepted",
     "shapes": ["P24"],
     "helps": ["R1:P24", "R2:P1", "R2:P26", "R2:P6", "R3:O2"]
   }

@@ -1938,6 +1938,8 @@ impl TypeTable {
             // `[TYP-45]` (M4 slice C) — a class handle is the object's address, not `Copy`: a parameter
             // that reads the object takes that address, with no count and no second indirection.
             TyKind::Class(_) | TyKind::ClassInterface(_) => false,
+            // An owner of an object is that object's address too (`[RC-2a]`).
+            TyKind::Link { target, .. } if matches!(self.kind(*target), TyKind::Class(_)) => false,
             // A view (a `@view` struct, a tuple holding one) is already a
             // borrow and passes as itself, keeping each field's own region.
             _ if self.is_view(ty) => false,

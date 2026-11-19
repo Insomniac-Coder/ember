@@ -6,7 +6,7 @@
 # Two declared strong field edges form a visible ownership cycle. The warning is
 # diagnostic-only: no runtime graph needs to be allocated for this declaration.
 class Parent:
-    child: shares mut Child
+    child: Child
 
 class Child:
     parent: shares mut Parent

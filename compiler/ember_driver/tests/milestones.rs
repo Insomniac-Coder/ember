@@ -4628,7 +4628,7 @@ fn cycle_explanation_covers_standalone_generic_dynamic_and_stale_roots() {
         field.stderr
     );
     assert!(
-        field.stdout.contains("Holder[Child]"),
+        field.stdout.contains("Holder[shares mut Child]"),
         "field explanation did not show the instantiated generic owner:\n{}",
         field.stdout
     );
@@ -7665,8 +7665,8 @@ class Member:
     fn give_on():
         this.give()
 
-    fn copy_of_me() -> Member:
-        return this
+    fn copy_of_me() -> ref Member:
+        return ref this
 
     fn bump():
         this.id += 1
@@ -7713,8 +7713,8 @@ fn main():
     m.give()
     m.give_on()
     other = m.copy_of_me()
-    m.bump()
     println(other.id)
+    m.bump()
 ").unwrap();
     let mir = ember(&["build", &source.to_string_lossy(), "--emit", "mir"], &dir);
     assert_eq!(mir.exit, 0, "MIR failed:\n{}", mir.stderr);

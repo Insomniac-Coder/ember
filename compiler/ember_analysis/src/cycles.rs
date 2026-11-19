@@ -202,11 +202,7 @@ fn direct_weak_replacement(types: &TypeTable, field_owner: ClassId, ty: Ty) -> O
     if types.class_def(field_owner).origin.is_some() {
         return None;
     }
-    let held = match *types.kind(ty) {
-        TyKind::Link { kind, target } if !kind.is_weak() => target,
-        _ => ty,
-    };
-    let TyKind::Class(target) = types.kind(held) else {
+    let TyKind::Class(target) = types.kind(ty) else {
         return None;
     };
     Some(format!("weakref {}", class_name(types, *target)))
