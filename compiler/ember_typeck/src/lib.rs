@@ -737,6 +737,10 @@ fn check_round(
     checker.resolve_derived_clones();
     checker.clones_resolved = true;
     checker.validate_class_methods(modules);
+    checker.validated_classes = true;
+    for (id, name, span) in std::mem::take(&mut checker.deferred_override_lines) {
+        checker.check_override_line(id, name, span);
+    }
     checker.assign_class_virtual_slots();
     let class_ids: Vec<ClassId> = checker.types.classes().map(|(id, _)| id).collect();
     for id in class_ids {
@@ -3575,6 +3579,11 @@ struct Checker<'a> {
     /// `[CLS-4]` — an early generic class instance's `override`s: the instance, the method's
     /// name, its source and span.
     deferred_override_checks: Vec<(ClassId, Symbol, (usize, usize, usize), Span)>,
+    /// `[CLS-4]` — the `override`s of instances made before every class's methods were recorded, whose first line is
+    /// compared with what they replace (`E2113`) once they are; and the ones already compared.
+    deferred_override_lines: Vec<(ClassId, Symbol, Span)>,
+    override_lines_checked: HashSet<(ClassId, Symbol)>,
+    validated_classes: bool,
     /// `[CELL-1]` — every `Cell[T]` built so far, and the `T` it holds. A cell
     /// is an ordinary `StructId` everywhere else in the compiler, so this is
     /// what tells method dispatch that `set` on it is a builtin rather than a
@@ -4377,6 +4386,9 @@ impl<'a> Checker<'a> {
             early_instances: Vec::new(),
             ecs_systems: HashMap::new(),
             deferred_override_checks: Vec::new(),
+            deferred_override_lines: Vec::new(),
+            override_lines_checked: HashSet::new(),
+            validated_classes: false,
             cells: HashMap::new(),
             boxes: HashMap::new(),
             assumed_cloneable: HashSet::new(),
@@ -7086,6 +7098,8 @@ impl<'a> Checker<'a> {
                                 method.name.span,
                                 "override of a method that is not virtual",
                             );
+                        } else {
+                            self.check_override_line(id, method.name.name, method.name.span);
                         }
                         continue;
                     }
@@ -7161,6 +7175,91 @@ impl<'a> Checker<'a> {
             }
         }
         self.current_module = saved_module;
+    }
+
+    /// `[CLS-4]` — an `override` has the first line of the method it replaces after its name: the same
+    /// parameter names, words and types (a generic base's parameters standing for the arguments the derived
+    /// class gives them: the base's instance's signature has them), the same words on `this` and the same
+    /// result (`E2113`).
+    fn check_override_line(&mut self, id: ClassId, name: Symbol, span: Span) {
+        if !self.override_lines_checked.insert((id, name)) || self.placeholder_bases.contains(&id) {
+            return;
+        }
+        let Some(&(_, derived, _)) = self.class_declared_methods.get(&id).and_then(|methods| methods.iter().find(|m| m.0 == name)) else { return };
+        let mut current = self.types.class_def(id).base;
+        let mut found = None;
+        for _ in 0..=self.types.classes().count() {
+            let Some(base) = current else { break };
+            if self.placeholder_bases.contains(&base) {
+                return;
+            }
+            if let Some(&(_, def, _)) = self.class_declared_methods.get(&base).and_then(|methods| methods.iter().find(|m| m.0 == name)) {
+                found = Some((base, def));
+                break;
+            }
+            current = self.types.class_def(base).base;
+        }
+        let Some((base, replaced)) = found else { return };
+        let (mine, theirs) = (self.signatures[derived.0 as usize].clone(), self.signatures[replaced.0 as usize].clone());
+        let word = |mode: Mode| match mode {
+            Mode::Mut => "ref mut ",
+            Mode::Owned => "owns ",
+            Mode::Borrow => "",
+        };
+        let this_words = |signature: &Signature| if signature.implicit_object { None } else { signature.params.first().map(|p| p.2) };
+        let (mine_this, theirs_this) = (this_words(&mine), this_words(&theirs));
+        let (own_params, base_params) = (&mine.params[mine.params.len().min(1)..], &theirs.params[theirs.params.len().min(1)..]);
+        let void = self.common.void;
+        let (owner, replaced_owner) = {
+            let (a, b) = (self.types.intern(TyKind::Class(id)), self.types.intern(TyKind::Class(base)));
+            (self.types.display(a), self.types.display(b))
+        };
+        let (here, there) = (format!("{owner}.{name}"), format!("the `{replaced_owner}.{name}` it overrides"));
+        let params: Vec<String> = base_params.iter().map(|&(n, ty, mode, _)| format!("{}{n}: {}", word(mode), self.types.display(ty))).collect();
+        let object = if theirs_this == Some(Mode::Owned) { " owns this" } else { "" };
+        let result = if theirs.ret == void { String::new() } else { format!(" -> {}", self.types.display(theirs.ret)) };
+        let line = format!("override fn {name}({}){object}{result}:", params.join(", "));
+        let mut kind_help = String::new();
+        let difference = if mine_this != theirs_this {
+            let this = |mode: Option<Mode>| match mode {
+                Some(Mode::Owned) => "`owns this`",
+                Some(Mode::Mut) => "`ref mut this`",
+                Some(Mode::Borrow) => "`this`",
+                None => "no word on `this`",
+            };
+            format!("`{here}` takes {}, and {there} takes {}", this(mine_this), this(theirs_this))
+        } else if own_params.len() != base_params.len() {
+            format!("`{here}` takes {} parameter{}, and {there} takes {}", own_params.len(), if own_params.len() == 1 { "" } else { "s" }, base_params.len())
+        } else if let Some(at) = (0..own_params.len()).find(|&i| own_params[i].0 != base_params[i].0 || own_params[i].2 != base_params[i].2 || own_params[i].1 != base_params[i].1) {
+            let (m, b) = (own_params[at], base_params[at]);
+            if m.0 != b.0 && m.2 == b.2 && m.1 == b.1 {
+                format!("`{here}` names its parameter `{}`, and {there} names it `{}`", m.0, b.0)
+            } else {
+                if m.1 != b.1 && self.is_class_derived_from(m.1, b.1) {
+                    let kind = self.types.display(m.1);
+                    kind_help = format!(" and test the kind inside: `if {} is {kind} as k:`", b.0);
+                }
+                format!("`{here}` takes `{}{}: {}`, and {there} takes `{}{}: {}`", word(m.2), m.0, self.types.display(m.1), word(b.2), b.0, self.types.display(b.1))
+            }
+        } else if mine.ret != theirs.ret {
+            format!("`{here}` returns `{}`, and {there} returns `{}`", self.types.display(mine.ret), self.types.display(theirs.ret))
+        } else {
+            return;
+        };
+        self.error(codes::E2113, span, format!("{difference}; write `{line}`{kind_help}"));
+    }
+
+    /// Whether `derived` is a class that has `base` among its base classes.
+    fn is_class_derived_from(&self, derived: Ty, base: Ty) -> bool {
+        let (TyKind::Class(mut current), TyKind::Class(wanted)) = (self.types.kind(derived).clone(), self.types.kind(base).clone()) else { return false };
+        for _ in 0..=self.types.classes().count() {
+            if current == wanted {
+                return true;
+            }
+            let Some(next) = self.types.class_def(current).base else { return false };
+            current = next;
+        }
+        false
     }
 
     /// Preserve class-method declaration order for `[DSP-2]`.  The ordinary
@@ -20694,6 +20793,7 @@ impl<'a> Checker<'a> {
             );
             matching_extensions.push((index, extension, bindings));
         }
+        let mut method_spans: Vec<(Symbol, ast::Dispatch, Span)> = Vec::new();
         let mut inherited_layouts = HashMap::new();
         let inherited_virtuals = base
             .map(|base| self.class_virtual_layout(base, &mut inherited_layouts))
@@ -20721,12 +20821,25 @@ impl<'a> Checker<'a> {
                 self.extension_method_origin.insert(def, (name, index, owner_bindings.clone()));
             }
             if method.receiver.is_some() && method.dispatch != ast::Dispatch::Static {
+                method_spans.push((method.name, method.dispatch, method.span));
                 declared_methods.push((method.name, def, method.dispatch));
             }
         }
+        let overrides: Vec<(Symbol, Span)> = method_spans
+            .into_iter()
+            .filter(|(_, dispatch, _)| *dispatch == ast::Dispatch::Override)
+            .map(|(name, _, span)| (name, span))
+            .collect();
         self.class_declared_methods.insert(id, declared_methods);
         let mut layouts = HashMap::new();
         let _ = self.class_virtual_layout(id, &mut layouts);
+        for (name, span) in overrides {
+            if self.validated_classes {
+                self.check_override_line(id, name, span);
+            } else {
+                self.deferred_override_lines.push((id, name, span));
+            }
+        }
         if !args.iter().any(|&arg| self.types.is_generic(arg)) {
             self.validate_concrete_class_abstract_methods(id, span);
         }
