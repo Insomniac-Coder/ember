@@ -8,15 +8,14 @@
 #$ assert-c: contains("_Counter_release(")
 #$ assert-c: contains("_Counter_bump(")
 #$ assert-c: contains("_Shape_sides(")
-# `[BLD-FFI-5a]`, `[FFI-31b]` (ODR-162) — an `@export` function may give C and C++ an object of a
-# `@sync` class, and take one: its handle crosses with a count of the object (atomic, as a `@sync`
-# class's are). The library gives C a handle's count and its end, and each `pub` method, which the
+# `[BLD-FFI-5a]`, `[FFI-31b]` (ODR-162) — an `@export` function may give C and C++ a `thread_shared`
+# value of a class, and take one: it crosses with a count of the object (atomic, as a `thread_shared`
+# value's are). The library gives C a handle's count and its end, and each `pub` method, which the
 # `--cpp` header makes a class of the same name; here the program calls its exports itself. A
 # virtual method is called through the object's method table, so C++ reaches an override.
 
 from std.sync import Atomic, MemoryOrder
 
-@sync
 pub class Counter:
     hits: Atomic[i32] = Atomic(0)
 
@@ -28,39 +27,37 @@ pub class Counter:
 
 # SAFETY: nothing else in the process defines this name
 @unsafe(export("make_counter"))
-pub fn make_counter() -> Counter:
-    return Counter()
+pub fn make_counter() -> thread_shared Counter:
+    return thread_shared Counter()
 
 # SAFETY: nothing else in the process defines this name
 @unsafe(export("bump_twice"))
-pub fn bump_twice(counter: Counter) -> i32:
+pub fn bump_twice(counter: thread_shared Counter) -> i32:
     counter.bump()
     return counter.bump()
 
-@sync
 pub open class Shape:
     pub virtual fn sides() -> i32:
         return 0
 
-@sync
 pub class Square(Shape):
     pub override fn sides() -> i32:
         return 4
 
 # SAFETY: nothing else in the process defines this name
 @unsafe(export("make_square"))
-pub fn make_square() -> Shape:
-    return Square()
+pub fn make_square() -> thread_shared Shape:
+    return thread_shared Square()
 
 # SAFETY: nothing else in the process defines this name
 @unsafe(export("make_shape"))
-pub fn make_shape() -> Shape:
-    return Shape()
+pub fn make_shape() -> thread_shared Shape:
+    return thread_shared Shape()
 
 fn main():
     counter = make_counter()
     println(bump_twice(counter), counter.total())
-    shared = counter
+    shared = thread_shared counter
     shared.bump()
     println(counter.total())
     println(make_square().sides(), make_shape().sides())

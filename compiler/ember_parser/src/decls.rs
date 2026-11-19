@@ -2050,30 +2050,33 @@ impl Parser<'_> {
             let inner = self.parse_type_nested(suffix);
             return TypeExpr { id, kind: TypeKind::Owns(Box::new(inner)), span: start.to(self.prev_span()) };
         }
-        // `[TYP-45]`, `[LEX-14]` — the other words before a type that say who owns the value
-        // (`weakref Node`, `shares mut Game`): never a name, and not built by this compiler yet (M4);
-        // the type after it is read as written.
+        // `[TYP-45]`, `[LEX-14]` — the other words before a type that say who owns the value, or
+        // link it (`weakref Node`, `shares mut Game`): never a name. `sharedref` is always `sharedref
+        // mut`; alone it is `E0114`.
         if self.at_kw(Kw::Weakref) && let Some(stacked) = self.weakref_stacked_word() {
             return self.refuse_stacked_weakref(start, stacked, suffix);
         }
         if let TokenKind::Keyword(word @ (Kw::Shares | Kw::ThreadShared | Kw::Weakref | Kw::Sharedref)) = self.peek().clone() {
             let at = self.span();
-            let alone = word == Kw::Sharedref && !self.at_kw_at(1, Kw::Mut);
             self.bump();
-            if matches!(word, Kw::Shares | Kw::Sharedref) {
-                self.eat_kw(Kw::Mut);
-            }
-            if alone {
-                // `[GRM-43]` — `sharedref` is always followed by `mut`, before a value and in a type alike.
-                self.report(
-                    Diagnostic::error(codes::E0114, at, "`sharedref` is always followed by `mut`: a link that only reads may be held by any number of names")
-                        .help("write `target: ref Player`; `sharedref` is for a link that may change its target: `target: sharedref mut Player`"),
-                );
-                return self.parse_type_nested(suffix);
-            }
-            let written = self.src.get(at.start as usize..self.prev_span().end as usize).unwrap_or("owns").to_string();
-            self.report(Diagnostic::error(codes::E0900, at.to(self.prev_span()), format!("`{written}` before a type is not built by this compiler yet")));
-            return self.parse_type_nested(suffix);
+            let changes = matches!(word, Kw::Shares | Kw::Sharedref) && self.eat_kw(Kw::Mut);
+            let kind = match (word, changes) {
+                (Kw::Shares, false) => ember_ast::LinkKind::Shares,
+                (Kw::Shares, true) => ember_ast::LinkKind::SharesMut,
+                (Kw::ThreadShared, _) => ember_ast::LinkKind::ThreadShared,
+                (Kw::Weakref, _) => ember_ast::LinkKind::Weakref,
+                (_, true) => ember_ast::LinkKind::SharedrefMut,
+                _ => {
+                    // `[GRM-43]` — `sharedref` is always followed by `mut`.
+                    self.report(
+                        Diagnostic::error(codes::E0114, at, "`sharedref` is always followed by `mut`: a link that only reads may be held by any number of names")
+                            .help("write `target: ref Player`; `sharedref` is for a link that may change its target: `target: sharedref mut Player`"),
+                    );
+                    return self.parse_type_nested(suffix);
+                }
+            };
+            let inner = self.parse_type_nested(suffix);
+            return TypeExpr { id, kind: TypeKind::Link { kind, inner: Box::new(inner) }, span: start.to(self.prev_span()) };
         }
 
         let kind = match self.peek() {

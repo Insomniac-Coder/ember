@@ -23,7 +23,7 @@ fn main():
     println(bytes, len(bytes), bytes[0])
     head = bytes[0..2]
     println(head, head.len())
-    println([bytes.clone()], total(bytes))
+    println([copy of bytes], total(bytes))
     bytes.sort()
     println(bytes, bytes.contains(33))
     line: String = ""
@@ -31,4 +31,4 @@ fn main():
         line = f"{line} {b}" if line != "" else f"{b}"
     println(line)
     s: String = "hi!"
-    println(s, s[0..2], [s.clone()], len(s.as_bytes()))
+    println(s, s[0..2], [copy of s], len(s.as_bytes()))

@@ -86,7 +86,7 @@ fn main():
     println(passed)
 
     texts = [String.from("ccc"), String.from("a"), String.from("bb")]
-    texts.sort_by_key(owns fn(s) => s.clone())
+    texts.sort_by_key(owns fn(s) => copy of s)
     println(texts.join(" "))
 
     ranks = [1, 2]

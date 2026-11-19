@@ -6,8 +6,8 @@ enum Edit:
 
 fn inverse(e: Edit) -> Edit:
     return match e:
-        Insert(pos, text) => Edit.Delete(pos, text.clone())
-        Delete(pos, text) => Edit.Insert(pos, text.clone())
+        Insert(pos, text) => Edit.Delete(pos, copy of text)
+        Delete(pos, text) => Edit.Insert(pos, copy of text)
 
 class Editor:
     text: String = ""

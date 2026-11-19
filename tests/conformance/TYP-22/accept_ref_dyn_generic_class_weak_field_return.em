@@ -7,32 +7,31 @@
 #$ assert-c: contains("ember_weak_release(")
 #$ assert-c: contains("ember_weak_upgrade(")
 
-# A ref dyn Observe call returns an independent Weak[Shared[T]] copy from a
+# A ref dyn Observe call returns an independent weakref T copy from a
 # generic class field. The erased carrier borrows the class handle, while the
 # returned weak observer remains valid after the ref dyn call ends.
 interface Observe:
-    fn observer() -> Weak[Shared[Token]]
+    fn observer() -> weakref Token
 
 struct Token:
     value: i32
 
 [T]
 class Observer implements Observe:
-    weak: Weak[Shared[Token]]
+    weak: weakref Token
     marker: T
 
-    fn observer() -> Weak[Shared[Token]]:
-        return this.weak
+    fn observer() -> weakref Token:
+        return weakref this.weak
 
-fn inspect(ref value: dyn Observe) -> Weak[Shared[Token]]:
+fn inspect(ref value: dyn Observe) -> weakref Token:
     return value.observer()
 
 fn main():
-    strong = Shared(Token(7))
-    observer = Observer[bool](Weak(strong), true)
+    strong = shares mut Token(7)
+    observer = Observer[bool](weakref strong, true)
     weak = inspect(ref observer)
-    match weak.upgrade():
-        Some(owner):
-            println(owner.get().value)
-        None:
-            println(0)
+    if weak exists as owner:
+        println(owner.value)
+    else:
+        println(0)

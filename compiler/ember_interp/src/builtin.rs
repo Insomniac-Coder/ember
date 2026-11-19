@@ -608,17 +608,23 @@ impl Interp<'_, '_> {
                 let TyKind::Struct(id) = *self.types.kind(*shared) else { return fault("a Shared that is no struct") };
                 self.new_shared(id, *elem, &value)?.to_le_bytes().to_vec()
             }
-            Builtin::WeakNew { .. } => {
+            // `[WK-11]` — a link that holds no target is a null pointer.
+            Builtin::LinkNone { link } => vec![0; self.size(*link) as usize],
+            // `[RC-1]`, `[WK-11]` (M4 slice A).
+            Builtin::LinkMake { kind, .. } => {
                 let object = self.pointer(&args[0])?;
-                self.weak_retain(object)?;
+                match kind {
+                    ember_types::LinkKind::Weakref | ember_types::LinkKind::WeakrefThreadShared => self.weak_retain(object)?,
+                    _ => self.retain_object(object)?,
+                }
                 object.to_le_bytes().to_vec()
             }
-            Builtin::WeakUpgrade { .. } => {
-                let weak = self.operand(&args[0], None)?;
-                let weak = if self.is_ref(self.operand_ty(body, &args[0])) { self.mem.read(u64_of(&weak), 8)?.to_vec() } else { weak };
-                self.weak_upgrade(u64_of(&weak))?.to_le_bytes().to_vec()
+            // `[RC-1]` — the one owner taken over: the same pointer, no count.
+            Builtin::LinkAdopt { .. } => self.pointer(&args[0])?.to_le_bytes().to_vec(),
+            Builtin::LinkOpen { .. } => {
+                let object = self.pointer(&args[0])?;
+                self.weak_upgrade(object)?.to_le_bytes().to_vec()
             }
-            Builtin::WeakEmpty { weak } => vec![0; self.size(*weak) as usize],
             Builtin::MemReplace { elem } => {
                 let target = self.pointer(&args[0])?;
                 let value = self.operand(&args[1], Some(*elem))?;
@@ -983,10 +989,6 @@ impl Interp<'_, '_> {
         }
     }
 
-    fn is_ref(&self, ty: Option<Ty>) -> bool {
-        ty.is_some_and(|ty| matches!(self.types.kind(ty), TyKind::Ref { .. } | TyKind::Ptr { .. }))
-    }
-
     pub(crate) fn is_text_ty(&self, ty: Ty) -> bool {
         matches!(self.types.kind(ty), TyKind::Str | TyKind::Vec { text: true, .. })
     }
@@ -1034,13 +1036,8 @@ impl Interp<'_, '_> {
 
     /// The payload a `Box`, a `Cell` or a `some` wrapper prints as, repeatedly.
     fn unwrap_printed(&self, mut at: u64, mut ty: Ty) -> R<(u64, Ty)> {
-        while let Some(inner) = self.types.printed_as(ty) {
-            let TyKind::Struct(id) = *self.types.kind(ty) else { break };
-            at = match self.types.compiler_box_inner(id) {
-                Some(_) => self.mem.read_u64(at)?,
-                None => at + self.layout(ty).field_offsets.first().copied().unwrap_or(0),
-            };
-            ty = inner;
+        while let Some((payload, inner)) = self.printed_payload(at, ty)? {
+            (at, ty) = (payload, inner);
         }
         Ok((at, ty))
     }

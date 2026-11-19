@@ -213,6 +213,12 @@ pub struct Body {
     /// that gives such a call a copy where the value is used again.
     #[serde(default)]
     pub handed_at: Vec<(LocalId, Span)>,
+    /// `[OWN-3]`, `[CLI-20]` (M4 slice C) — each `let` or `=` that hands over a class object a local
+    /// holds (`m = n`): the local and the source's own span. Before 0.9.15 the line made a second
+    /// owner of the object; where the local is used again, the migration writes `m = shares mut n`
+    /// there, which keeps what the program did.
+    #[serde(default)]
+    pub stored_at: Vec<(LocalId, Span)>,
 }
 
 /// `[SIMD-2]`, `[SIMD-5]` — what a body's loop attributes ask of the loop
@@ -479,6 +485,7 @@ pub fn unaligned_field(types: &ember_types::TypeTable, body: &Body, place: &Plac
                 }
                 field.map_or(ty, |field| field.ty)
             }
+            (Projection::Field(0), TyKind::Link { .. }) => types.link_field(ty).unwrap_or(ty),
             (Projection::Field(i), TyKind::Struct(id)) => {
                 let field = types.struct_def(*id).fields.get(*i);
                 if packed.is_none() && types.layout_attrs(ty).packed {

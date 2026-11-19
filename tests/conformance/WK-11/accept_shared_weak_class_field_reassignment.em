@@ -6,21 +6,20 @@
 #$ assert-c: contains("ember_weak_release(")
 #$ assert-c: contains("ember_weak_upgrade(")
 
-# A class field may replace an empty Weak[Shared[T]] value with an observer of
-# a live Shared allocation. The field owns only a weak count; payload access
-# after upgrade still crosses the explicit Shared.get() boundary.
+# A class field may replace an empty weakref T value with an observer of
+# a live `shares` allocation. The field owns only a weak count; payload access
+# after upgrade still crosses the explicit the owner read as its value boundary.
 struct Token:
     value: i32
 
 class Holder:
-    weak: Weak[Shared[Token]] = Weak[Shared[Token]].empty()
+    weak: weakref Token = None
 
 fn main():
-    strong = Shared(Token(42))
+    strong = shares mut Token(42)
     holder = Holder()
-    holder.weak = Weak(strong)
-    match holder.weak.upgrade():
-        Some(owner):
-            println(owner.get().value)
-        None:
-            println(0)
+    holder.weak = weakref strong
+    if holder.weak exists as owner:
+        println(owner.value)
+    else:
+        println(0)

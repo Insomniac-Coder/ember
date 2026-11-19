@@ -12,7 +12,7 @@ struct Enemy:
         this.hp += 1
 
 fn enemy_at(es: Array[Enemy], i: int) -> Enemy:
-    return es[i].clone()
+    return copy of es[i]
 
 fn main():
     es = [Enemy(hp=1)]

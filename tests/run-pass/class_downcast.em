@@ -21,7 +21,7 @@ class Other(Base):
 
 fn main():
     child = Child(7)
-    base: Base = child
+    base: ref Base = ref child
     hit: Option[Child] = cast base if Child
     match hit:
         Some(value):

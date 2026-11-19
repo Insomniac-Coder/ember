@@ -14,9 +14,9 @@ class Token:
 
 fn main():
     token = Token(id=1)
-    xs = [token, token]
+    xs = [shares token, shares token]
     ys = [Token(id=2)]
     println(xs[1].id, ys[0].id, len(xs))
-    _shared = Shared(token)
+    _shared = shares mut token
     println(xs[0] is token)
     println(token.id)

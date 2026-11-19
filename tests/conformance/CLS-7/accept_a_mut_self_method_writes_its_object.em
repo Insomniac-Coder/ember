@@ -23,6 +23,6 @@ fn replace(ref mut c: Counter):
 fn main():
     c = Counter(5)
     c.reset()
-    kept = c
+    kept = shares mut c
     replace(ref mut c)
     println(kept.value, kept.log, c.value)

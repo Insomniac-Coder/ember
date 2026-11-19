@@ -16,5 +16,5 @@ class Counter:
 
 fn main():
     c = Counter(3)
-    copies = [c, c]
+    copies = [shares c, shares c]
     println(copies[0].n + copies[1].n)

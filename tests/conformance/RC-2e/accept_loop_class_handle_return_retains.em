@@ -10,12 +10,12 @@
 class Token:
     value: i32
 
-fn first(owns tokens: Array[Token]) -> Token:
+fn first(owns tokens: Array[shares Token]) -> shares Token:
     for token in tokens:
-        return token
-    return Token(0)
+        return shares token
+    return shares Token(0)
 
 fn main():
-    tokens: Array[Token] = Array[Token]()
-    tokens.push(owns Token(7))
+    tokens: Array[shares Token] = Array[shares Token]()
+    tokens.push(owns shares Token(7))
     println(first(owns tokens).value)

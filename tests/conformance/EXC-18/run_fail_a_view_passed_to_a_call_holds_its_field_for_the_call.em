@@ -21,5 +21,5 @@ fn show(v: Span[int], other: Bag):
 
 fn main():
     b = Bag()
-    c = b
+    c = shares mut b
     show(b.items.as_span(), c)

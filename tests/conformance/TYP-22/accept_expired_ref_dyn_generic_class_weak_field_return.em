@@ -11,31 +11,30 @@
 # extending either the class or payload lifetime. Once the helper exits, the
 # returned observer can only take the expired upgrade path.
 interface Observe:
-    fn observer() -> Weak[Shared[Token]]
+    fn observer() -> weakref Token
 
 struct Token:
     value: i32
 
 [T]
 class Observer implements Observe:
-    weak: Weak[Shared[Token]]
+    weak: weakref Token
     marker: T
 
-    fn observer() -> Weak[Shared[Token]]:
-        return this.weak
+    fn observer() -> weakref Token:
+        return weakref this.weak
 
-fn inspect(ref value: dyn Observe) -> Weak[Shared[Token]]:
+fn inspect(ref value: dyn Observe) -> weakref Token:
     return value.observer()
 
-fn expired() -> Weak[Shared[Token]]:
-    strong = Shared(Token(7))
-    observer = Observer[bool](Weak(strong), true)
+fn expired() -> weakref Token:
+    strong = shares mut Token(7)
+    observer = Observer[bool](weakref strong, true)
     return inspect(ref observer)
 
 fn main():
     weak = expired()
-    match weak.upgrade():
-        Some(owner):
-            println(owner.get().value)
-        None:
-            println(7)
+    if weak exists as owner:
+        println(owner.value)
+    else:
+        println(7)

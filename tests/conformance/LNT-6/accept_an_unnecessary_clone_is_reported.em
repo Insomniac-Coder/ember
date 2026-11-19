@@ -9,12 +9,12 @@ fn take(owns s: String) -> int:
     return s.len()
 
 fn measure(s: String) -> int:
-    copy = s.clone()
+    copy = copy of s
     return take(owns copy)
 
 fn main():
     first = String.from("hello")
-    second = first.clone()  #$ warning[L2001]: `first` is cloned, then never used again
+    second = copy of first  #$ warning[L2001]: `first` is cloned, then never used again
     kept = String.from("abc")
-    other = kept.clone()
+    other = copy of kept
     println(take(owns second), measure(other), kept.len())

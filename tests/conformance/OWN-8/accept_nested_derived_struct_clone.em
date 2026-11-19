@@ -16,6 +16,6 @@ struct Leaf:
 
 fn main():
     original = Pair(Leaf(42))
-    copied = original.clone()
+    copied = copy of original
     println(original.leaf.value)
     println(copied.leaf.value)

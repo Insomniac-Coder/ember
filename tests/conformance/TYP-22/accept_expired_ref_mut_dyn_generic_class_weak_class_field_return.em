@@ -8,37 +8,36 @@
 #$ assert-c: contains("ember_weak_release(")
 #$ assert-c: contains("ember_weak_upgrade(")
 
-# A mutable borrowed dynamic call may return Weak[Token] after updating its
+# A mutable borrowed dynamic call may return weakref Token after updating its
 # generic class, yet neither operation may retain the final Token owner. After
 # the helper exits, the returned observer takes the expired upgrade path.
 interface Revise:
-    fn observer() -> Weak[Token]
+    fn observer() -> weakref Token
 
 class Token:
     value: i32
 
 [T]
 class Holder implements Revise:
-    weak: Weak[Token]
+    weak: weakref Token
     marker: T
     count: i32
 
-    fn observer() -> Weak[Token]:
+    fn observer() -> weakref Token:
         this.count = this.count + 1
-        return this.weak
+        return weakref this.weak
 
-fn inspect(ref mut value: dyn Revise) -> Weak[Token]:
+fn inspect(ref mut value: dyn Revise) -> weakref Token:
     return value.observer()
 
-fn expired() -> Weak[Token]:
+fn expired() -> weakref Token:
     strong = Token(7)
-    holder = Holder[bool](Weak(strong), true, 0)
+    holder = Holder[bool](weakref strong, true, 0)
     return inspect(ref mut holder)
 
 fn main():
     weak = expired()
-    match weak.upgrade():
-        Some(_):
-            println(0)
-        None:
-            println(7)
+    if weak exists as _:
+        println(0)
+    else:
+        println(7)

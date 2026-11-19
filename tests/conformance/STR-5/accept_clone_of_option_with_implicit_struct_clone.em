@@ -7,7 +7,7 @@ struct Leaf:
 
 fn main():
     x: Option[Leaf] = Some(Leaf("abc"))
-    y = x.clone()
+    y = copy of x
     xs: Array[Option[Leaf]] = [x]
-    ys = xs.clone()
+    ys = copy of xs
     println(y == xs[0], xs == ys)

@@ -5,17 +5,16 @@
 #$ assert-c-count: contains("ember_weak_retain(") == 1
 #$ stdout: 7
 
-# A live Weak[Shared[T]] upgrades to another strong owner of the same control
-# block. The payload remains behind Shared's explicit get() boundary.
+# A live weakref T upgrades to another strong owner of the same control
+# block. The payload remains behind `shares`'s explicit get() boundary.
 struct Token:
     value: i32
 
 fn main():
-    owner = Shared(Token(7))
-    weak: Weak[Shared[Token]] = Weak(owner)
-    match weak.upgrade():
-        Some(live):
-            value = live.get()
-            println(value.value)
-        None:
-            println(0)
+    owner = shares mut Token(7)
+    weak: weakref Token = weakref owner
+    if weak exists as live:
+        value = live
+        println(value.value)
+    else:
+        println(0)

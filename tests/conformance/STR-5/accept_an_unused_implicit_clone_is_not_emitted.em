@@ -16,6 +16,6 @@ struct Unused:
 
 fn main():
     a = Used(n=1, tags=["x"])
-    b = a.clone()
+    b = copy of a
     c = Unused(n=1, tags=["y"])
     println(b.n, c.n)

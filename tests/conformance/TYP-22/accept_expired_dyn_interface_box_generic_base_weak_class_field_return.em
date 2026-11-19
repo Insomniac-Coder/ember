@@ -8,41 +8,40 @@
 #$ assert-c: contains("ember_weak_upgrade(")
 #$ assert-c: !contains("ember_box_new_copy")
 
-# A Weak[Token] returned through a dynamic box from a generic base field stays
+# A weakref Token returned through a dynamic box from a generic base field stays
 # valid after both derived payload and final token owner leave the helper, but
 # it must upgrade to None rather than resurrecting the class owner.
 interface Observe:
-    fn observer() -> Weak[Token]
+    fn observer() -> weakref Token
 
 class Token:
     value: i32
 
 [T]
 open class Base:
-    weak: Weak[Token]
+    weak: weakref Token
     marker: T
 
-    fn init(weak: Weak[Token], marker: T):
-        this.weak = weak
+    fn init(weak: weakref Token, marker: T):
+        this.weak = weakref weak
         this.marker = marker
 
 [T]
 class Holder(Base[T]) implements Observe:
-    fn init(weak: Weak[Token], marker: T):
+    fn init(weak: weakref Token, marker: T):
         super.init(weak, marker)
 
-    fn observer() -> Weak[Token]:
-        return this.weak
+    fn observer() -> weakref Token:
+        return weakref this.weak
 
-fn expired() -> Weak[Token]:
+fn expired() -> weakref Token:
     strong = Token(7)
-    boxed: owns dyn Observe = owns Holder[bool](Weak(strong), true)
+    boxed: owns dyn Observe = owns Holder[bool](weakref strong, true)
     return boxed.observer()
 
 fn main():
     weak = expired()
-    match weak.upgrade():
-        Some(_):
-            println(0)
-        None:
-            println(7)
+    if weak exists as _:
+        println(0)
+    else:
+        println(7)

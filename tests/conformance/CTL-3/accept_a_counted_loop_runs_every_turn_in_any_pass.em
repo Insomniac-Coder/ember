@@ -33,7 +33,7 @@ fn main():
         tallies.push(owns Tally())
     # 21 turns: whole passes, then the rest.
     for i in 0..21:
-        t = tallies[i % 4]
+        t = ref mut tallies[i % 4]
         t.bump()
     println(tallies[0].count, tallies[1].count, tallies[2].count, tallies[3].count)
 

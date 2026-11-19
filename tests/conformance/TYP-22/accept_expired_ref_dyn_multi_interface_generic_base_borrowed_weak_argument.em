@@ -12,7 +12,7 @@
 # A borrowed weak argument through a ref dyn composed carrier takes None after
 # expiry even when the concrete class inherits its state from a generic base.
 interface Observe:
-    fn observe(weak: Weak[Shared[Token]]) -> i32
+    fn observe(weak: weakref Token) -> i32
 
 interface Bump:
     fn bump() -> i32
@@ -34,21 +34,20 @@ class Holder(Base[T]) implements Observe, Bump:
     fn init(marker: T):
         super.init(marker)
 
-    fn observe(weak: Weak[Shared[Token]]) -> i32:
-        match weak.upgrade():
-            Some(owner):
-                return owner.get().value
-            None:
-                return 0
+    fn observe(weak: weakref Token) -> i32:
+        if weak exists as owner:
+            return owner.value
+        else:
+            return 0
 
     fn bump() -> i32:
         return 1
 
-fn expired() -> Weak[Shared[Token]]:
-    strong = Shared(Token(7))
-    return Weak(strong)
+fn expired() -> weakref Token:
+    strong = shares mut Token(7)
+    return weakref strong
 
-fn inspect(ref value: dyn Observe + Bump, weak: Weak[Shared[Token]]) -> i32:
+fn inspect(ref value: dyn Observe + Bump, weak: weakref Token) -> i32:
     return value.observe(weak) + value.bump()
 
 # `program` holds the test, so its values die before `main`'s last

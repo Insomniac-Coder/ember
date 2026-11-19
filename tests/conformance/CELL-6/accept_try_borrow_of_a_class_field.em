@@ -16,7 +16,7 @@ class Holder:
 
 fn main():
     b = Holder()
-    c = b
+    c = shares mut b
     with g = b.cell.borrow_mut():
         g.push(owns 4)
         r = c.cell.try_borrow()

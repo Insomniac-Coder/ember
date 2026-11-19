@@ -1,5 +1,16 @@
 # Ember — handoff
 
+> **2026-11-19 — working, autonomous, one helper beside the lead (the owner: "resume the work autonomously and at most
+> you can use one more agent to help you out").** START HERE. The block below it, "PAUSED", is history.
+>
+> - **origin/main = `1ca19633`;** local `main` has W6 merged on top (overall 19%, phase 1 33). W7 (lane c, Sonnet, 28 tasks) is
+>   running on `lane-c`, brief in `R7-batch.md`.
+> - **M4 slice E is on branch `m4-slice-c-probe` (worktree `lead`):** `@sync` and `SyncShared` are gone, `thread_shared`
+>   and `weakref thread_shared` are built (E7014, E7015, E7017), owners act as their value (`[TYP-36]`). `M4-plan.md` says
+>   what is left. Next: the suite, the gate, the bench, merge to `main`.
+> - **The heat rule:** `tools/heat_guard.ps1` runs with all work. **The testing rule:** `docs/AUTOPILOT.md` §3, "Test what a
+>   change can affect, once".
+>
 > **2026-11-13 afternoon — PAUSED by the owner after round 7's merges ("yes merge everything and then pause, even
 > the workers that are running don't pause them abruptly", "let them finish their job").** START HERE. Resume only
 > when the owner says so.

@@ -9,7 +9,7 @@
 #$ assert-c: contains("ember_weak_release(")
 #$ assert-c: contains("ember_weak_upgrade(")
 
-# A base-typed generic virtual call replaces an inherited Weak[Token] field.
+# A base-typed generic virtual call replaces an inherited weakref Token field.
 # The derived override drops the prior empty observer, retains the replacement,
 # and upgrades only that replacement while its independent class owner lives.
 class Token:
@@ -17,37 +17,36 @@ class Token:
 
 [T]
 open class Base:
-    weak: Weak[Token]
+    weak: weakref Token
     marker: T
     count: i32
 
-    fn init(weak: Weak[Token], marker: T, count: i32):
-        this.weak = weak
+    fn init(weak: weakref Token, marker: T, count: i32):
+        this.weak = weakref weak
         this.marker = marker
         this.count = count
 
-    virtual fn replace(replacement: Weak[Token]) -> i32:
-        this.weak = replacement
+    virtual fn replace(replacement: weakref Token) -> i32:
+        this.weak = weakref replacement
         this.count = this.count + 1
         return this.count
 
 [T]
 class Derived(Base[T]):
-    fn init(weak: Weak[Token], marker: T, count: i32):
+    fn init(weak: weakref Token, marker: T, count: i32):
         super.init(weak, marker, count)
 
-    override fn replace(replacement: Weak[Token]) -> i32:
-        this.weak = replacement
+    override fn replace(replacement: weakref Token) -> i32:
+        this.weak = weakref replacement
         this.count = this.count + 1
-        match this.weak.upgrade():
-            Some(owner):
-                return owner.value + this.count
-            None:
-                return this.count
+        if this.weak exists as owner:
+            return owner.value + this.count
+        else:
+            return this.count
 
 fn main():
     strong = Token(7)
-    empty: Weak[Token] = Weak[Token].empty()
+    empty: weakref Token = None
     derived = Derived[bool](empty, true, 0)
     base: Base[bool] = derived
-    println(base.replace(Weak(strong)))
+    println(base.replace(weakref strong))

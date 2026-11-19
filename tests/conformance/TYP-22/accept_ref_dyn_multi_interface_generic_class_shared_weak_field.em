@@ -7,7 +7,7 @@
 #$ assert-c: contains("ember_weak_upgrade(")
 
 # Borrowing a generic class as ref dyn Read + Write uses both concrete adapter
-# slots without making an owner copy. Its Weak[Shared[T]] field remains owned
+# slots without making an owner copy. Its weakref T field remains owned
 # only by the class object throughout the borrowed dynamic call.
 # `[TYP-17]` — `write` returns an `i32` field, not the `T` one: a generic
 # class's method must hold for every `T` (D-248).
@@ -22,16 +22,15 @@ struct Token:
 
 [T]
 class Pair implements Read, Write:
-    weak: Weak[Shared[Token]]
+    weak: weakref Token
     marker: T
     score: i32
 
     fn read() -> i32:
-        match this.weak.upgrade():
-            Some(owner):
-                return owner.get().value
-            None:
-                return 0
+        if this.weak exists as owner:
+            return owner.value
+        else:
+            return 0
 
     fn write() -> i32:
         return this.score
@@ -40,6 +39,6 @@ fn total(ref value: dyn Read + Write) -> i32:
     return value.read() + value.write()
 
 fn main():
-    strong = Shared(Token(7))
-    pair = Pair[i32](Weak(strong), 0, 42)
+    strong = shares mut Token(7)
+    pair = Pair[i32](weakref strong, 0, 42)
     println(total(ref pair))

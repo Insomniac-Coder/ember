@@ -389,8 +389,16 @@ impl Interp<'_, '_> {
 
     /// `printed_as` (ODR-094): what a `Box[T]`, a `Cell[T]` or a `some` wrapper prints as, and
     /// where.
-    fn printed_payload(&self, addr: u64, ty: Ty) -> R<Option<(u64, Ty)>> {
+    pub(crate) fn printed_payload(&self, addr: u64, ty: Ty) -> R<Option<(u64, Ty)>> {
         let Some(inner) = self.types.printed_as(ty) else { return Ok(None) };
+        // `[TYP-36]` — an owner: of an object, the object's pointer; of a value, the value in its block.
+        if matches!(self.types.kind(ty), TyKind::Link { .. }) {
+            if self.types.link_payload(ty).is_none() {
+                return Ok(Some((addr, inner)));
+            }
+            let header = self.mem.read_u64(addr)?;
+            return Ok(Some((header + crate::object::payload_offset(self.layout(inner).align), inner)));
+        }
         let TyKind::Struct(id) = *self.types.kind(ty) else { return Ok(None) };
         Ok(Some(match self.types.compiler_box_inner(id) {
             Some(_) => (self.mem.read_u64(addr)?, inner),

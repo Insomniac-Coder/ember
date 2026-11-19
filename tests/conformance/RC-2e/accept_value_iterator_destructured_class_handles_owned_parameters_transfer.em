@@ -1,13 +1,13 @@
 #$ test: run-pass
 #$ rules: RC-1, CTL-1, FN-1, TYP-14
 #$ profiles: debug, development, release
-#$ assert-c-count: contains("ember_retain_plain((ember_obj_header*)") == 4
+#$ assert-c-count: contains("ember_retain_plain((ember_obj_header*)") == 0
 #$ assert-c-count: contains("ember_retain((ember_obj_header*)") == 0
 #$ stdout: 7
 #$ stdout: 8
 
 # A value-yielding iterator transfers its pair into the loop pattern. The
-# leaves become the arm's owned values rather than borrowed Array projections.
+# leaves become the arm's owned values and are handed on with no count.
 class Token:
     value: i32
 

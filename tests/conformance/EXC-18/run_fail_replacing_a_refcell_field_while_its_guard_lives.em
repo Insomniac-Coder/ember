@@ -18,7 +18,7 @@ class Holder:
 
 fn main():
     b = Holder()
-    c = b
+    c = shares mut b
     with g = b.cell.borrow():
         c.reset()    #$ warning[L3011]: live across this call
         println(g)

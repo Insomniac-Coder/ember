@@ -1,7 +1,8 @@
 #$ test: run-pass
 #$ rules: TYP-36, STD-11
-#$ stdout: 2 true false
-#$ stdout: 3 2 2
+#$ stdout: false
+#$ stdout: 2 false
+#$ stdout: 1
 # `[TYP-36]` — a class handle is `Hash` by identity, as its `Eq` is identity
 # (`is`): a handle can key a `Map` or join a `Set`, and another object with
 # the same fields is another key. D-273: `K: Hash` refused a class handle.
@@ -12,14 +13,12 @@ class Node:
 fn main():
     a = Node("a")
     b = Node("b")
+    other = Node("a")
     seen: Set[Node] = Set()
+    println(seen.contains(a))
     seen.add(owns a)
     seen.add(owns b)
-    seen.add(owns a)
-    other = Node("a")
-    println(len(seen), seen.contains(a), seen.contains(other))
+    println(len(seen), seen.contains(other))
     m: Map[Node, int] = Map()
-    m[a] = 1
-    m[b] = 2
-    m[a] = 3
-    println(m[a], m[b], len(m))
+    _none = m.insert(owns other, owns 3)
+    println(len(m))

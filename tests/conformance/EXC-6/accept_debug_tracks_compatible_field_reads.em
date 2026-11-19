@@ -11,7 +11,7 @@ class Bag:
 
 fn main():
     b = Bag()
-    alias = b
+    alias = shares mut b
     first = b.items.as_span()
     second = alias.items.as_span()
     println(first[0], second[1])

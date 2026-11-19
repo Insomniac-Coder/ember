@@ -35,7 +35,7 @@ fn main():
     units.remove(0)
     println(o, units.pop(), len(units))
     units.swap_remove(0)
-    copy = units.clone()
+    copy = copy of units
     units.extend(copy)
     units.sort()
     units.reverse()

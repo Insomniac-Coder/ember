@@ -18,7 +18,7 @@ fn share():
     unsafe:  # SAFETY(ffi): calls with values the bridge types own
         match cpp.shared_counter(1):
             Ok(first):
-                second = first.clone()
+                second = copy of first
                 drop(first)
                 println(cpp.destroyed(), cpp.owners(second))
             Err(error):

@@ -22,5 +22,5 @@ class Counter:
 
 fn main():
     counter = Counter(0, [])
-    alias = counter
+    alias = shares mut counter
     counter.run(ref mut alias)

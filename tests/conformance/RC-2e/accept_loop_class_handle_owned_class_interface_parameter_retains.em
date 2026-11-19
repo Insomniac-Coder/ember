@@ -14,17 +14,17 @@ class Token:
     value: i32
 
 interface Consume:
-    fn consume(owns token: Token) -> i32
+    fn consume(owns token: shares Token) -> i32
 
 class Worker implements Consume:
-    fn consume(owns token: Token) -> i32:
+    fn consume(owns token: shares Token) -> i32:
         return token.value
 
-fn dispatch(consumer: Consume, owns tokens: Array[Token]):
+fn dispatch(consumer: Consume, owns tokens: Array[shares Token]):
     for token in tokens:
-        println(consumer.consume(owns token))
+        println(consumer.consume(shares token))
 
 fn main():
-    tokens: Array[Token] = Array[Token]()
-    tokens.push(owns Token(7))
+    tokens: Array[shares Token] = Array[shares Token]()
+    tokens.push(owns shares Token(7))
     dispatch(Worker(), owns tokens)

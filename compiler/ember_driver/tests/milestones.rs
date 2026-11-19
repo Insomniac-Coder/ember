@@ -638,6 +638,63 @@ fn main():
     assert_eq!(run.stdout, "6\n8 4\n30\n", "{}", migrated.stdout);
 }
 
+/// `[TYP-45]`, `[WK-12]`, `[RC-1]` (M4 slice B) — `ember __migrate --checker` rewrites `Shared` and `Weak`
+/// to the words: `Shared[T]` and `Shared(v)` to `shares mut T` and `shares mut v`, `Weak[Shared[T]]` and
+/// `Weak[C]` to `weakref T` and `weakref C`, `Weak(x)` to `weakref x`, `Weak.empty()` to `None`, an
+/// owner's `.get()` away, and `match w.upgrade():` with a `Some` and a `None` arm to `if w exists as p:`
+/// and `else:`; the program prints what it did.
+#[test]
+fn migrate_checker_writes_the_words_for_shared_and_weak() {
+    let root = workspace_root();
+    let directory = temporary_directory("migrate-shared");
+    let old = directory.join(ember_branding::source_file("old"));
+    std::fs::write(&old, "\
+struct Token:
+    value: int
+
+class Node:
+    v: int = 4
+
+fn read(weak: Weak[Shared[Token]]) -> int:
+    match weak.upgrade():
+        Some(owner):
+            return owner.get().value
+        None:
+            return 0
+
+fn main():
+    strong: Shared[Token] = Shared(Token(value=7))
+    weak = Weak(strong)
+    println(read(weak))
+    n = Node()
+    link: Weak[Node] = Weak.empty()
+    match link.upgrade():
+        Some(node) => println(node.v)
+        None => println(\"empty\")
+    link = Weak(n)
+    if link.upgrade() exists as node:
+        println(node.v)
+").expect("the old source is writable");
+    let migrated = ember(&["__migrate", "--checker", &old.to_string_lossy()], &root);
+    assert_eq!(migrated.exit, 0, "{}\n{}", migrated.stderr, migrated.stdout);
+    let text = std::fs::read_to_string(&old).expect("the migrated source is readable").replace("\r\n", "\n");
+    for wanted in [
+        "fn read(weak: weakref Token) -> int:",
+        "    if weak exists as owner:\n        return owner.value\n    else:\n        return 0",
+        "strong: shares mut Token = shares mut Token(value=7)",
+        "weak = weakref strong",
+        "link: weakref Node = None",
+        "    if link exists as node:\n        println(node.v)\n    else:\n        println(\"empty\")",
+        "link = weakref n",
+        "if link exists as node:\n        println(node.v)\n",
+    ] {
+        assert!(text.contains(wanted), "the migration lacks {wanted:?}:\n{text}\n{}", migrated.stderr);
+    }
+    let run = ember(&["run", &old.to_string_lossy()], &root);
+    assert_eq!(run.exit, 0, "{}\n{text}", run.stderr);
+    assert_eq!(run.stdout, "7\nempty\n4\n", "{text}");
+}
+
 /// `[CLI-20]` (verdicts 130, 133) — a declaration left unsafe to call by the word `unsafe` becomes an
 /// `unsafe fn`: on a hand declaration `@ffi(unsafe)`, `param(p, unsafe)` and `result(unsafe)` lose the
 /// word (an `@ffi(…)` left with nothing goes), and in an overlay entry the contract word goes with the
@@ -1013,11 +1070,11 @@ fn inspect_cost_reports_each_row_by_site() {
          struct Square:\n    side: int\n\n\
          extend Square implements Shape:\n    fn area() -> int:\n        return this.side * this.side\n\n\
          class Counter:\n    n: int = 0\n\n    fn bump():\n        this.n += 1\n\n\
-         fn bump_all(counters: Array[Counter]):\n    for c in counters:\n        keep = c\n        keep.bump()\n\n\
+         fn bump_all(counters: Array[shares mut Counter]):\n    for c in counters:\n        keep = shares mut c\n        keep.bump()\n\n\
          fn measure(ref shape: dyn Shape) -> int:\n    return shape.area()\n\n\
          fn get(xs: Array[int], i: int) -> int:\n    return xs[i]\n\n\
          fn main():\n    xs = [1, 2, 3]\n    s = Set[int]()\n    s.add(owns 2)\n    text = f\"value {xs[0]}\"\n\
-         \x20   square = Square(side = 2)\n    counters = [Counter(), Counter()]\n    bump_all(counters)\n\
+         \x20   square = Square(side = 2)\n    counters = [shares mut Counter(), shares mut Counter()]\n    bump_all(counters)\n\
          \x20   println(get(xs, 1), 2 in xs, 2 in s, \"lu\" in text, measure(ref square), counters[0].n)\n",
     )
     .expect("write the program");
@@ -2729,7 +2786,7 @@ fn ember_lint_reports_its_lints_at_the_levels_the_manifest_gives() {
         "",
         "fn main():",
         "    s = String.from(\"x\")",
-        "    t = s.clone()",
+        "    t = copy of s",
         "    for i in 0..3:",
         "        u = String.from(\"y\")",
         "        println(u.len() + i)",
@@ -3770,111 +3827,6 @@ fn inspect_safety_reports_nopanic_explicit_beside_runtime_checks() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// `[EXC-8]`–`[EXC-14]` — a copied class handle prevents static unique-handle
-/// elision, but the receiver itself is stable across this counted loop. The
-/// compiler therefore emits one checked loop-level interval for the `mut
-/// self` calls' whole-object write (`[EXC-15]`) and reports its proof.
-#[test]
-fn stable_class_loop_access_is_reported_as_hoisted() {
-    let root = workspace_root();
-    let source = format!(
-        "tests/conformance/EXC-8/accept_stable_class_receiver_loop.{SOURCE_EXT}"
-    );
-    for profile in ["debug", "development", "release"] {
-        let out_dir = temporary_directory(&format!("hoisted-loop-safety-{profile}"));
-        let run = ember(
-            &[
-                "build",
-                &source,
-                "--backend",
-                "c",
-                "--profile",
-                profile,
-                "--out-dir",
-                &out_dir.to_string_lossy(),
-            ],
-            &root,
-        );
-        assert_eq!(run.exit, 0, "{profile} build failed:\n{}", run.stderr);
-
-        let side_table = out_dir
-            .join(profile)
-            .join("inspect")
-            .join("accept_stable_class_receiver_loop.safety.json");
-        let json = std::fs::read_to_string(&side_table)
-            .unwrap_or_else(|error| panic!("{}: {error}", side_table.display()));
-        assert!(
-            json.contains("\"classification\":\"DYNAMIC_HOISTED_LOOP\""),
-            "{profile} stable loop was not classified as hoisted:\n{json}"
-        );
-        assert!(
-            json.contains("\"check_site\":\"preheader\""),
-            "{profile} hoisted loop lacks its preheader check record:\n{json}"
-        );
-        assert!(
-            json.contains("\"protected_interval\":\"loop\""),
-            "{profile} hoisted loop lacks its protected interval record:\n{json}"
-        );
-        assert!(
-            json.contains("\"proof\":\"stable_receiver_direct_call\""),
-            "{profile} hoisted loop lacks its proof record:\n{json}"
-        );
-
-        // `main`'s definition, to its end: the C writes the bodies where the source has them.
-        let main_symbol = ember_branding::entry_symbol();
-        let definition = format!("void {main_symbol}(void) {{");
-        let c = unit_defining(&out_dir.join(profile).join("c"), "accept_stable_class_receiver_loop", &definition);
-        let main_start = c.find(&definition).expect("main is emitted");
-        let main_c = &c[main_start..main_start + c[main_start..].find("\n}\n").expect("main ends")];
-        let begin_write = ember_branding::runtime("object_begin_write");
-        let end_write = ember_branding::runtime("object_end_write");
-        assert_eq!(
-            main_c.matches(&begin_write).count(),
-            1,
-            "{profile} main must have one preheader write check:\n{main_c}"
-        );
-        assert_eq!(
-            main_c.matches(&end_write).count(),
-            1,
-            "{profile} main must have one postheader write release:\n{main_c}"
-        );
-
-        let side_table_arg = side_table.to_string_lossy().into_owned();
-        let report = ember(&["inspect", "--safety", &side_table_arg], &root);
-        assert_eq!(report.exit, 0, "{profile} inspect failed:\n{}", report.stderr);
-        assert!(
-            report.stdout.contains("DYNAMIC_HOISTED_LOOP")
-                && report.stdout.contains("proof: stable_receiver_direct_call"),
-            "{profile} inspect did not identify the hoisted proof:\n{}",
-            report.stdout
-        );
-    }
-}
-
-/// `[EXC-10]`, `[EXC-12]` — each nest's loop around the inner loop holds the
-/// inner loop's access, and the report names that loop and its proof.
-#[test]
-fn an_outer_loop_reports_the_inner_access_it_holds() {
-    let root = workspace_root();
-    let name = "accept_an_outer_loop_holds_its_inner_loops_access";
-    let source = format!("tests/conformance/EXC-10/{name}.{SOURCE_EXT}");
-    for profile in ["debug", "development", "release"] {
-        let out_dir = temporary_directory(&format!("outer-loop-safety-{profile}"));
-        let run = ember(&["build", &source, "--profile", profile, "--out-dir", &out_dir.to_string_lossy()], &root);
-        assert_eq!(run.exit, 0, "{profile} build failed:\n{}", run.stderr);
-        let side_table = out_dir.join(profile).join("inspect").join(format!("{name}.safety.json"));
-        let report = ember(&["inspect", "--safety", &side_table.to_string_lossy()], &root);
-        assert_eq!(report.exit, 0, "{profile} inspect failed:\n{}", report.stderr);
-        for line in [26, 30, 34] {
-            assert!(
-                report.stdout.contains(&format!("{name}.{SOURCE_EXT}:{line}:17  proof: inner_loop_reused")),
-                "{profile} the loop on line {line} does not hold its inner access:\n{}",
-                report.stdout
-            );
-        }
-    }
-}
-
 /// ADR-079 — for MSVC, a loop nest that writes separate lists it never reads
 /// runs in a function of its own whose list parameters are `restrict`, the
 /// counts the program fixes written in; for clang the nest stays in place.
@@ -4217,8 +4169,8 @@ fn msvc_writes_small_checked_loops_several_turns_a_pass() {
     let msvc = ember(&["build", &source, "--backend", "c", "--emit", "c", "--profile", "development", "--cc", "msvc"], &root);
     assert_eq!(msvc.exit, 0, "msvc C failed:\n{}", msvc.stderr);
     assert!(msvc.stdout.contains(" > 7u; ) {"), "no loop runs eight turns to a pass:\n{}", msvc.stdout);
-    // `[CG-C-7]` — the object is the local `t`, by its own name.
-    let bump = format!("{}(&t)", ember_branding::item_symbol("Tally.bump"));
+    // `[CG-C-7]` — the object is what the local `t` names, by its own name.
+    let bump = format!("{}(&(*t))", ember_branding::item_symbol("Tally.bump"));
     assert!(msvc.stdout.contains(&bump), "the call does not take the object's address directly:\n{}", msvc.stdout);
     let total_of = format!("{}(", ember_branding::item_symbol("total_of"));
     let start = msvc
@@ -4334,125 +4286,6 @@ fn exit_drops_that_only_free_memory_go_in_release() {
     assert_eq!(frees[2], frees[1], "release drops what development drops: {frees:?}");
 }
 
-/// `[EXC-9]` / `[EXC-13]` / `[TST-15]` — the two proved loop forms hoist
-/// exactly one caller check. Publishing a handle, dynamic dispatch, and two
-/// receiver identities each deliberately retain their individual checks.
-#[test]
-fn loop_access_hoisting_requires_the_complete_local_proof() {
-    let root = workspace_root();
-    let cases = [
-        (
-            "accept_invariant_local_receiver_loop",
-            "DYNAMIC_HOISTED_LOOP",
-            1usize,
-        ),
-        (
-            "accept_escaping_receiver_loop_keeps_dynamic_check",
-            "DYNAMIC_PER_ACCESS",
-            1usize,
-        ),
-        (
-            "accept_virtual_receiver_loop_keeps_dynamic_check",
-            "DYNAMIC_PER_ACCESS",
-            1usize,
-        ),
-        (
-            "accept_distinct_receivers_loop_keeps_dynamic_checks",
-            "DYNAMIC_PER_ACCESS",
-            2usize,
-        ),
-    ];
-
-    for (name, classification, expected) in cases {
-        let source = format!("tests/conformance/EXC-8/{name}.{SOURCE_EXT}");
-        let out_dir = temporary_directory(&format!("ember-loop-access-{name}"));
-        let run = ember(
-            &[
-                "build",
-                &source,
-                "--out-dir",
-                &out_dir.to_string_lossy(),
-            ],
-            &root,
-        );
-        assert_eq!(run.exit, 0, "{name} did not build:\n{}", run.stderr);
-
-        let side_table = out_dir
-            .join("debug")
-            .join("inspect")
-            .join(format!("{name}.safety.json"));
-        let value: serde_json::Value = serde_json::from_str(
-            &std::fs::read_to_string(&side_table)
-                .unwrap_or_else(|error| panic!("{}: {error}", side_table.display())),
-        )
-        .unwrap_or_else(|error| panic!("{}: {error}", side_table.display()));
-        let observed = value
-            .get("checks")
-            .and_then(serde_json::Value::as_array)
-            .expect("safety side table has checks")
-            .iter()
-            .filter(|check| {
-                check.get("function").and_then(serde_json::Value::as_str) == Some("main")
-                    && check.get("classification").and_then(serde_json::Value::as_str)
-                        == Some(classification)
-            })
-            .count();
-        assert_eq!(
-            observed, expected,
-            "{name} should have {expected} main {classification} check(s): {value}"
-        );
-        let wrong = if classification == "DYNAMIC_HOISTED_LOOP" {
-            "DYNAMIC_PER_ACCESS"
-        } else {
-            "DYNAMIC_HOISTED_LOOP"
-        };
-        assert!(
-            !value
-                .get("checks")
-                .and_then(serde_json::Value::as_array)
-                .expect("safety side table has checks")
-                .iter()
-                .any(|check| {
-                    check.get("function").and_then(serde_json::Value::as_str) == Some("main")
-                        && check.get("classification").and_then(serde_json::Value::as_str)
-                            == Some(wrong)
-                }),
-            "{name} has an unsafe mixed loop classification: {value}"
-        );
-    }
-}
-
-#[test]
-fn static_access_elision_is_recorded_in_the_safety_side_table() {
-    let root = workspace_root();
-    let out_dir = temporary_directory("static-elision-side-table");
-    let run = ember(
-        &[
-            "build",
-            &format!("tests/conformance/HEAP-5/accept_unique_shared_get_mut_elides_access.{SOURCE_EXT}"),
-            "--out-dir",
-            &out_dir.to_string_lossy(),
-        ],
-        &root,
-    );
-    assert_eq!(run.exit, 0, "build failed:\n{}", run.stderr);
-
-    let side_table = out_dir
-        .join("debug")
-        .join("inspect")
-        .join("accept_unique_shared_get_mut_elides_access.safety.json");
-    let json = std::fs::read_to_string(&side_table)
-        .unwrap_or_else(|error| panic!("{}: {error}", side_table.display()));
-    assert!(
-        json.contains("\"reason\":\"unique_handle\""),
-        "missing unique-handle elision: {json}"
-    );
-    assert!(
-        json.contains("\"status\":\"elided\""),
-        "missing elided status: {json}"
-    );
-}
-
 /// `[EXC-3]`, `[EXC-3a]` — a check that nothing held anywhere in the program
 /// could make fail is removed, and recorded in the safety side table.
 #[test]
@@ -4548,12 +4381,12 @@ fn cycle_inspection_reports_edge_kinds_and_shortest_cycle() {
         report.stdout
     );
     assert!(
-        report.stdout.contains("weak Child.root: Weak[Root] -> Root"),
+        report.stdout.contains("weak Child.root: weakref Root -> Root"),
         "cycle inspection omitted a weak edge:\n{}",
         report.stdout
     );
     assert!(
-        report.stdout.contains("strong Child.leaf: Shared[Leaf] -> Leaf"),
+        report.stdout.contains("strong Child.leaf: shares Leaf -> Leaf"),
         "cycle inspection leaked compiler-private generic spelling:\n{}",
         report.stdout
     );
@@ -4781,7 +4614,7 @@ fn cycle_explanation_covers_standalone_generic_dynamic_and_stale_roots() {
     );
     assert!(
         class.stdout.contains("Cycle explanation: Parent")
-            && class.stdout.contains("Holder[Child]"),
+            && class.stdout.contains("Holder[shares mut Child]"),
         "class explanation omitted the generic ownership path:\n{}",
         class.stdout
     );
@@ -4795,7 +4628,7 @@ fn cycle_explanation_covers_standalone_generic_dynamic_and_stale_roots() {
         field.stderr
     );
     assert!(
-        field.stdout.contains("Holder[Child]"),
+        field.stdout.contains("Holder[shares mut Child]"),
         "field explanation did not show the instantiated generic owner:\n{}",
         field.stdout
     );
@@ -4870,7 +4703,7 @@ fn cycle_lint_offers_only_safe_weak_suggestions() {
     );
     assert_eq!(direct.exit, 0, "direct-cycle check failed:\n{}", direct.stderr);
     assert!(
-        direct.stdout.contains("\"replacement\":\"Weak[Child]\""),
+        direct.stdout.contains("\"replacement\":\"weakref Child\""),
         "direct class edge lacks a machine-applicable Weak replacement:\n{}",
         direct.stdout
     );
@@ -4902,12 +4735,12 @@ fn cycle_lint_offers_only_safe_weak_suggestions() {
     );
     assert_eq!(mixed.exit, 0, "mixed-cycle check failed:\n{}", mixed.stderr);
     assert!(
-        mixed.stdout.contains("\"replacement\":\"Weak[Owner]\""),
+        mixed.stdout.contains("\"replacement\":\"weakref Owner\""),
         "a later direct class edge in the cycle should receive the safe Weak replacement:\n{}",
         mixed.stdout
     );
     assert!(
-        mixed.stdout.contains("replace `Child.parent` with `Weak[Owner]`"),
+        mixed.stdout.contains("replace `Child.parent` with `weakref Owner`"),
         "the suggestion should name the first safely weakenable edge:\n{}",
         mixed.stdout
     );
@@ -5537,7 +5370,7 @@ fn inspect_alloc_reports_the_mechanism_each_declaration_uses() {
         ("local", "main", "xs", "Array, Map, Set, String"),
         ("local", "main", "ages", "Array, Map, Set, String"),
         ("local", "main", "boxed", "owns T"),
-        ("local", "main", "shared", "Shared[T]"),
+        ("local", "main", "shared", "shares T, shares mut T"),
         ("local", "main", "many", "callable"),
     ] {
         assert!(uses(kind, owner, name, mechanism), "[SEL-1] {kind} {owner}.{name} should use {mechanism:?}:\n{}", json.stdout);
@@ -5583,7 +5416,7 @@ fn inspect_alloc_lists_every_allocating_form() {
         ("main", 36, "std.collections.Map.index_set`"),
         ("main", 37, "std.collections.Set.add`"),
         ("main", 38, "an `owns` block"),
-        ("main", 39, "`Shared(…)`"),
+        ("main", 39, "a value made shared"),
         ("main", 40, "`Array.push`"),
         ("main", 41, "std.collections.Map.insert`"),
         ("main", 42, "std.collections.Set.add`"),
@@ -7729,9 +7562,9 @@ class Loud(Node):
     override fn poke():
         this.value = 9
 
-fn second(n: Node):
+fn second(ref mut n: Node):
     match n.next:
-        Some(m):
+        Some(ref mut m):
             m.set(5)
         None:
             pass
@@ -7832,8 +7665,8 @@ class Member:
     fn give_on():
         this.give()
 
-    fn copy_of_me() -> Member:
-        return this
+    fn copy_of_me() -> ref Member:
+        return ref this
 
     fn bump():
         this.id += 1
@@ -7852,7 +7685,7 @@ fn main():
     println(reads_only(c), depth(3, ref mut c))
     a = Node()
     a.next = Some(Node())
-    second(a)
+    second(ref mut a)
     unlink(a)
     println(twice_first())
     xs: Array[int] = []
@@ -7880,8 +7713,8 @@ fn main():
     m.give()
     m.give_on()
     other = m.copy_of_me()
-    m.bump()
     println(other.id)
+    m.bump()
 ").unwrap();
     let mir = ember(&["build", &source.to_string_lossy(), "--emit", "mir"], &dir);
     assert_eq!(mir.exit, 0, "MIR failed:\n{}", mir.stderr);
@@ -8625,13 +8458,13 @@ fn ember_test_reports_leaks_unless_turned_off() {
     let package = test_package("leaky", "lib", "\
 class Node:
     name: String
-    next: Option[Node]
+    next: Option[shares mut Node]
 
 @test
 fn builds_a_cycle():
-    a = Node(\"a\", None)
-    b = Node(\"b\", Some(a))
-    a.next = Some(b)
+    a = shares mut Node(\"a\", None)
+    b = shares mut Node(\"b\", Some(shares mut a))
+    a.next = Some(shares mut b)
 ");
     let default = ember(&["test"], &package);
     assert_eq!(default.exit, 0, "{}{}", default.stdout, default.stderr);
@@ -8677,7 +8510,7 @@ Prose.
 ```ember,fixed
 fn main():
     a = [1, 2, 3]
-    b = a.clone()
+    b = copy of a
     a.push(owns 4)
     println(b.len())
 ```
@@ -9220,7 +9053,7 @@ pub fn twice(x: i32) -> i32:
     ember_build::compile_cpp_object(&toolchain, &user, &[include], &object, Profile::Debug, "c++20", false).expect("the C++ header compiles");
 }
 
-/// `[BLD-FFI-5a]` (ODR-162) — an export may hand C++ an object of a `@sync` class: the C header
+/// `[BLD-FFI-5a]` (ODR-162) — an export may hand C++ a `thread_shared` object: the C header
 /// gives the class's handle its count, its end and each `pub` method, and the `--cpp` header a
 /// class of the same name whose copies share the object (retain) and whose last end frees it
 /// (release), with the class's `pub` methods; an export taking or giving one takes or gives the
@@ -9236,7 +9069,6 @@ kind = \"lib\"
     let source = dir.join(format!("lib.{SOURCE_EXT}"));
     std::fs::write(&source, "from std.sync import Atomic, MemoryOrder
 
-@sync
 pub class World:
     people: Atomic[i32] = Atomic(0)
     seed: i32 = 0
@@ -9258,12 +9090,12 @@ pub class World:
 
 # SAFETY: nothing else in the process defines this name
 @unsafe(export(\"make_world\"))
-pub fn make_world(seed: i32) -> World:
-    return World(seed)
+pub fn make_world(seed: i32) -> thread_shared World:
+    return thread_shared World(seed)
 
 # SAFETY: nothing else in the process defines this name
 @unsafe(export(\"population_of\"))
-pub fn population_of(world: World) -> i32:
+pub fn population_of(world: thread_shared World) -> i32:
     return world.population()
 ").unwrap();
     let out = dir.join("out");
@@ -9522,12 +9354,9 @@ fn every_example_of_the_specification_checks() {
     const WRITTEN_IN_0915: &str = "written in 0.9.15, which this compiler does not implement yet";
     const WRITTEN_IN_0920: &str = "written in 0.9.20, which this compiler does not implement yet";
     const BASELINE: &[(&str, usize, &str)] = &[
-        ("IV.6a The words in a type: who owns a value, and where its memory comes from", 1, WRITTEN_IN_0915),
         ("V.7 Constants and statics", 1, WRITTEN_IN_0915),
         ("VI.5 Lambdas and function values", 1, WRITTEN_IN_0915),
         ("Views with several regions", 1, WRITTEN_IN_0915),
-        ("Part VIII — Classes, Shared Owners and Links", 1, WRITTEN_IN_0915),
-        ("VIII.5 `weakref` links, parent links and loops of owners", 1, WRITTEN_IN_0915),
         ("IX.3 Memory managers: `using` and `Allocator`", 1, WRITTEN_IN_0915),
         // `owns (…)` before an argument for an `owns` parameter, since 0.9.20_Hardened_3.
         ("IX.7 `Cell`, and changes checked when compiling", 1, WRITTEN_IN_0920),

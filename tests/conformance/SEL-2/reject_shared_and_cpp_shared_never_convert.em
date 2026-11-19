@@ -9,16 +9,16 @@ from std.ffi import CppShared
 fn give_to_cpp(pointer: CppShared[i32]):
     pass
 
-fn keep_in_ember(pointer: Shared[i32]):
+fn keep_in_ember(pointer: shares mut i32):
     pass
 
-fn back_to_ember(pointer: CppShared[i32]) -> Shared[i32]:
+fn back_to_ember(pointer: CppShared[i32]) -> shares mut i32:
     return pointer    #$ error[E5065]: Ember's and C++'s reference counts are different counts
 
 fn main():
-    shared: Shared[i32] = Shared(5)
-    give_to_cpp(shared)    #$ error[E5065]: `Shared[i32]` does not convert to `std.ffi.CppShared[i32]`
-    weak = Weak(shared)
-    give_to_cpp(weak)    #$ error[E5065]: `Weak[Shared[i32]]` does not convert
-    held: CppShared[i32] = Shared(6)    #$ error[E5065]: counted by Ember
+    shared: shares mut i32 = shares mut 5
+    give_to_cpp(shared)    #$ error[E5065]: `shares mut i32` does not convert to `std.ffi.CppShared[i32]`
+    weak = weakref shared
+    give_to_cpp(weak)    #$ error[E5065]: `weakref i32` does not convert
+    held: CppShared[i32] = shares mut 6    #$ error[E5065]: counted by Ember
     cast = shared as CppShared[i32]    #$ error[E5065]: both would free it

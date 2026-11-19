@@ -70,7 +70,7 @@ fn reads(body: &Body, types: &ember_types::TypeTable) -> HashSet<LocalId> {
                     if !place.projection.is_empty()
                         && matches!(
                             types.kind(body.local(place.local).ty),
-                            ember_types::TyKind::Class(_) | ember_types::TyKind::ClassInterface(_)
+                            ember_types::TyKind::Class(_) | ember_types::TyKind::ClassInterface(_) | ember_types::TyKind::Link { .. }
                         )
                     {
                         read.insert(place.local);

@@ -8,40 +8,39 @@
 #$ assert-c: contains("ember_weak_upgrade(")
 
 # A ref dyn Observe carrier borrows a generic derived class and returns its
-# inherited Weak[Token] base field. Only the weak observer gains independent
+# inherited weakref Token base field. Only the weak observer gains independent
 # lifetime; neither the borrowed derived handle nor the Token owner is copied.
 interface Observe:
-    fn observer() -> Weak[Token]
+    fn observer() -> weakref Token
 
 class Token:
     value: i32
 
 [T]
 open class Base:
-    weak: Weak[Token]
+    weak: weakref Token
     marker: T
 
-    fn init(weak: Weak[Token], marker: T):
-        this.weak = weak
+    fn init(weak: weakref Token, marker: T):
+        this.weak = weakref weak
         this.marker = marker
 
 [T]
 class Holder(Base[T]) implements Observe:
-    fn init(weak: Weak[Token], marker: T):
+    fn init(weak: weakref Token, marker: T):
         super.init(weak, marker)
 
-    fn observer() -> Weak[Token]:
-        return this.weak
+    fn observer() -> weakref Token:
+        return weakref this.weak
 
-fn inspect(ref value: dyn Observe) -> Weak[Token]:
+fn inspect(ref value: dyn Observe) -> weakref Token:
     return value.observer()
 
 fn main():
     strong = Token(7)
-    holder = Holder[bool](Weak(strong), true)
+    holder = Holder[bool](weakref strong, true)
     weak = inspect(ref holder)
-    match weak.upgrade():
-        Some(owner):
-            println(owner.value)
-        None:
-            println(0)
+    if weak exists as owner:
+        println(owner.value)
+    else:
+        println(0)

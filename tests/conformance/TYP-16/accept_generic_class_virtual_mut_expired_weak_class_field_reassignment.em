@@ -9,7 +9,7 @@
 #$ assert-c: contains("ember_weak_release(")
 #$ assert-c: contains("ember_weak_upgrade(")
 
-# A mutable generic virtual call replaces an inherited Weak[Token] field whose
+# A mutable generic virtual call replaces an inherited weakref Token field whose
 # prior observer is already expired. The assignment must release only that old
 # observer, retain the replacement, and upgrade the new class owner.
 class Token:
@@ -17,40 +17,39 @@ class Token:
 
 [T]
 open class Base:
-    weak: Weak[Token]
+    weak: weakref Token
     marker: T
     count: i32
 
-    fn init(weak: Weak[Token], marker: T, count: i32):
-        this.weak = weak
+    fn init(weak: weakref Token, marker: T, count: i32):
+        this.weak = weakref weak
         this.marker = marker
         this.count = count
 
-    virtual fn replace(replacement: Weak[Token]) -> i32:
-        this.weak = replacement
+    virtual fn replace(replacement: weakref Token) -> i32:
+        this.weak = weakref replacement
         this.count = this.count + 1
         return this.count
 
 [T]
 class Derived(Base[T]):
-    fn init(weak: Weak[Token], marker: T, count: i32):
+    fn init(weak: weakref Token, marker: T, count: i32):
         super.init(weak, marker, count)
 
-    override fn replace(replacement: Weak[Token]) -> i32:
-        this.weak = replacement
+    override fn replace(replacement: weakref Token) -> i32:
+        this.weak = weakref replacement
         this.count = this.count + 1
-        match this.weak.upgrade():
-            Some(owner):
-                return owner.value + this.count
-            None:
-                return this.count
+        if this.weak exists as owner:
+            return owner.value + this.count
+        else:
+            return this.count
 
-fn expired() -> Weak[Token]:
+fn expired() -> weakref Token:
     strong = Token(5)
-    return Weak(strong)
+    return weakref strong
 
 fn main():
     replacement = Token(7)
     derived = Derived[bool](expired(), true, 0)
     base: Base[bool] = derived
-    println(base.replace(Weak(replacement)))
+    println(base.replace(weakref replacement))

@@ -4,16 +4,16 @@
 #$ warning[L3001]: potential reference cycle
 
 # The graph must inspect `Holder[Child]` after substituting `T`, not treat the
-# generic declaration as opaque. Its `value: Child` field closes this cycle.
+# generic declaration as opaque. Its `value` field, an owner of a `Child`, closes this cycle.
 [T]
 class Holder:
     value: T
 
 class Parent:
-    holder: Holder[Child]
+    holder: Holder[shares mut Child]
 
 class Child:
-    parent: Parent
+    parent: shares mut Parent
 
 fn main():
     return

@@ -12,7 +12,7 @@
 # `SyncShared` (`[THR-8]`: what a thread captures is `Send`).
 
 import std.thread
-from std.sync import Atomic, Mutex, SyncShared
+from std.sync import Atomic, Mutex
 
 fn work(n: int) -> int:
     total = 0
@@ -20,20 +20,20 @@ fn work(n: int) -> int:
         total += i % 7
     return total
 
-fn worker(hits: SyncShared[Atomic[int]], names: SyncShared[Mutex[Array[String]]], k: int) -> int:
+fn worker(hits: thread_shared Atomic[int], names: thread_shared Mutex[Array[String]], k: int) -> int:
     for i in range(10000):
-        hits.get().fetch_add(1)
-    with g = names.get().lock():
+        hits.fetch_add(1)
+    with g = names.lock():
         g.push(owns "worker".to_string())
     return work(1000 + k)
 
 fn main():
-    hits = SyncShared(Atomic(0))
-    names: SyncShared[Mutex[Array[String]]] = SyncShared(Mutex([]))
+    hits = thread_shared Atomic(0)
+    names: thread_shared Mutex[Array[String]] = thread_shared Mutex([])
     handles: Array[thread.JoinHandle[int]] = []
     for k in range(4):
-        mine = hits
-        theirs = names
+        mine = thread_shared hits
+        theirs = thread_shared names
         handles.push(owns thread.spawn(owns owned fn() => worker(mine, theirs, k)))
     total = 0
     while handles.len() > 0:
@@ -42,8 +42,8 @@ fn main():
                 total += h.join()
             None:
                 pass
-    println(hits.get().load(), total)
-    with g = names.get().lock():
+    println(hits.load(), total)
+    with g = names.lock():
         println(g.len())
     quiet = thread.spawn(owns owned fn() => work(5))
     println(quiet.join())

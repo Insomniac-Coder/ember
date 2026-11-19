@@ -17,9 +17,9 @@ gen fn counting(n: int) -> Generator[int]:
 
 gen fn growing() -> Generator[String]:
     s: String = "a"
-    yield s.clone()
+    yield copy of s
     s.push_str("b")
-    yield s.clone()
+    yield copy of s
 
 [G: needs Iterator[Item = int]]
 fn started(owns g: G) -> G:

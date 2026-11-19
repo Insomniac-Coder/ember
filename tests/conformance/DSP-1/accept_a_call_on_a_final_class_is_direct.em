@@ -38,7 +38,7 @@ class Other(Base):
 
 fn main():
     child = Child()
-    base: Base = child
+    base: ref Base = ref child
     other: Base = Other()
     println(base.tick())
     println(child.tick())

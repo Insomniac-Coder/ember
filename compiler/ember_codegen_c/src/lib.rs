@@ -2536,6 +2536,17 @@ impl Emitter<'_> {
     /// struct whose `value` is.
     fn printed_payload(&self, v: &str, ty: Ty) -> Option<(String, Ty)> {
         let inner = self.types.printed_as(ty)?;
+        // `[TYP-36]` — an owner: of an object, the object's pointer; of a value, the value in its block.
+        if matches!(self.types.kind(ty), TyKind::Link { .. }) {
+            if self.types.link_payload(ty).is_none() {
+                return Some((v.to_string(), inner));
+            }
+            let inner_c = self.c_type(inner);
+            let payload = ember_branding::runtime("obj_payload");
+            let header = ember_branding::runtime("obj_header");
+            let align = c_align(&inner_c);
+            return Some((format!("(*({inner_c}*){payload}(({header}*)({v}), {align}))"), inner));
+        }
         let TyKind::Struct(id) = *self.types.kind(ty) else { return None };
         match self.types.compiler_box_inner(id) {
             Some(_) => Some((format!("(*({v}))"), inner)),
@@ -3018,7 +3029,7 @@ impl Emitter<'_> {
                         .any(|variant| variant.fields.iter().any(|field| self.types.needs_drop(field.ty)))
             }
             TyKind::Struct(id) => {
-                if self.shared_inner_id(*id).is_some() || self.weak_inner_id(*id).is_some() {
+                if self.shared_inner_id(*id).is_some() {
                     return false;
                 }
                 if let Some(payload) = self.box_inner_id(*id) {
@@ -5136,7 +5147,7 @@ impl Emitter<'_> {
                 let weak_replacement = if self.types.class_def(field_owner).origin.is_none() {
                     match self.types.kind(field.ty) {
                         TyKind::Class(target) => Some(format!(
-                            "Weak[{}]",
+                            "weakref {}",
                             self.types.class_def(*target).name
                         )),
                         _ => None,
@@ -5210,6 +5221,14 @@ impl Emitter<'_> {
             TyKind::Class(_) => out.push(format!(
                 "visitor(context, ({header}*)({access}), {field_c}, EMBER_OWNERSHIP_EDGE_STRONG, {replacement}, {statically_predicted});"
             )),
+            // `[RC-1]`, `[WK-11]` — an owner is a strong edge to the object it points at, a link a
+            // weak one.
+            TyKind::Link { kind: ember_types::LinkKind::Weakref | ember_types::LinkKind::WeakrefThreadShared, .. } => out.push(format!(
+                "visitor(context, ({header}*)({access}), {field_c}, EMBER_OWNERSHIP_EDGE_WEAK, NULL, true);"
+            )),
+            TyKind::Link { .. } => out.push(format!(
+                "visitor(context, ({header}*)({access}), {field_c}, EMBER_OWNERSHIP_EDGE_STRONG, NULL, {statically_predicted});"
+            )),
             // An erased class-interface field is still a strong handle, but
             // its concrete target is deliberately unknown to static analysis.
             // The debug runtime receives the actual object header without
@@ -5240,12 +5259,6 @@ impl Emitter<'_> {
                 if self.shared_inner_id(*id).is_some() {
                     out.push(format!(
                         "visitor(context, ({header}*)({access}), {field_c}, EMBER_OWNERSHIP_EDGE_STRONG, NULL, {statically_predicted});"
-                    ));
-                    return;
-                }
-                if self.weak_inner_id(*id).is_some() {
-                    out.push(format!(
-                        "visitor(context, ({header}*)(({access}).value), {field_c}, EMBER_OWNERSHIP_EDGE_WEAK, NULL, true);"
                     ));
                     return;
                 }
@@ -5409,7 +5422,8 @@ impl Emitter<'_> {
             let info = self.shared_type_info_symbol(id);
             let inner_c = self.c_type(inner);
             let sync = self.types.struct_def(id).origin.as_ref().is_some_and(|(name, _)| name.is("SyncShared"));
-            let display = format!("{}[{}]", if sync { "SyncShared" } else { "Shared" }, self.types.display(inner));
+            // `[RT-7]` — the value is named by its own type: "too many owners of a `Counter`".
+            let display = self.types.display(inner);
             self.line(&format!("{linkage}const {} {info} = {{", ember_branding::runtime("type_info")));
             self.line(&format!(
                 "    (uint32_t)(EMBER_OBJ_PAYLOAD_OFFSET({inner_c_align}) + {inner_c_size}),", inner_c_align = c_align(&inner_c), inner_c_size = c_size(&inner_c)
@@ -5501,16 +5515,6 @@ impl Emitter<'_> {
         format!("{}_drop_payload", self.c_named(TypeNode::Struct(id)))
     }
 
-    /// The counted-owner payload of a compiler-known `Weak[O]` wrapper. Unlike
-    /// Box, Weak stays a one-field C struct so copies and drops can route
-    /// through the runtime's separate weak-count operations.
-    fn weak_inner_id(&self, id: StructId) -> Option<Ty> {
-        let def = self.types.struct_def(id);
-        match &def.origin {
-            Some((name, args)) if name.is("Weak") && args.len() == 1 => Some(args[0]),
-            _ => None,
-        }
-    }
 
     /// What one type definition looks like in C. Members are already written
     /// as declarators — an array member interleaves its type and its name, so
@@ -5527,19 +5531,6 @@ impl Emitter<'_> {
                         return Definition::Alias(self.c_type(inner));
                     }
                     return Definition::Alias(format!("{}*", self.c_type(inner)));
-                }
-                if let Some(inner) = self.weak_inner_id(id) {
-                    // `Shared[T]` itself is an alias for this same header
-                    // pointer. Spelling the wrapper member with the runtime
-                    // ABI type avoids a by-value dependency on an alias that
-                    // may be emitted after its `Weak[Shared[T]]` wrapper.
-                    let value = match self.types.kind(inner) {
-                        TyKind::Struct(inner) if self.shared_inner_id(*inner).is_some() => {
-                            format!("{RT}obj_header*")
-                        }
-                        _ => self.c_type(inner),
-                    };
-                    return Definition::Struct(vec![format!("{value} value")]);
                 }
                 if self.shared_inner_id(id).is_some() {
                     return Definition::Alias(format!("{}obj_header*", RT));
@@ -5759,6 +5750,14 @@ impl Emitter<'_> {
                     ember_branding::runtime("obj_header")
                 ));
             }
+            // `[WK-11]` — a link's end subtracts one from its target's weak count; `[RC-1]` an owner's
+            // end one from its count, and the subtraction that reaches zero ends the value.
+            TyKind::Link { kind: ember_types::LinkKind::Weakref | ember_types::LinkKind::WeakrefThreadShared, .. } => {
+                out.push(format!("{}(({}*){access});", ember_branding::runtime("weak_release"), ember_branding::runtime("obj_header")));
+            }
+            TyKind::Link { target, .. } => {
+                out.push(format!("{}(({}*){access});", self.count_function("release", *target), ember_branding::runtime("obj_header")));
+            }
             TyKind::Vec { elem, .. } => {
                 // An `Array[T]` owns its elements as well as its buffer.
                 if self.types.needs_drop(*elem) {
@@ -5789,14 +5788,6 @@ impl Emitter<'_> {
                     out.push(format!(
                         "{}(({}*){access});",
                         ember_branding::runtime("release"),
-                        ember_branding::runtime("obj_header")
-                    ));
-                    return;
-                }
-                if self.weak_inner_id(*id).is_some() {
-                    out.push(format!(
-                        "{}(({}*){access}.value);",
-                        ember_branding::runtime("weak_release"),
                         ember_branding::runtime("obj_header")
                     ));
                     return;
@@ -8415,7 +8406,6 @@ impl Emitter<'_> {
             TyKind::Struct(id) => {
                 let def = self.types.struct_def(*id);
                 self.shared_inner_id(*id).is_none()
-                    && self.weak_inner_id(*id).is_none()
                     && !def.name.as_str().starts_with("MaybeUninit_")
                     && def.drops_fields
                     && def.fields.clone().into_iter().any(|field| self.retain_nests(field.ty))
@@ -8455,14 +8445,6 @@ impl Emitter<'_> {
                     out.push(format!(
                         "{}(({}*){access});",
                         ember_branding::runtime("retain"),
-                        ember_branding::runtime("obj_header")
-                    ));
-                    return;
-                }
-                if self.weak_inner_id(*id).is_some() {
-                    out.push(format!(
-                        "{}(({}*){access}.value);",
-                        ember_branding::runtime("weak_retain"),
                         ember_branding::runtime("obj_header")
                     ));
                     return;
@@ -10726,28 +10708,36 @@ impl Emitter<'_> {
                             self.value_address(&rendered[0], *elem), elem_c_align = c_align(&elem_c), elem_c_size = c_size(&elem_c)
                         );
                     }
-                    Builtin::WeakNew { weak, .. } => {
-                        let weak_c = self.c_type(*weak);
-                        return format!(
-                            "({}(({}*){}), ({weak_c}){{ {} }})",
-                            ember_branding::runtime("weak_retain"),
-                            ember_branding::runtime("obj_header"),
-                            rendered[0],
-                            rendered[0]
-                        );
+                    // `[WK-11]` — a link that holds no target.
+                    Builtin::LinkNone { link } => {
+                        let link_c = self.c_type(*link);
+                        return format!("(({link_c})NULL)");
                     }
-                    Builtin::WeakUpgrade { class, .. } => {
+                    // `[RC-1]`, `[WK-11]` — one more owner (+1) or link (a weak +1) of the object the
+                    // operand points at, the same pointer.
+                    Builtin::LinkMake { kind, link } => {
+                        let header = ember_branding::runtime("obj_header");
+                        let link_c = self.c_type(*link);
+                        let TyKind::Link { target, .. } = self.types.kind(*link) else { unreachable!("a link's type") };
+                        let count = match kind {
+                            ember_types::LinkKind::Weakref | ember_types::LinkKind::WeakrefThreadShared => ember_branding::runtime("weak_retain"),
+                            _ => self.count_function("retain", *target),
+                        };
+                        return format!("({count}(({header}*){}), ({link_c}){})", rendered[0], rendered[0]);
+                    }
+                    // `[RC-1]` — the one owner taken over: the same pointer, no count.
+                    Builtin::LinkAdopt { link } => {
+                        let link_c = self.c_type(*link);
+                        return format!("(({link_c}){})", rendered[0]);
+                    }
+                    Builtin::LinkOpen { class, .. } => {
                         let class_c = self.c_type(*class);
                         return format!(
-                            "(({class_c}){}(({}*)({}.value)))",
+                            "(({class_c}){}(({}*){}))",
                             ember_branding::runtime("weak_upgrade"),
                             ember_branding::runtime("obj_header"),
                             rendered[0]
                         );
-                    }
-                    Builtin::WeakEmpty { weak } => {
-                        let weak_c = self.c_type(*weak);
-                        return format!("({weak_c}){{0}}");
                     }
                     Builtin::ArrayPush => {
                         let elem = self.element_of(*arg_ty);
@@ -11252,6 +11242,20 @@ impl Emitter<'_> {
                             member(variant.name), member(variant.fields[*index].name)
                         ));
                     }
+                    // `[RC-1]`, `[WK-11]` (D4) — a link to a value that is not a class object points at
+                    // its block: the logical field is the value's address, after the header.
+                    (_, TyKind::Link { target, .. }) if self.types.link_payload(at.ty).is_some() => {
+                        let inner_c = self.c_type(*target);
+                        out = format!(
+                            "(({}*){}(({}*){out}, {}))",
+                            inner_c,
+                            ember_branding::runtime("obj_payload"),
+                            ember_branding::runtime("obj_header"),
+                            c_align(&inner_c),
+                        );
+                    }
+                    // `[RC-1]` — a link to a class object is the object's own pointer: the same place.
+                    (_, TyKind::Link { .. }) => {}
                     (_, TyKind::Struct(id)) => {
                         let def = self.types.struct_def(*id);
                         // The checker models Box auto-deref as private field 0
@@ -11374,6 +11378,7 @@ impl Emitter<'_> {
                 let fields = &self.types.enum_def(*id).variants[variant].fields;
                 plain(fields.get(*index).map(|f| f.ty).unwrap_or(at.ty))
             }
+            (Projection::Field(0), TyKind::Link { .. }) => plain(self.types.link_field(at.ty).unwrap_or(at.ty)),
             (Projection::Field(index), TyKind::Struct(id)) => {
                 let fields = &self.types.struct_def(*id).fields;
                 plain(fields.get(*index).map(|f| f.ty).unwrap_or(at.ty))
@@ -12174,6 +12179,10 @@ impl Emitter<'_> {
 
     fn c_type(&self, ty: ember_types::Ty) -> String {
         match self.types.kind(ty) {
+            // `[RC-1]`, `[WK-11]` (`gap/03` D4) — one pointer: a class target's own handle type (the
+            // pointer to its object); any other target's block (M4 slice A builds class targets).
+            TyKind::Link { target, .. } if matches!(self.types.kind(*target), TyKind::Class(_)) => self.c_type(*target),
+            TyKind::Link { .. } => format!("{}*", ember_branding::runtime("obj_header")),
             // `[FFI-8]` — C's own, so it is passed and returned as C passes it.
             TyKind::CLongDouble => "long double".into(),
             // `[FFI-8]` — C's `va_list` as a parameter of it holds it (the runtime header's typedef).
@@ -13140,21 +13149,10 @@ impl Planner<'_> {
         }
         match node {
             TypeNode::Struct(id) => {
-                // `Weak[O]` always lowers to one pointer-valued field. Its
-                // owner can therefore remain a forward declaration; making
-                // the planner require the owner first reverses the C order
-                // for `class Node { parent: Weak[Node] }` and leaves the
-                // wrapper incomplete at the class-field declaration.
-                let is_weak = matches!(
-                    &self.types.struct_def(id).origin,
-                    Some((name, args)) if name.is("Weak") && args.len() == 1
-                );
-                if !is_weak {
-                    let fields: Vec<Ty> =
-                        self.types.struct_def(id).fields.iter().map(|f| f.ty).collect();
-                    for field in fields {
-                        self.require(field);
-                    }
+                let fields: Vec<Ty> =
+                    self.types.struct_def(id).fields.iter().map(|f| f.ty).collect();
+                for field in fields {
+                    self.require(field);
                 }
             }
             TypeNode::Class(id) => {
@@ -14980,6 +14978,7 @@ mod string_descriptor_view_parts_tests {
             callable_regions: None,
             closure_environment: None,
             closure_captures_by_move: false,
+            stored_at: Vec::new(),
             path: None,
             class_owner: None,
             class_virtual_slot: None,

@@ -18,7 +18,7 @@ class Bag:
 
 fn main():
     b = Bag()
-    c = b
+    c = shares mut b
     match b.name:
         Some(s):
             c.clear_name()

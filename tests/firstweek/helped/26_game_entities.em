@@ -57,12 +57,12 @@ class Hero(Entity):
 
 fn main():
     hero = Hero("Ayla", 40, 7)
-    monsters: Array[Entity] = [Goblin("Snik", 12, 3), Troll("Grum", 30, 4), Goblin("Nab", 10, 3)]
+    monsters: Array[shares mut Entity] = [shares mut Goblin("Snik", 12, 3), shares mut Troll("Grum", 30, 4), shares mut Goblin("Nab", 10, 3)]
     turn = 1
     while hero.alive() and any(m.alive() for m in monsters):
         println(f"turn {turn}: {hero.describe()}")
-        target = [m for m in monsters if m.alive()][0]
-        hero.act(target)
+        alive = [shares mut m for m in monsters if m.alive()]
+        hero.act(alive[0])
         for m in monsters.iter_mut():
             if m.alive() and hero.alive():
                 m.act(hero)

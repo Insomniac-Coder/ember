@@ -29,7 +29,7 @@ class Bag:
 
 fn main():
     b = Bag()
-    c = b
+    c = shares mut b
     other: Array[int] = [5]
     v: Span[int] = other[..]
     if len(other) == 2:

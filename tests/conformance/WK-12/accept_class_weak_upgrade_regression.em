@@ -16,12 +16,11 @@ class Token:
 # would go with it.
 fn program():
     strong = Token(42)
-    weak: Weak[Token] = Weak(strong)
-    match weak.upgrade():
-        Some(owner):
-            println(owner.value)
-        None:
-            println(0)
+    weak: weakref Token = weakref strong
+    if weak exists as owner:
+        println(owner.value)
+    else:
+        println(0)
 
 fn main():
     program()

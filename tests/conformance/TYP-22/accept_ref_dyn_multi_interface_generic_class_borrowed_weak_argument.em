@@ -10,10 +10,10 @@
 #$ assert-c: contains("ember_weak_upgrade(")
 
 # A generic class borrowed as ref dyn Observe + Bump reuses a borrowed
-# Weak[Shared[Token]] argument while both composed slots dispatch to one
+# weakref Token argument while both composed slots dispatch to one
 # payload. The weak observer is upgraded without copying the class owner.
 interface Observe:
-    fn observe(weak: Weak[Shared[Token]]) -> i32
+    fn observe(weak: weakref Token) -> i32
 
 interface Bump:
     fn bump() -> i32
@@ -25,17 +25,16 @@ struct Token:
 class Reader implements Observe, Bump:
     marker: T
 
-    fn observe(weak: Weak[Shared[Token]]) -> i32:
-        match weak.upgrade():
-            Some(owner):
-                return owner.get().value
-            None:
-                return 0
+    fn observe(weak: weakref Token) -> i32:
+        if weak exists as owner:
+            return owner.value
+        else:
+            return 0
 
     fn bump() -> i32:
         return 1
 
-fn inspect(ref value: dyn Observe + Bump, weak: Weak[Shared[Token]]) -> i32:
+fn inspect(ref value: dyn Observe + Bump, weak: weakref Token) -> i32:
     return value.observe(weak) + value.bump()
 
 # `program` holds the test, so its values die before `main`'s last
@@ -43,9 +42,9 @@ fn inspect(ref value: dyn Observe + Bump, weak: Weak[Shared[Token]]) -> i32:
 # memory to the operating system (`[PHIL-5]`), and the drops read here
 # would go with it.
 fn program():
-    strong = Shared(Token(7))
+    strong = shares mut Token(7)
     reader = Reader[bool](true)
-    println(inspect(ref reader, Weak(strong)))
+    println(inspect(ref reader, weakref strong))
 
 fn main():
     program()

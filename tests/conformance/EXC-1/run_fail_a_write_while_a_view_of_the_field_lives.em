@@ -19,7 +19,7 @@ class Bag:
 
 fn main():
     b = Bag()
-    c = b
+    c = shares mut b
     v = b.items[1..]
     c.items.push(owns 4)
     println(v)

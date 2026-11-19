@@ -1344,24 +1344,29 @@ impl Parser<'_> {
         }
 
         // `[OWN-13]`, `[LEX-14]` — a word before a value that makes another owner or a link (`shares
-        // game`, `weakref this`): the grammar's (`value_word`), never a name, and not built by this
-        // compiler yet (M4); the value after it is read as written.
-        if let TokenKind::Keyword(Kw::Shares | Kw::ThreadShared | Kw::Weakref | Kw::Sharedref) = self.peek().clone() {
+        // game`, `weakref this`): the grammar's (`value_word`), never a name. It binds as `-` does.
+        if let TokenKind::Keyword(word @ (Kw::Shares | Kw::ThreadShared | Kw::Weakref | Kw::Sharedref)) = self.peek().clone() {
             let at = self.span();
-            let alone = self.at_kw(Kw::Sharedref) && !self.at_kw_at(1, Kw::Mut);
             self.bump();
-            let _ = self.eat_kw(Kw::Mut);
-            let written = self.src.get(at.start as usize..self.prev_span().end as usize).unwrap_or("shares").to_string();
-            if alone {
-                // `[GRM-43]` — `sharedref` is always followed by `mut`.
-                self.report(
-                    Diagnostic::error(codes::E0114, at, "`sharedref` is always followed by `mut`: a link that only reads may be held by any number of names")
-                        .help("write `target: ref Player`; `sharedref` is for a link that may change its target: `target: sharedref mut Player`"),
-                );
-                return self.parse_expr_bp(BP_UNARY, allow_block_lambda);
-            }
-            self.report(Diagnostic::error(codes::E0900, at.to(self.prev_span()), format!("`{written}` before a value is not built by this compiler yet")));
-            return self.parse_expr_bp(BP_UNARY, allow_block_lambda);
+            let changes = matches!(word, Kw::Shares | Kw::Sharedref) && self.eat_kw(Kw::Mut);
+            let kind = match (word, changes) {
+                (Kw::Shares, false) => ember_ast::LinkKind::Shares,
+                (Kw::Shares, true) => ember_ast::LinkKind::SharesMut,
+                (Kw::ThreadShared, _) => ember_ast::LinkKind::ThreadShared,
+                (Kw::Weakref, _) => ember_ast::LinkKind::Weakref,
+                (_, true) => ember_ast::LinkKind::SharedrefMut,
+                _ => {
+                    // `[GRM-43]` — `sharedref` is always followed by `mut`.
+                    self.report(
+                        Diagnostic::error(codes::E0114, at, "`sharedref` is always followed by `mut`: a link that only reads may be held by any number of names")
+                            .help("write `target: ref Player`; `sharedref` is for a link that may change its target: `target: sharedref mut Player`"),
+                    );
+                    return self.parse_expr_bp(BP_UNARY, allow_block_lambda);
+                }
+            };
+            let value = self.parse_expr_bp(BP_UNARY, allow_block_lambda);
+            let id = self.next_id();
+            return Expr { id, kind: ExprKind::Link { kind, value: Box::new(value) }, span: start.to(self.prev_span()) };
         }
 
         // `[GRM-36]` — `const ref mut e`, a name of the place that is never given another ref.

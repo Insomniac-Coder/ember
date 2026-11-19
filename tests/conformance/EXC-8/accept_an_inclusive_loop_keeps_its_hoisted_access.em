@@ -16,14 +16,14 @@ class Counter:
 
 fn main():
     counter = Counter(0)
-    alias = counter
+    alias = shares mut counter
     seed: Array[int] = [7]
     n = seed.len() + 1
     for i in 0..=n:
         counter.bump()
     counter.bump()
     other = Counter(0)
-    also = other
+    also = shares mut other
     for i in (int.MAX - 2) ..= int.MAX:
         other.bump()
     println(alias.value, also.value)

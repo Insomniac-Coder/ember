@@ -49,7 +49,7 @@ fn main():
     s = Storage[Pos](true)
     s.add(owns Pos(x=1.0, y=2.0))
     s.add(owns Pos(x=3.0, y=4.0))
-    a: AnyStorage = s
+    a: ref mut AnyStorage = ref mut s
     a.remove_at(0)
     println(s.len, s.columns.x[0])
     t = Storage[Pos](false)

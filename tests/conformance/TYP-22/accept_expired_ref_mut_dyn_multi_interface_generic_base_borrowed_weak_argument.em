@@ -13,7 +13,7 @@
 # A borrowed weak argument through a ref mut composed carrier with generic-base
 # state takes None after expiry, while the inherited counter still advances.
 interface Observe:
-    fn observe(weak: Weak[Shared[Token]]) -> i32
+    fn observe(weak: weakref Token) -> i32
 
 interface Bump:
     fn bump() -> i32
@@ -35,22 +35,21 @@ class Holder(Base[T]) implements Observe, Bump:
     fn init(marker: T):
         super.init(marker)
 
-    fn observe(weak: Weak[Shared[Token]]) -> i32:
+    fn observe(weak: weakref Token) -> i32:
         this.count = this.count + 1
-        match weak.upgrade():
-            Some(owner):
-                return owner.get().value
-            None:
-                return 0
+        if weak exists as owner:
+            return owner.value
+        else:
+            return 0
 
     fn bump() -> i32:
         return this.count
 
-fn expired() -> Weak[Shared[Token]]:
-    strong = Shared(Token(7))
-    return Weak(strong)
+fn expired() -> weakref Token:
+    strong = shares mut Token(7)
+    return weakref strong
 
-fn inspect(ref mut value: dyn Observe + Bump, weak: Weak[Shared[Token]]) -> i32:
+fn inspect(ref mut value: dyn Observe + Bump, weak: weakref Token) -> i32:
     return value.observe(weak) + value.bump()
 
 # `program` holds the test, so its values die before `main`'s last

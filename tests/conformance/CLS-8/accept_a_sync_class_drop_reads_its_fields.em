@@ -6,7 +6,6 @@
 # calls it with the handle, and the body reads the object's fields (D-685: it was given the
 # handle's address, and read past it).
 
-@sync
 class Tag:
     id: int = 7
 
@@ -14,5 +13,5 @@ class Tag:
         println(f"dropped {this.id}")
 
 fn main():
-    t = Tag()
+    t = thread_shared Tag()
     println(f"made {t.id}")

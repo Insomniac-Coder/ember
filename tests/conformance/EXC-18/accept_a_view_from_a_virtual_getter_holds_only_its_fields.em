@@ -30,12 +30,12 @@ class Nick(Person):
 
 fn main():
     p = Person()
-    q = p
+    q = shares mut p
     n = p.label()
     q.tags.push(owns 2)
     println(n, q.tags)
     k: Person = Nick()
-    r = k
+    r = shares mut k
     m = k.label()
     r.tags.push(owns 2)
     r.tags.push(owns 3)

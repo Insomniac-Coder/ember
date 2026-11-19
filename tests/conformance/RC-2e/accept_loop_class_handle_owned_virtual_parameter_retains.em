@@ -1,14 +1,13 @@
 #$ test: run-pass
 #$ rules: RC-1, RC-2e, CTL-1, CTL-2, FN-1, TYP-14, DSP-2, RNG-4
 #$ profiles: debug, development, release
-#$ assert-c-count: contains("ember_retain_plain((ember_obj_header*)") == 2
+#$ assert-c-count: contains("ember_retain_plain((ember_obj_header*)") == 1
 #$ assert-c-count: contains("ember_retain((ember_obj_header*)") == 0
 #$ stdout: 7
 
 # Virtual dispatch preserves an `owned` parameter mode, so a loop-yielded
-# class handle retains at the virtual call boundary. The other retain is the
-# independent Worker-to-Consumer class upcast used to select that dispatch;
-# the fresh Token constructor temporary transfers directly into its Array.
+# owner retains at the virtual call boundary. The fresh Token constructor
+# temporary transfers directly into its Array.
 # Range facts prove the loop's index in bounds (`[RNG-4]`), so the loop is
 # not versioned: its body, and the retains in it, appear once.
 class Token:
@@ -18,21 +17,21 @@ open class Consumer:
     fn init():
         pass
 
-    virtual fn consume(owns token: Token) -> i32:
+    virtual fn consume(owns token: shares Token) -> i32:
         return token.value
 
 class Worker(Consumer):
     fn init():
         super.init()
 
-    override fn consume(owns token: Token) -> i32:
+    override fn consume(owns token: shares Token) -> i32:
         return token.value
 
-fn dispatch(consumer: Consumer, owns tokens: Array[Token]):
+fn dispatch(consumer: Consumer, owns tokens: Array[shares Token]):
     for token in tokens:
-        println(consumer.consume(owns token))
+        println(consumer.consume(shares token))
 
 fn main():
-    tokens: Array[Token] = Array[Token]()
-    tokens.push(owns Token(7))
+    tokens: Array[shares Token] = Array[shares Token]()
+    tokens.push(owns shares Token(7))
     dispatch(Worker(), owns tokens)

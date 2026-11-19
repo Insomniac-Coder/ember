@@ -1,21 +1,23 @@
 #$ test: run-pass
-#$ rules: WK-11
+#$ rules: WK-11, WK-12
 #$ stdout: true true true true
-# D-401 — `[WK-11]`: "`Weak[O].empty()` (or `Weak.empty()` where the type is
-# known) creates one that points nowhere". The bare form was `E1010`, cannot
-# find `Weak`, in a typed local, a return, a field default and an argument.
+# `[WK-11]` — a link may hold no target: `None` is a `weakref T` that holds none wherever the place's type
+# says it is a link, in a typed local, a return, a field default and an argument (it was `Weak.empty()`,
+# whose type the place gave, D-401), and each opens to `else:`.
 
 class Node:
     v: int
-    parent: Weak[Node] = Weak.empty()
+    parent: weakref Node = None
 
-fn orphan() -> Weak[Node]:
-    return Weak.empty()
+fn orphan() -> weakref Node:
+    return None
 
-fn gone(w: Weak[Node]) -> bool:
-    return w.upgrade().is_none()
+fn gone(w: weakref Node) -> bool:
+    if w exists as _:
+        return false
+    return true
 
 fn main():
-    e: Weak[Node] = Weak.empty()
+    e: weakref Node = None
     n = Node(5)
-    println(e.upgrade().is_none(), orphan().upgrade().is_none(), n.parent.upgrade().is_none(), gone(Weak.empty()))
+    println(gone(e), gone(orphan()), gone(n.parent), gone(None))

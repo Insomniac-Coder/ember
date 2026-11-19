@@ -10,11 +10,11 @@
 #$ assert-c: contains("ember_weak_upgrade(")
 #$ assert-c: !contains("ember_box_new_copy")
 
-# A borrowed Weak[Shared[Token]] argument through a composed dynamic box stays
+# A borrowed weakref Token argument through a composed dynamic box stays
 # a valid observer after its target expires. The generic implementation must
 # take the None path while the second interface slot remains callable.
 interface Observe:
-    fn observe(weak: Weak[Shared[Token]]) -> i32
+    fn observe(weak: weakref Token) -> i32
 
 interface Bump:
     fn bump() -> i32
@@ -26,19 +26,18 @@ struct Token:
 class Reader implements Observe, Bump:
     marker: T
 
-    fn observe(weak: Weak[Shared[Token]]) -> i32:
-        match weak.upgrade():
-            Some(owner):
-                return owner.get().value
-            None:
-                return 0
+    fn observe(weak: weakref Token) -> i32:
+        if weak exists as owner:
+            return owner.value
+        else:
+            return 0
 
     fn bump() -> i32:
         return 1
 
-fn expired() -> Weak[Shared[Token]]:
-    strong = Shared(Token(7))
-    return Weak(strong)
+fn expired() -> weakref Token:
+    strong = shares mut Token(7)
+    return weakref strong
 
 fn main():
     boxed: owns dyn Observe + Bump = owns Reader[bool](true)

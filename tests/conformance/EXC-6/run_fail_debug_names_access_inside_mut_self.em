@@ -14,7 +14,7 @@ class Bag:
 
 fn main():
     b = Bag()
-    alias = b
+    alias = shares mut b
     view = b.items.as_span()
     alias.replace()
     println(view[0])

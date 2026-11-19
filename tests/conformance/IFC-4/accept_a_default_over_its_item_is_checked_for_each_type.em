@@ -36,7 +36,7 @@ extend Words implements Src:
     type Item = String
 
     fn get() -> Option[String]:
-        return Some(this.w.clone())
+        return Some(copy of this.w)
 
 fn main():
     w = Ints(n = 3).wrap()

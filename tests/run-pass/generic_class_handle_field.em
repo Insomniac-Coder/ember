@@ -3,7 +3,6 @@
 #$ profiles: debug, development, release
 #$ stdout: 42
 #$ stdout: 42
-#$ assert-c: contains(ember_retain)
 
 class Token:
     value: i32

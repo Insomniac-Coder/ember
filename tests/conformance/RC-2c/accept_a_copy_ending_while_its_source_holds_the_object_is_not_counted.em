@@ -36,7 +36,7 @@ fn main():
     total = 0
     count = 0
     for i in 0..3:
-        b = a
+        b = shares mut a
         total += total_of(b)
         count += 1
     println(count, total)

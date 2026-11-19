@@ -40,6 +40,6 @@ fn main():
             break
     it = (0 .. 5).iter()
     it.next()
-    for x, i in xs.iter().zip(owns it.clone()):
+    for x, i in xs.iter().zip(owns copy of it):
         println(x, i)
     println(it.next())

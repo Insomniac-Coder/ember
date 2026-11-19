@@ -55,6 +55,11 @@ impl Checker<'_> {
         }
         match &expr.kind {
             ExprKind::Field { base, .. } | ExprKind::Index { base, .. } => rooted(base),
+            // `[OWN-3]` — a plain parameter is a view, and one holding a class object arrives as the
+            // handle itself, not as a reference to it.
+            ExprKind::Local(local) => {
+                self.borrowed_params.contains(local) && matches!(self.types.kind(expr.ty), TyKind::Class(_) | TyKind::ClassInterface(_))
+            }
             ExprKind::Deref(inner) => match *self.types.kind(inner.ty) {
                 TyKind::Ref { mutable: false, .. } => matches!(inner.kind, ExprKind::Local(_)) || is_call(inner),
                 TyKind::Ref { mutable: true, .. } => is_call(inner),

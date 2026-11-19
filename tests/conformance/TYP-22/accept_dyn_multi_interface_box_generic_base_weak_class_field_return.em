@@ -11,11 +11,11 @@
 #$ assert-c: contains("ember_weak_upgrade(")
 #$ assert-c: !contains("ember_box_new_copy")
 
-# A multi-interface dynamic box may return an inherited Weak[Token] field from
+# A multi-interface dynamic box may return an inherited weakref Token field from
 # its generic base and then mutate a separate inherited counter. Both ordered
 # slots share the one derived payload without copying the box or class owner.
 interface Observe:
-    fn observer() -> Weak[Token]
+    fn observer() -> weakref Token
 
 interface Bump:
     fn bump() -> i32
@@ -25,22 +25,22 @@ class Token:
 
 [T]
 open class Base:
-    weak: Weak[Token]
+    weak: weakref Token
     marker: T
     count: i32
 
-    fn init(weak: Weak[Token], marker: T):
-        this.weak = weak
+    fn init(weak: weakref Token, marker: T):
+        this.weak = weakref weak
         this.marker = marker
         this.count = 0
 
 [T]
 class Holder(Base[T]) implements Observe, Bump:
-    fn init(weak: Weak[Token], marker: T):
+    fn init(weak: weakref Token, marker: T):
         super.init(weak, marker)
 
-    fn observer() -> Weak[Token]:
-        return this.weak
+    fn observer() -> weakref Token:
+        return weakref this.weak
 
     fn bump() -> i32:
         this.count = this.count + 1
@@ -48,11 +48,10 @@ class Holder(Base[T]) implements Observe, Bump:
 
 fn main():
     strong = Token(7)
-    boxed: owns dyn Observe + Bump = owns Holder[bool](Weak(strong), true)
+    boxed: owns dyn Observe + Bump = owns Holder[bool](weakref strong, true)
     weak = boxed.observer()
     println(boxed.bump())
-    match weak.upgrade():
-        Some(owner):
-            println(owner.value)
-        None:
-            println(0)
+    if weak exists as owner:
+        println(owner.value)
+    else:
+        println(0)

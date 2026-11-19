@@ -1352,7 +1352,7 @@ extend[T: needs Clone, I: needs Iterator[Item = ref T]] Cloned[I, T] implements 
     fn next() -> Option[T] from inner:
         match this.inner.next():
             Some(r):
-                return Some(r.clone())
+                return Some(copy of r)
             None:
                 return None
 
@@ -1889,7 +1889,7 @@ extend[T: needs Clone, I: needs DoubleEndedIterator[Item = ref T]] Cloned[I, T] 
     fn next_back() -> Option[T] from inner:
         match this.inner.next_back():
             Some(r):
-                return Some(r.clone())
+                return Some(copy of r)
             None:
                 return None
 
@@ -2587,14 +2587,14 @@ extend[T: needs (Ord, Clone)] Array[T]:
     ## `sorted` for what the compiler's own `sorted` does not take: elements
     ## with an `Ord` of their own, or that are not `Copy` (D-256).
     fn sorted_ord() -> Array[T]:
-        out = this.clone()
+        out = copy of this
         out.sort_ord()
         return out
 
     ## `[STD-26]` — `sorted(it, reverse=r)`: a copy of these elements in order, the largest first
     ## when `reverse`. Stable both ways: elements that compare equal keep their order (ODR-031).
     fn sorted_reverse_if(reverse: bool) -> Array[T]:
-        out = this.clone()
+        out = copy of this
         if reverse:
             order = stable_order(out, owns fn(a, b) => b.cmp(a))
             out.apply_order(ref mut order)
@@ -2611,7 +2611,7 @@ extend[T: needs Clone] Array[T]:
         keys: Array[K] = []
         for i in range(this.len()):
             keys.push(owns key(this[i]))
-        out = this.clone()
+        out = copy of this
         if reverse:
             order = stable_order(keys, owns fn(a, b) => b.cmp(a))
             out.apply_order(ref mut order)

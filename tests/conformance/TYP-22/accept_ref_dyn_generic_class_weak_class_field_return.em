@@ -8,31 +8,30 @@
 #$ assert-c: contains("ember_weak_upgrade(")
 
 # A ref dyn Observe carrier borrows a generic class while returning its
-# Weak[Token] field. The dynamic call copies only the weak observer; it does
+# weakref Token field. The dynamic call copies only the weak observer; it does
 # not create an additional class owner before the caller upgrades the result.
 interface Observe:
-    fn observer() -> Weak[Token]
+    fn observer() -> weakref Token
 
 class Token:
     value: i32
 
 [T]
 class Holder implements Observe:
-    weak: Weak[Token]
+    weak: weakref Token
     marker: T
 
-    fn observer() -> Weak[Token]:
-        return this.weak
+    fn observer() -> weakref Token:
+        return weakref this.weak
 
-fn inspect(ref value: dyn Observe) -> Weak[Token]:
+fn inspect(ref value: dyn Observe) -> weakref Token:
     return value.observer()
 
 fn main():
     strong = Token(7)
-    holder = Holder[bool](Weak(strong), true)
+    holder = Holder[bool](weakref strong, true)
     weak = inspect(ref holder)
-    match weak.upgrade():
-        Some(owner):
-            println(owner.value)
-        None:
-            println(0)
+    if weak exists as owner:
+        println(owner.value)
+    else:
+        println(0)

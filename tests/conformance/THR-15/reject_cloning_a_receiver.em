@@ -7,5 +7,5 @@ from std.sync import channel
 
 fn main():
     tx, rx = channel[int](capacity=4)
-    more = tx.clone()
+    more = copy of tx
     other = rx.clone()

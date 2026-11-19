@@ -11,13 +11,13 @@ class Bag:
     fn init():
         this.items = [1, 2, 3]
 
-    fn clobber(other: Bag):
-        repoint(ref mut this, other)
+    fn clobber(owns other: Bag):
+        repoint(ref mut this, owns other)
         this.items = [9]
 
-fn repoint(ref mut c: Bag, to: Bag):
+fn repoint(ref mut c: Bag, owns to: Bag):
     c = to
 
 fn main():
     a = Bag()
-    a.clobber(Bag())
+    a.clobber(owns Bag())

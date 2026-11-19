@@ -24,7 +24,7 @@ fn class_edges(m: &mut Module<'_>, id: ClassId) -> Result<String> {
             let Some((owner, field)) = table.class_field_at_info(id, index) else { continue };
             let label = format!("{}.{}", table.class_def(owner).name, field.name);
             let replacement = match (table.class_def(owner).origin.is_none(), table.kind(field.ty)) {
-                (true, TyKind::Class(target)) => Some(format!("Weak[{}]", table.class_def(*target).name)),
+                (true, TyKind::Class(target)) => Some(format!("weakref {}", table.class_def(*target).name)),
                 _ => None,
             };
             let at = cx.gep("%p0", offsets[index]);
@@ -71,6 +71,15 @@ impl<'a> FnCx<'_, 'a> {
                 let target = self.load(Sc::Ptr, at, 8);
                 self.visit(&target, field, STRONG, None, false);
             }
+            // `[RC-1]`, `[WK-11]` — an owner is a strong edge to the block it points at, a link a weak one.
+            TyKind::Link { kind: ember_types::LinkKind::Weakref | ember_types::LinkKind::WeakrefThreadShared, .. } => {
+                let target = self.load(Sc::Ptr, at, 8);
+                self.visit(&target, field, WEAK, None, true);
+            }
+            TyKind::Link { .. } => {
+                let target = self.load(Sc::Ptr, at, 8);
+                self.visit(&target, field, STRONG, None, predicted);
+            }
             TyKind::Vec { elem, .. } => {
                 let (size, _) = self.m.ty.size_align(elem);
                 let buffer = self.load(Sc::Ptr, at, 8);
@@ -92,9 +101,6 @@ impl<'a> FnCx<'_, 'a> {
                 if crate::func::shared_inner(table, id).is_some() {
                     let target = self.load(Sc::Ptr, at, 8);
                     self.visit(&target, field, STRONG, None, predicted);
-                } else if crate::glue::weak_inner(table, id).is_some() {
-                    let target = self.load(Sc::Ptr, at, 8);
-                    self.visit(&target, field, WEAK, None, true);
                 } else if let Some(inner) = table.compiler_box_inner(id) {
                     // A `Box[dyn I]`'s value is the dynamic type's: the edge is unknown.
                     let pointer = self.load(Sc::Ptr, at, 8);
@@ -174,12 +180,11 @@ impl<'a> FnCx<'_, 'a> {
     fn holds_edges(&self, ty: Ty) -> bool {
         let table = self.m.ty.table;
         match table.kind(ty) {
-            TyKind::Class(_) | TyKind::ClassInterface(_) | TyKind::Dyn { .. } | TyKind::Param { .. } | TyKind::Assoc { .. } => true,
+            TyKind::Class(_) | TyKind::ClassInterface(_) | TyKind::Dyn { .. } | TyKind::Param { .. } | TyKind::Assoc { .. } | TyKind::Link { .. } => true,
             TyKind::Vec { elem, .. } | TyKind::Array { elem, .. } => self.holds_edges(*elem),
             TyKind::Tuple(items) => items.iter().any(|item| self.holds_edges(*item)),
             TyKind::Struct(id) => {
                 crate::func::shared_inner(table, *id).is_some()
-                    || crate::glue::weak_inner(table, *id).is_some()
                     || table.compiler_box_inner(*id).is_some()
                     || table.struct_def(*id).fields.iter().any(|field| self.holds_edges(field.ty))
             }

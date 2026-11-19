@@ -43,7 +43,7 @@ class GradeBook:
         return sum(averages) / averages.len() as float
 
     fn ranking() -> Array[Student]:
-        result = [s.clone() for s in this.students.values()]
+        result = [copy of s for s in this.students.values()]
         result.sort_by_key(owns fn(s) => -s.average())
         return result
 

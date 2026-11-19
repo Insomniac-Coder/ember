@@ -19,7 +19,7 @@ class Bag:
 
 fn main():
     b = Bag()
-    c = b
+    c = shares mut b
     v = b.grown_view()
     c.items.push(owns 5)
     println(v)

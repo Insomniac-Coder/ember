@@ -14,13 +14,13 @@ class Node:
     fn drop():
         println("drop", this.v)
 
-fn replace(ref mut h: Node):
-    h = Node(9)
+fn replace(ref mut h: shares Node):
+    h = shares Node(9)
 
 fn main():
-    nodes: Array[Node] = []
-    nodes.push(owns Node(1))
-    t = nodes[0]
+    nodes: Array[shares Node] = []
+    nodes.push(owns shares Node(1))
+    t = shares nodes[0]
     replace(ref mut t)
     println(t.v)
     mem.drop(t)

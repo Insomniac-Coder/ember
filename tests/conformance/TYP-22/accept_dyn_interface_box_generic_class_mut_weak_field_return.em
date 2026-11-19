@@ -10,31 +10,30 @@
 #$ assert-c: !contains("ember_box_new_copy")
 
 # A mut interface slot on a generic class updates its private counter and
-# returns its Weak[Shared[T]] field through Box[dyn Revise]. The write interval
+# returns its weakref T field through Box[dyn Revise]. The write interval
 # closes at the call boundary while the returned observer remains independently
 # usable by the caller.
 interface Revise:
-    fn observer() -> Weak[Shared[Token]]
+    fn observer() -> weakref Token
 
 struct Token:
     value: i32
 
 [T]
 class Observer implements Revise:
-    weak: Weak[Shared[Token]]
+    weak: weakref Token
     marker: T
     count: i32
 
-    fn observer() -> Weak[Shared[Token]]:
+    fn observer() -> weakref Token:
         this.count = this.count + 1
-        return this.weak
+        return weakref this.weak
 
 fn main():
-    strong = Shared(Token(7))
-    boxed: owns dyn Revise = owns Observer[bool](Weak(strong), true, 0)
+    strong = shares mut Token(7)
+    boxed: owns dyn Revise = owns Observer[bool](weakref strong, true, 0)
     weak = boxed.observer()
-    match weak.upgrade():
-        Some(owner):
-            println(owner.get().value)
-        None:
-            println(0)
+    if weak exists as owner:
+        println(owner.value)
+    else:
+        println(0)

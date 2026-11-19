@@ -6,9 +6,8 @@
 #$ end
 #$ drop 6
 #$ drop 7
-# `[RC-3]` — `t` is a copy of an element of `nodes`, which nothing changes
-# while `t` lives, so the list's own count keeps the object alive: the copy
-# is not retained and `t`'s end releases nothing. Lending `t` to a `mut self`
+# `[RC-3]` — `t` is a view of an element of `nodes`: no owner is made, so no count
+# is taken and `t`'s end releases nothing. Lending `t` to a `mut self`
 # method or a borrowed parameter cannot re-point it. Fresh constructor
 # temporaries transfer into the list, so insertion also needs no retain.
 
@@ -30,7 +29,7 @@ fn main():
     nodes.push(owns Node(2))
     total = 0
     for i in 0..10:
-        t = nodes[i % 2]
+        t = ref mut nodes[i % 2]
         t.bump()
         total += value_of(t)
     println(total)

@@ -46,19 +46,19 @@ fn play_turn(player: Player, ref mut dice: Dice) -> int:
 fn main():
     dice = Dice(seed=2024)
     players = [
-        Player("cautious", Strategy.HoldAt(15)),
-        Player("greedy", Strategy.HoldAt(30)),
-        Player("counter", Strategy.RollTimes(3)),
+        shares mut Player("cautious", Strategy.HoldAt(15)),
+        shares mut Player("greedy", Strategy.HoldAt(30)),
+        shares mut Player("counter", Strategy.RollTimes(3)),
     ]
     round = 1
-    winner: Option[Player] = None
+    winner: Option[shares mut Player] = None
     while winner is None and round <= 50:
         println(f"round {round}")
         for p in players:
             p.score += play_turn(p, ref mut dice)
             p.turns += 1
             if p.score >= TARGET:
-                winner = Some(p)
+                winner = Some(shares mut p)
                 break
         round += 1
 

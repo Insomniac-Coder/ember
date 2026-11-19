@@ -396,11 +396,6 @@ impl<'a> FnCx<'_, 'a> {
                     self.emit(format!("call void {helper}(ptr {handle})"));
                     return Ok(());
                 }
-                if weak_inner(table, id).is_some() {
-                    let handle = self.load(Sc::Ptr, ptr, align.min(8));
-                    self.call_rt("weak_retain", vec![Val::Imm(Sc::Ptr, handle)], None);
-                    return Ok(());
-                }
                 if def.name.as_str().starts_with("MaybeUninit_") || !def.drops_fields {
                     return Ok(());
                 }
@@ -456,7 +451,6 @@ impl<'a> FnCx<'_, 'a> {
             TyKind::Struct(id) => {
                 let def = table.struct_def(*id);
                 crate::func::shared_inner(table, *id).is_some()
-                    || weak_inner(table, *id).is_some()
                     || (!def.name.as_str().starts_with("MaybeUninit_")
                         && def.drops_fields
                         && def.fields.iter().any(|field| self.holds_counts(field.ty)))
@@ -570,6 +564,16 @@ impl<'a> FnCx<'_, 'a> {
         let table = self.m.ty.table;
         match table.kind(ty).clone() {
             TyKind::Class(_) | TyKind::ClassInterface(_) => self.drop_at(ptr, align, ty)?,
+            // `[WK-11]` — a link's end subtracts one from its target's weak count; `[RC-1]` an owner's
+            // end one from its count.
+            TyKind::Link { kind: ember_types::LinkKind::Weakref | ember_types::LinkKind::WeakrefThreadShared, .. } => {
+                let handle = self.load(Sc::Ptr, ptr, align.min(8));
+                self.call_rt("weak_release", vec![Val::Imm(Sc::Ptr, handle)], None);
+            }
+            TyKind::Link { target, .. } => {
+                let handle = self.load(Sc::Ptr, ptr, align.min(8));
+                self.release_handle(&handle, target);
+            }
             // `[CLO-10]` — an owned callable value ends its captured state.
             TyKind::Fn { abi: None, .. } => {
                 let descriptor_at = self.gep(ptr, 8);
@@ -638,11 +642,6 @@ impl<'a> FnCx<'_, 'a> {
             let handle = self.load(Sc::Ptr, ptr, align.min(8));
             let helper = count_helper(self.m, "release", "any");
             self.emit(format!("call void {helper}(ptr {handle})"));
-            return Ok(());
-        }
-        if weak_inner(table, id).is_some() {
-            let handle = self.load(Sc::Ptr, ptr, align.min(8));
-            self.call_rt("weak_release", vec![Val::Imm(Sc::Ptr, handle)], None);
             return Ok(());
         }
         if let Some(inner) = table.compiler_box_inner(id) {
@@ -949,7 +948,8 @@ pub(crate) fn shared_type_info(m: &mut Module<'_>, id: ember_types::StructId) ->
     } else {
         "null".to_string()
     };
-    let display = format!("{}[{}]", if sync { "SyncShared" } else { "Shared" }, table.display(inner));
+    // `[RT-7]` — the value is named by its own type: "too many owners of a `Counter`".
+    let display = table.display(inner);
     let name = m.bytes(display.as_bytes());
     // Annex B — a shared value's type information has no identity of its own.
     let (identity_ty, identity) = if m.reload.is_some() { (", ptr", ", ptr null") } else { ("", "") };
@@ -996,14 +996,6 @@ fn refcell_for_guard(table: &ember_types::TypeTable, guard: Ty) -> Option<Ty> {
     })
 }
 
-pub(crate) fn weak_inner(table: &ember_types::TypeTable, id: ember_types::StructId) -> Option<Ty> {
-    let def = table.struct_def(id);
-    match &def.origin {
-        Some((name, args)) if name.is("Weak") && args.len() == 1 => Some(args[0]),
-        _ => None,
-    }
-}
-
 /// `[RC-4]`, `[RT-10]` — the header's inline count operations, reproduced: `kind` is `plain`
 /// (a class that is not `@sync`), `sync` (one that is) or `any` (read from the type
 /// information). The fast path is in line; only a count at its end calls the runtime.
@@ -1012,19 +1004,14 @@ pub(crate) fn count_helper(m: &mut Module<'_>, operation: &str, kind: &str) -> S
     if m.helper_defined(&symbol) {
         return global_name(&symbol);
     }
-    let debug = m.profile == Profile::Debug;
     let mut cx = FnCx::glue(m);
     let object = "%p0";
     match (operation, kind) {
         ("retain", "plain") | ("release", "plain") => {
-            // `EMBER_OBJ_CHECK_THREAD` in the debug profile (`[FFI-33a]`), then the count.
             let (live, fast, slow, done) = (cx.label(), cx.label(), cx.label(), cx.label());
             let null = cx.value(format!("icmp eq ptr {object}, null"));
             cx.emit(format!("br i1 {null}, label %{slow}, label %{live}"));
             cx.start(&live);
-            if debug {
-                cx.call_rt("obj_check_thread", vec![Val::Imm(Sc::Ptr, object.to_string())], None);
-            }
             let strong = cx.load(Sc::I(32), object, 8);
             let room = if operation == "retain" {
                 // `[RT-7]` — room below the maximum: `strong - 1 < EMBER_COUNT_MAX - 1`.

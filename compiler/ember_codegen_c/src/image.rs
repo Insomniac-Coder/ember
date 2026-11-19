@@ -660,13 +660,6 @@ impl<'a> Planner<'a> {
         }
     }
 
-    fn weak_inner_id(&self, id: StructId) -> Option<Ty> {
-        match &self.types.struct_def(id).origin {
-            Some((name, args)) if name.is("Weak") && args.len() == 1 => Some(args[0]),
-            _ => None,
-        }
-    }
-
     pub fn type_schema(&self, ty: Ty, seen: &mut Vec<Ty>) -> u64 {
         type_schema(self.types, ty, seen)
     }
@@ -678,10 +671,10 @@ impl<'a> Planner<'a> {
         }
         seen.push(ty);
         let holds = match self.types.kind(ty) {
-            TyKind::Class(_) | TyKind::ClassInterface(_) | TyKind::Dyn { .. } | TyKind::Fn { .. } => true,
+            // `[RC-1]`, `[WK-11]` — an owner or a link names its target's block.
+            TyKind::Class(_) | TyKind::ClassInterface(_) | TyKind::Dyn { .. } | TyKind::Fn { .. } | TyKind::Link { .. } => true,
             TyKind::Struct(id) => {
                 self.shared_inner_id(*id).is_some()
-                    || self.weak_inner_id(*id).is_some()
                     || self.box_inner_id(*id).is_some_and(|inner| self.holds_objects(inner, seen))
                     || self.types.struct_def(*id).fields.iter().map(|field| field.ty).collect::<Vec<_>>().into_iter().any(|field| self.holds_objects(field, seen))
             }
@@ -907,7 +900,8 @@ impl<'a> Planner<'a> {
                 TyKind::Enum(id) if this.types.option_niche(*id).is_some_and(|niche| matches!(this.types.kind(niche.payload), TyKind::Class(_))) => {
                     ("EMBER_RL_KIND_OPTION_HANDLE", String::new())
                 }
-                TyKind::Struct(id) if this.weak_inner_id(*id).is_some() => ("EMBER_RL_KIND_WEAK", String::new()),
+                TyKind::Link { kind: ember_types::LinkKind::Weakref | ember_types::LinkKind::WeakrefThreadShared, .. } => ("EMBER_RL_KIND_WEAK", String::new()),
+                TyKind::Link { .. } => ("EMBER_RL_KIND_HANDLE", String::new()),
                 TyKind::Struct(id) if this.shared_inner_id(*id).is_some() => ("EMBER_RL_KIND_HANDLE", String::new()),
                 TyKind::Struct(id) if this.has_schema(elem) => ("EMBER_RL_KIND_STRUCT", this.types.struct_def(*id).name.to_string()),
                 TyKind::Enum(id) if !this.types.enum_is_bare(*id) && this.has_schema(elem) => {
@@ -978,9 +972,7 @@ impl<'a> Planner<'a> {
                 }
             }
             TyKind::Struct(id) => {
-                if self.weak_inner_id(*id).is_some() {
-                    shape.kind = "EMBER_RL_KIND_WEAK";
-                } else if self.shared_inner_id(*id).is_some() {
+                if self.shared_inner_id(*id).is_some() {
                     shape.kind = "EMBER_RL_KIND_HANDLE";
                 } else if let Some(element) = self.soa_element(ty) {
                     // `[HR-13]` — an `SoA[T]`'s elements migrate through it, column by column.
@@ -1099,7 +1091,8 @@ impl<'a> Planner<'a> {
                     shape.layout = Some(self.layout_table(ty, w));
                 }
             },
-            TyKind::Struct(id) if self.weak_inner_id(id).is_some() => shape.kind = "EMBER_RL_KIND_WEAK",
+            TyKind::Link { kind: ember_types::LinkKind::Weakref | ember_types::LinkKind::WeakrefThreadShared, .. } => shape.kind = "EMBER_RL_KIND_WEAK",
+            TyKind::Link { .. } => shape.kind = "EMBER_RL_KIND_HANDLE",
             TyKind::Struct(id) if self.shared_inner_id(id).is_some() => shape.kind = "EMBER_RL_KIND_HANDLE",
             TyKind::Struct(id) if self.box_inner_id(id).is_none() => {
                 shape.kind = "EMBER_RL_KIND_TUPLE";
@@ -1830,6 +1823,7 @@ impl<'a> Planner<'a> {
                     None => at,
                     Some(variant) => self.types.enum_def(*id).variants[variant].fields.get(*index).map(|f| f.ty).unwrap_or(at),
                 },
+                (Projection::Field(0), TyKind::Link { .. }) => self.types.link_field(at).unwrap_or(at),
                 (Projection::Field(index), TyKind::Struct(id)) => self.types.struct_def(*id).fields.get(*index).map(|f| f.ty).unwrap_or(at),
                 (Projection::Field(index), TyKind::Class(id)) => self.types.class_field_at(*id, *index).map(|field| field.ty).unwrap_or(at),
                 (Projection::Field(index), TyKind::Tuple(items)) => items.get(*index).copied().unwrap_or(at),
@@ -1871,7 +1865,7 @@ impl<'a> Planner<'a> {
         }
         seen.push(ty);
         match self.types.kind(ty).clone() {
-            TyKind::Struct(id) if self.weak_inner_id(id).is_none() && self.shared_inner_id(id).is_none() && self.box_inner_id(id).is_none() => {
+            TyKind::Struct(id) if self.shared_inner_id(id).is_none() && self.box_inner_id(id).is_none() => {
                 let def = self.types.struct_def(id);
                 out.insert(def.name.to_string());
                 for field in def.fields.iter().map(|field| field.ty).collect::<Vec<_>>() {
@@ -2097,7 +2091,7 @@ impl<'a> Planner<'a> {
     /// Whether `ty` is a struct the image defines (not a view, an alias or an erased one).
     fn structural_type_emitted(&self, ty: Ty) -> bool {
         let TyKind::Struct(id) = self.types.kind(ty) else { return false };
-        self.box_inner_id(*id).is_none() && self.shared_inner_id(*id).is_none() && self.weak_inner_id(*id).is_none()
+        self.box_inner_id(*id).is_none() && self.shared_inner_id(*id).is_none()
     }
 }
 

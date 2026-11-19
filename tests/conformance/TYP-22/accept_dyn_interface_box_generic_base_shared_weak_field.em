@@ -7,7 +7,7 @@
 #$ assert-c: contains("ember_weak_upgrade(")
 #$ assert-c: !contains("ember_box_new_copy")
 
-# A generic derived class uses its inherited Weak[Shared[T]] field through a
+# A generic derived class uses its inherited weakref T field through a
 # Box[dyn Render] adapter. Base layout and super.init retain/drop the weak
 # observer normally; dynamic dispatch still observes the payload via get().
 interface Render:
@@ -18,26 +18,25 @@ struct Token:
 
 [T]
 open class Base:
-    weak: Weak[Shared[Token]]
+    weak: weakref Token
     marker: T
 
-    fn init(weak: Weak[Shared[Token]], marker: T):
-        this.weak = weak
+    fn init(weak: weakref Token, marker: T):
+        this.weak = weakref weak
         this.marker = marker
 
 [T]
 class Pixel(Base[T]) implements Render:
-    fn init(weak: Weak[Shared[Token]], marker: T):
+    fn init(weak: weakref Token, marker: T):
         super.init(weak, marker)
 
     fn render() -> i32:
-        match this.weak.upgrade():
-            Some(owner):
-                return owner.get().value
-            None:
-                return 0
+        if this.weak exists as owner:
+            return owner.value
+        else:
+            return 0
 
 fn main():
-    strong = Shared(Token(7))
-    boxed: owns dyn Render = owns Pixel[bool](Weak(strong), true)
+    strong = shares mut Token(7)
+    boxed: owns dyn Render = owns Pixel[bool](weakref strong, true)
     println(boxed.render())

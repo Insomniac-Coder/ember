@@ -36,10 +36,10 @@ fn main():
     ages["ada"] = 36
     seen: Set[int] = {1, 2}
     boxed: owns i64 = owns 5
-    shared = Shared(6)
+    shared = shares mut 6
     doubled = [x * 2 for x in xs]
     pairs = {"a": 1, "b": 2}
     odd = {x for x in xs if x % 2 == 1}
     many = four(1, 2, 3, 4)
     few = three(1, 2, 3)
-    println(node.value, xs.len(), name.len(), ages.len(), seen.len(), pairs.len(), boxed, shared.get(), empty.len() + 3, odd.len(), few(), text.len() - 5, buf.len() + 2, many(), total(doubled))
+    println(node.value, xs.len(), name.len(), ages.len(), seen.len(), pairs.len(), boxed, shared, empty.len() + 3, odd.len(), few(), text.len() - 5, buf.len() + 2, many(), total(doubled))

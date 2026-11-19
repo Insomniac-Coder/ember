@@ -46,9 +46,9 @@ fn main():
     r5: ref int = ref p.b
     println(r1 is r2, r1 is r3, r4 is r5, r is ref n, r is not ref m)
     first = Node(1)
-    alias = first
-    other = Node(1)
-    f1: ref Node = ref first
-    f2: ref Node = ref alias
-    f3: ref Node = ref other
+    alias = shares mut first
+    other = shares mut Node(1)
+    f1: ref shares mut Node = ref first
+    f2: ref shares mut Node = ref alias
+    f3: ref shares mut Node = ref other
     println(f1 is f2, f1 is f3, first is alias)

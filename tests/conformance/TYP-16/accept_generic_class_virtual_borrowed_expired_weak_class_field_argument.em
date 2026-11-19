@@ -8,14 +8,14 @@
 #$ assert-c-count: contains("ember_weak_release(") == 1
 #$ assert-c: contains("ember_weak_upgrade(")
 
-# A borrowed Weak[Token] class field crossing a generic virtual call remains a
+# A borrowed weakref Token class field crossing a generic virtual call remains a
 # non-owning observer after its class target has expired. The derived override
 # must take the None path without copying the field at dispatch.
 class Token:
     value: i32
 
 class Holder:
-    weak: Weak[Token]
+    weak: weakref Token
 
 [T]
 open class Base:
@@ -24,28 +24,26 @@ open class Base:
     fn init(marker: T):
         this.marker = marker
 
-    virtual fn observe(weak: Weak[Token]) -> i32:
-        match weak.upgrade():
-            Some(owner):
-                return owner.value
-            None:
-                return 0
+    virtual fn observe(weak: weakref Token) -> i32:
+        if weak exists as owner:
+            return owner.value
+        else:
+            return 0
 
 [T]
 class Derived(Base[T]):
     fn init(marker: T):
         super.init(marker)
 
-    override fn observe(weak: Weak[Token]) -> i32:
-        match weak.upgrade():
-            Some(owner):
-                return owner.value
-            None:
-                return 0
+    override fn observe(weak: weakref Token) -> i32:
+        if weak exists as owner:
+            return owner.value
+        else:
+            return 0
 
 fn expired_holder() -> Holder:
     strong = Token(7)
-    return Holder(Weak(strong))
+    return Holder(weakref strong)
 
 fn main():
     holder = expired_holder()

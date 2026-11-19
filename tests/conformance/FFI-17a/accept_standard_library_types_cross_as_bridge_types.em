@@ -54,7 +54,7 @@ fn main():
                 println(error.what)
         match cpp.shared_counter(9):
             Ok(shared):
-                again = shared.clone()
+                again = copy of shared
                 println(shared.get().value(), cpp.owners(again), again.get().value() - 8)
             Err(error):
                 println(error.what)

@@ -130,6 +130,35 @@ pub struct FnParam {
     pub mode: FnParamMode,
 }
 
+/// `[OWN-13]`, `[TYP-45]` — the kind of a `TyKind::Link`.
+#[derive(serde::Serialize, serde::Deserialize, Copy, Clone, PartialEq, Eq, Hash, Debug)]
+pub enum LinkKind {
+    Shares,
+    SharesMut,
+    ThreadShared,
+    Weakref,
+    /// A link to a `thread_shared` value (`[WK-11]`), whose weak count is atomic.
+    WeakrefThreadShared,
+}
+
+impl LinkKind {
+    /// Whether this is a link, which keeps nothing alive, and not an owner.
+    pub fn is_weak(self) -> bool {
+        matches!(self, LinkKind::Weakref | LinkKind::WeakrefThreadShared)
+    }
+
+    /// The word as the program writes it.
+    pub fn word(self) -> &'static str {
+        match self {
+            LinkKind::Shares => "shares",
+            LinkKind::SharesMut => "shares mut",
+            LinkKind::ThreadShared => "thread_shared",
+            LinkKind::Weakref => "weakref",
+            LinkKind::WeakrefThreadShared => "weakref thread_shared",
+        }
+    }
+}
+
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub enum TyKind {
     Bool,
@@ -196,6 +225,10 @@ pub enum TyKind {
     Tuple(Vec<Ty>),
     Ref { mutable: bool, inner: Ty },
     Ptr { mutable: bool, inner: Ty },
+    /// `[RC-1]`, `[WK-11]`, `[TYP-45]` — one more owner of `target` (`shares`, `shares mut`,
+    /// `thread_shared`) or a link to it (`weakref`): one pointer, to the object for a class target and
+    /// to a `{header, value}` block for any other (`gap/03` D4). Not `Copy`; it needs drop.
+    Link { kind: LinkKind, target: Ty },
     Array { elem: Ty, len: u64 },
     /// `[TYP-41]` — `[T; n]` whose length names a `const` parameter, in
     /// generic code; a length that is a number is `Array`.
@@ -850,6 +883,84 @@ impl TypeTable {
         self.lookup.get(kind).copied()
     }
 
+    /// `[RC-1]`, `[WK-11]` (D4) — a link to a value that is not a class object is one pointer to a
+    /// block holding the header of `[OBJ-1]` and the value after it, as `Shared[T]`'s block: its one
+    /// logical field (`Field(0)`) is the pointer to the value, which the checker interns with the link.
+    /// `None` for a class target, whose link is the object's own pointer.
+    pub fn link_payload(&self, ty: Ty) -> Option<Ty> {
+        match *self.kind(ty) {
+            TyKind::Link { target, .. } if !matches!(self.kind(target), TyKind::Class(_)) => {
+                self.find(&TyKind::Ptr { mutable: true, inner: target })
+            }
+            _ => None,
+        }
+    }
+
+    /// `[BLD-FFI-5a]` — the class of a `thread_shared` owner of an object.
+    pub fn thread_shared_object(&self, ty: Ty) -> Option<ClassId> {
+        let TyKind::Link { kind: LinkKind::ThreadShared, target } = *self.kind(ty) else { return None };
+        match *self.kind(target) {
+            TyKind::Class(id) => Some(id),
+            _ => None,
+        }
+    }
+
+    /// `[RC-4]` — every class a `thread_shared` type names counts its owners atomically, with its whole
+    /// family, since an object is reached through its base classes too. Biased counting replaces this
+    /// with the two counts on the header of M6b. Gives the families that also have `shares mut` owners.
+    pub fn settle_thread_shared(&mut self) -> Vec<ClassId> {
+        let root = |types: &Self, mut id: ClassId| {
+            while let Some(base) = types.class_def(id).base {
+                id = base;
+            }
+            id
+        };
+        let roots_of = |types: &Self, wanted: LinkKind| -> HashSet<ClassId> {
+            types
+                .kinds
+                .iter()
+                .filter_map(|kind| match kind {
+                    TyKind::Link { kind, target } if *kind == wanted => match types.kind(*target) {
+                        TyKind::Class(id) => Some(root(types, *id)),
+                        _ => None,
+                    },
+                    _ => None,
+                })
+                .collect()
+        };
+        let roots = roots_of(self, LinkKind::ThreadShared);
+        if roots.is_empty() {
+            return Vec::new();
+        }
+        let changing = roots_of(self, LinkKind::SharesMut);
+        let family: Vec<ClassId> = self.classes().map(|(id, _)| id).filter(|&id| roots.contains(&root(self, id))).collect();
+        for id in family {
+            self.class_def_mut(id).is_sync = true;
+        }
+        let mut both: Vec<ClassId> = roots.intersection(&changing).copied().collect();
+        both.sort_by_key(|id| id.0);
+        both
+    }
+
+    /// A link of `kind` to `target`, with the pointer type `link_payload` finds for a value in a block.
+    pub fn intern_link(&mut self, kind: LinkKind, target: Ty) -> Ty {
+        if !matches!(self.kind(target), TyKind::Class(_)) {
+            self.intern(TyKind::Ptr { mutable: true, inner: target });
+        }
+        self.intern(TyKind::Link { kind, target })
+    }
+
+    /// `[RC-1]` (M4 slice C) — the type of a link's one logical field (`Field(0)`): the pointer to the
+    /// value in its block, or, for a link to a class object, the object's handle: the link is the
+    /// object's own pointer, so an owner read where the object is wanted is that same place, with no
+    /// count.
+    pub fn link_field(&self, ty: Ty) -> Option<Ty> {
+        match *self.kind(ty) {
+            TyKind::Link { target, .. } if matches!(self.kind(target), TyKind::Class(_)) => Some(target),
+            _ => self.link_payload(ty),
+        }
+    }
+
     pub fn intern(&mut self, kind: TyKind) -> Ty {
         if let Some(&ty) = self.lookup.get(&kind) {
             return ty;
@@ -892,7 +1003,7 @@ impl TypeTable {
         match self.kind(ty) {
             TyKind::Param { .. } | TyKind::ArrayN { .. } => true,
             TyKind::Const(value) => value.mentions_params(),
-            TyKind::Ref { inner, .. } | TyKind::Ptr { inner, .. } => {
+            TyKind::Ref { inner, .. } | TyKind::Ptr { inner, .. } | TyKind::Link { target: inner, .. } => {
                 self.is_generic_in(*inner, seen)
             }
             TyKind::Array { elem, .. } | TyKind::Vec { elem, .. } => self.is_generic_in(*elem, seen),
@@ -1042,6 +1153,10 @@ impl TypeTable {
     pub fn substitute_self(&mut self, ty: Ty, concrete: Ty) -> Ty {
         match self.kind(ty).clone() {
             TyKind::Param { index, .. } if index == SELF_PARAM => concrete,
+            TyKind::Link { kind, target } => {
+                let target = self.substitute_self(target, concrete);
+                self.intern_link(kind, target)
+            }
             TyKind::Ref { mutable, inner } => {
                 let inner = self.substitute_self(inner, concrete);
                 self.intern(TyKind::Ref { mutable, inner })
@@ -1114,6 +1229,10 @@ impl TypeTable {
             },
             TyKind::Param { index, .. } => {
                 args.get(index as usize).copied().unwrap_or(ty)
+            }
+            TyKind::Link { kind, target } => {
+                let target = self.substitute(target, args);
+                self.intern_link(kind, target)
             }
             TyKind::Ref { mutable, inner } => {
                 let inner = self.substitute(inner, args);
@@ -1539,12 +1658,14 @@ impl TypeTable {
     }
 
     /// `[EXC-19]` — whether field `index` of class `id` (object layout, bases
-    /// first) has its own access word: every non-`Copy` field. A `Copy`
-    /// field's reads and writes are instantaneous and never checked
+    /// first) has its own access word: every non-`Copy` field but a class object's handle. A `Copy`
+    /// field's reads and writes, and a handle's, are one word and instantaneous, and never checked
     /// (`[EXC-17]`). Immutable `@sync` objects need no access words.
     pub fn class_field_has_access_word(&self, id: ClassId, index: usize) -> bool {
         !self.class_def(id).is_sync
-            && self.class_field_at(id, index).is_some_and(|field| !self.is_copy(field.ty))
+            && self.class_field_at(id, index).is_some_and(|field| {
+                !self.is_copy(field.ty) && !matches!(self.kind(field.ty), TyKind::Class(_) | TyKind::ClassInterface(_))
+            })
     }
 
     /// Number of fields physically present in the object, including bases.
@@ -1699,7 +1820,7 @@ impl TypeTable {
                 align: self.pointer_size,
                 field_offsets: vec![0, self.pointer_size, self.pointer_size * 2],
             },
-            TyKind::Ref { .. } | TyKind::Ptr { .. } | TyKind::Fn { .. } | TyKind::CStr => {
+            TyKind::Ref { .. } | TyKind::Ptr { .. } | TyKind::Fn { .. } | TyKind::CStr | TyKind::Link { .. } => {
                 Layout::scalar(self.pointer_size)
             }
             TyKind::Array { elem, len } => {
@@ -1814,6 +1935,11 @@ impl TypeTable {
         match self.kind(ty) {
             TyKind::Ref { .. } | TyKind::Ptr { .. } | TyKind::Span { .. } | TyKind::Str | TyKind::Error => false,
             TyKind::Dyn { .. } => false,
+            // `[TYP-45]` (M4 slice C) — a class handle is the object's address, not `Copy`: a parameter
+            // that reads the object takes that address, with no count and no second indirection.
+            TyKind::Class(_) | TyKind::ClassInterface(_) => false,
+            // An owner of an object is that object's address too (`[RC-2a]`).
+            TyKind::Link { target, .. } if matches!(self.kind(*target), TyKind::Class(_)) => false,
             // A view (a `@view` struct, a tuple holding one) is already a
             // borrow and passes as itself, keeping each field's own region.
             _ if self.is_view(ty) => false,
@@ -1912,7 +2038,7 @@ impl TypeTable {
     fn thread_properties(&self, ty: Ty, visiting: &mut HashSet<Ty>, params: &dyn Fn(Ty) -> Option<(bool, bool)>) -> (bool, bool) {
         if !visiting.insert(ty) {
             // Recursive value storage is impossible without indirection. A
-            // recursive @sync handle is safe once its declaration is checked.
+            // recursive class is judged by its other fields.
             return (true, true);
         }
         if matches!(self.kind(ty), TyKind::Param { .. } | TyKind::Assoc { .. })
@@ -1923,6 +2049,13 @@ impl TypeTable {
         }
         let both = |child, visiting: &mut HashSet<Ty>| self.thread_properties(child, visiting, params);
         let result = match self.kind(ty) {
+            // `[RC-1]`, `[THR-8]` — a one-thread owner or link is neither `Send` nor `ThreadShared`; a
+            // `thread_shared` owner is both when its target is.
+            TyKind::Link { kind: LinkKind::ThreadShared | LinkKind::WeakrefThreadShared, target } => {
+                let (send, sync) = both(*target, visiting);
+                (send && sync, send && sync)
+            }
+            TyKind::Link { .. } => (false, false),
             // `[TYP-41]` — a number, sent and shared as one is.
             TyKind::Const(_) => (true, true),
             // ODR-102 — an owned callable value hides what it captured, so it stays on the
@@ -1935,9 +2068,16 @@ impl TypeTable {
             | TyKind::Float(_) | TyKind::CLongDouble | TyKind::Void | TyKind::Never | TyKind::Str
             | TyKind::Range(_) | TyKind::Fn { .. } | TyKind::FnItem { .. } | TyKind::Error => (true, true),
             TyKind::Newtype(id) => both(self.newtype_def(*id).repr, visiting),
+            // `[THR-8]`, `[THR-9]` — a class object by its class's fields, inherited ones included.
             TyKind::Class(id) => {
-                let safe = self.class_def(*id).is_sync;
-                (safe, safe)
+                let mut facts = (true, true);
+                for index in 0..self.class_field_count(*id) {
+                    if let Some(field) = self.class_field_at(*id, index) {
+                        let (send, shared) = both(field.ty, visiting);
+                        facts = (facts.0 && send, facts.1 && shared);
+                    }
+                }
+                facts
             }
             TyKind::CStr => (false, false),
             TyKind::Ref { mutable, inner } | TyKind::Span { mutable, elem: inner } => {
@@ -1965,9 +2105,6 @@ impl TypeTable {
                         (send && sync, send && sync)
                     } else if name.is("Box") && args.len() == 1 {
                         both(args[0], visiting)
-                    } else if name.is("Weak") && args.len() == 1 {
-                        let (_, sync) = both(args[0], visiting);
-                        (sync, sync)
                     } else if name.is("std.mem.UnsafeCell") && args.len() == 1 {
                         (both(args[0], visiting).0, false)
                     } else if name.is("std.sync.Mutex") && args.len() == 1 {
@@ -2028,7 +2165,7 @@ impl TypeTable {
         };
         // `[TYP-35]` — a phantom parameter counts as a field of its type.
         let mut result = match self.kind(ty) {
-            TyKind::Struct(_) | TyKind::Enum(_) => self.phantoms(ty).iter()
+            TyKind::Struct(_) | TyKind::Enum(_) | TyKind::Class(_) => self.phantoms(ty).iter()
                 .map(|&arg| both(arg, visiting))
                 .fold(result, |a, b| (a.0 && b.0, a.1 && b.1)),
             _ => result,
@@ -2167,6 +2304,12 @@ impl TypeTable {
     /// `Cell[T]` print as the `T` they hold (`Box(5)` prints `5`). A boxed
     /// `dyn` value has no type of its own to print as.
     pub fn printed_as(&self, ty: Ty) -> Option<Ty> {
+        // `[TYP-36]` — an owner prints as the value it owns.
+        if let TyKind::Link { kind, target } = *self.kind(ty)
+            && !kind.is_weak()
+        {
+            return Some(target);
+        }
         let TyKind::Struct(id) = *self.kind(ty) else { return None };
         // `[TYP-32]` — a `some Display` (or `Debug`) prints as the value it holds.
         if let Some(&(display, debug)) = self.some_prints.get(&id) {
@@ -2224,6 +2367,8 @@ impl TypeTable {
 
     fn copy_with(&self, ty: Ty, params: bool) -> bool {
         match self.kind(ty) {
+            // `[RC-1]`, `[WK-11]` — an owner or a link is never `Copy`.
+            TyKind::Link { .. } => false,
             TyKind::Const(_) => true,
             // `[CLO-3]` — an owned callable value owns its captured state,
             // so it moves; only `extern fn` is `Copy` (Part VI's list).
@@ -2258,10 +2403,9 @@ impl TypeTable {
                 let def = self.struct_def(*id);
                 def.derives_copy && !def.has_drop && def.fields.iter().all(|f| self.copy_with(f.ty, params))
             }
-            // `[OWN-7]` explicitly makes class handles Copy, with retain and
-            // release emitted by the ownership/codegen stages rather than a
-            // raw bitwise copy.
-            TyKind::Class(_) | TyKind::ClassInterface(_) => true,
+            // `[TYP-45]`, `[OWN-3]` (M4 slice C) — a class object has one owner: `=` and an `owns`
+            // argument hand it over, and a second owner is written `shares`/`shares mut` (`[RC-1]`).
+            TyKind::Class(_) | TyKind::ClassInterface(_) => false,
             // `[ENM-3]` — a unit-only enum is `Copy` automatically, because it
             // is only its discriminant. `[ENM-4]` — a payload enum needs
             // `@derive(Copy)`, like a struct.
@@ -2307,6 +2451,12 @@ impl TypeTable {
     /// `[CORO-3]` — whether a struct is a `gen fn`'s frame.
     pub fn is_coroutine_frame_struct(&self, id: StructId) -> bool {
         self.coroutine_frame_params(id).is_some()
+    }
+
+    /// `[CORO-1]` (M4 slice C) — whether field `index` of a frame holds a parameter that was only read:
+    /// a class object given so is held by a count the frame gives back when it ends.
+    pub fn coroutine_field_is_read_parameter(&self, id: StructId, index: usize) -> bool {
+        self.coroutine_frame_params(id).is_some_and(|params| matches!(params.get(index), Some(FrameParam::Borrowed)))
     }
 
     fn coroutine_frame_params(&self, id: StructId) -> Option<&Vec<FrameParam>> {
@@ -2711,6 +2861,7 @@ impl TypeTable {
     /// inside its declared validity interval.
     pub fn is_builtin_zeroable(&self, ty: Ty) -> bool {
         match self.kind(ty) {
+            TyKind::Link { .. } => false,
             TyKind::Const(_) => true,
             TyKind::Bool
             | TyKind::Char
@@ -2791,16 +2942,16 @@ impl TypeTable {
     /// elaboration (Part XVIII §4.9).
     pub fn needs_drop(&self, ty: Ty) -> bool {
         match self.kind(ty) {
+            // `[RC-1]`, `[WK-11]` — an owner's end subtracts one, and so does a link's.
+            TyKind::Link { .. } => true,
             TyKind::Struct(id) => {
                 let def = self.struct_def(*id);
-                // `[WK-2]` — compiler-known weak handles are Copy wrappers
-                // with custom control-block release glue. `has_drop` stays
-                // false so Copy remains valid; their canonical origin is the
-                // separate signal that drop elaboration must run.
+                // `[HEAP-3]` — a block of `shares` and `SyncShared[T]` are counted: `has_drop` stays
+                // false, and their canonical origin is the signal that drop elaboration must run.
                 matches!(
                     &def.origin,
                     Some((name, args))
-                        if (name.is("Weak") || name.is("Shared") || name.is("SyncShared")) && args.len() == 1
+                        if (name.is("Shared") || name.is("SyncShared")) && args.len() == 1
                 ) || def.has_drop
                     || (def.drops_fields && def.fields.iter().any(|f| self.needs_drop(f.ty)))
             }
@@ -3110,6 +3261,7 @@ impl TypeTable {
 
     fn render(&self, ty: Ty, user: bool) -> String {
         match self.kind(ty) {
+            TyKind::Link { kind, target } => format!("{} {}", kind.word(), self.render(*target, user)),
             TyKind::CLongDouble => "c_longdouble".into(),
             TyKind::VaList => "VaList".into(),
             TyKind::Bool => "bool".into(),
@@ -3273,6 +3425,8 @@ impl TypeTable {
     /// the type table, so two modules' `Thing` types cannot collide.
     pub fn canonical_name(&self, ty: Ty) -> Result<String, CanonicalTypeError> {
         Ok(match self.kind(ty) {
+            // `[MNG-6]` — the type words as written.
+            TyKind::Link { kind, target } => format!("{} {}", kind.word(), self.canonical_name(*target)?),
             TyKind::CLongDouble => "std.ffi.c_longdouble".into(),
             TyKind::VaList => "std.ffi.VaList".into(),
             TyKind::Bool => "bool".into(),
@@ -4379,9 +4533,15 @@ mod tests {
     }
 
     #[test]
-    fn explicit_sync_handle_has_thread_properties_and_no_access_words() {
+    fn a_class_is_send_by_its_fields_and_an_atomic_one_has_no_access_words() {
         let (mut table, c) = TypeTable::new();
         let array = table.intern(TyKind::Vec { elem: c.i64, text: false });
+        let ptr = table.intern(TyKind::Ptr { mutable: false, inner: c.i64 });
+        let pinned = table.add_class(ClassDef {
+            name: Symbol::intern("Pinned"), fields: vec![field("value", ptr)],
+            span: Span::DUMMY, is_sync: false, openness: ClassOpenness::Final,
+            base: None, has_drop: false, origin: None, declaring_module: 0,
+        });
         let local = table.add_class(ClassDef {
             name: Symbol::intern("Local"), fields: vec![field("value", array)],
             span: Span::DUMMY, is_sync: false, openness: ClassOpenness::Final,
@@ -4394,9 +4554,10 @@ mod tests {
         });
         let local_ty = table.intern(TyKind::Class(local));
         let shared_ty = table.intern(TyKind::Class(shared));
-        let ptr = table.intern(TyKind::Ptr { mutable: false, inner: c.i64 });
-        assert!(!table.is_send(local_ty) && !table.is_sync(local_ty));
+        let pinned_ty = table.intern(TyKind::Class(pinned));
+        assert!(table.is_send(local_ty) && table.is_sync(local_ty));
         assert!(table.is_send(shared_ty) && table.is_sync(shared_ty));
+        assert!(!table.is_send(pinned_ty) && !table.is_sync(pinned_ty));
         assert!(!table.is_send(ptr) && !table.is_sync(ptr));
         assert!(table.class_field_has_access_word(local, 0));
         assert!(!table.class_field_has_access_word(shared, 0));
@@ -4493,8 +4654,8 @@ mod tests {
         assert_eq!(table.layout(player), Layout::scalar(8));
         assert_eq!(table.display(player), "Player");
         assert_eq!(table.canonical_name(player).unwrap(), "Player");
-        assert!(table.is_copy(entity));
-        assert!(table.is_copy(player));
+        assert!(!table.is_copy(entity), "[TYP-45] an object has one owner");
+        assert!(!table.is_copy(player));
         assert!(table.needs_drop(entity));
         assert!(table.needs_drop(player));
         assert!(!table.is_view(player));

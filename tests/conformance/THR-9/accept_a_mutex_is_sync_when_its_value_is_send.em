@@ -6,12 +6,11 @@
 
 from std.sync import Mutex
 
-@sync
 class Stats:
     tags: Mutex[Array[String]] = Mutex([])
 
 fn main():
-    stats = Stats()
+    stats = thread_shared Stats()
     with tags = stats.tags.lock():
         tags.push(owns "#x".to_string())
     with tags = stats.tags.lock():

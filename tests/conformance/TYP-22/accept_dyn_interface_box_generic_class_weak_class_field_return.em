@@ -8,29 +8,28 @@
 #$ assert-c: contains("ember_weak_upgrade(")
 #$ assert-c: !contains("ember_box_new_copy")
 
-# A generic class inside Box[dyn Observe] may return a Weak[Token] field. This
+# A generic class inside Box[dyn Observe] may return a weakref Token field. This
 # exercises the class-owner weak family at the dynamic adapter boundary, where
 # the returned observer is separate from both the box and the live Token owner.
 interface Observe:
-    fn observer() -> Weak[Token]
+    fn observer() -> weakref Token
 
 class Token:
     value: i32
 
 [T]
 class Holder implements Observe:
-    weak: Weak[Token]
+    weak: weakref Token
     marker: T
 
-    fn observer() -> Weak[Token]:
-        return this.weak
+    fn observer() -> weakref Token:
+        return weakref this.weak
 
 fn main():
     strong = Token(7)
-    boxed: owns dyn Observe = owns Holder[bool](Weak(strong), true)
+    boxed: owns dyn Observe = owns Holder[bool](weakref strong, true)
     weak = boxed.observer()
-    match weak.upgrade():
-        Some(owner):
-            println(owner.value)
-        None:
-            println(0)
+    if weak exists as owner:
+        println(owner.value)
+    else:
+        println(0)

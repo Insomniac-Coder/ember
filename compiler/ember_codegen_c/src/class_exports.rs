@@ -170,7 +170,7 @@ fn method_plan(emitter: &Emitter<'_>, body: &Body, names: &HashMap<ClassId, Stri
         let split_here = split.is_some_and(|split| split.get(index) == Some(&true));
         let owned = body.param_modes.get(index) == Some(&ParameterMode::Owned);
         let mut crossing = crossing(emitter, decl.ty, &name, names, split_here)?;
-        if owned && let TyKind::Class(_) = emitter.types.kind(decl.ty) {
+        if owned && let TyKind::Class(_) = emitter.types.kind(class_ty(emitter, decl.ty)) {
             // The method keeps the handle it is given: a count of its own.
             retains.push(format!("    {RT}obj_retain((struct {RT}obj_header*){name});"));
             if let Crossed::Handle { kept, .. } = &mut crossing.crossed {
@@ -184,11 +184,11 @@ fn method_plan(emitter: &Emitter<'_>, body: &Body, names: &HashMap<ClassId, Stri
         arguments.extend(crossing.argument);
     }
     let ret_ty = body.return_ty();
-    let (ret, internal_ret, cpp_class_result) = match emitter.types.kind(ret_ty) {
+    let (ret, internal_ret, cpp_class_result) = match emitter.types.kind(class_ty(emitter, ret_ty)) {
         TyKind::Void | TyKind::Never => ("void".to_string(), "void".to_string(), None),
         TyKind::Class(other) => match names.get(other) {
             Some(other_name) => (format!("{other_name}*"), emitter.c_type(ret_ty), Some(other_name.clone())),
-            None => return Err(format!("it returns a `{}`, whose class is not `@sync`", emitter.types.display(ret_ty))),
+            None => return Err(format!("it returns a `{}`, which is not `thread_shared`", emitter.types.display(ret_ty))),
         },
         _ if plain(emitter, ret_ty) => (emitter.c_member_type(ret_ty), emitter.c_member_type(ret_ty), None),
         _ => return Err(format!("it returns a `{}`, which C has no form of", emitter.types.display(ret_ty))),
@@ -241,9 +241,14 @@ fn method_plan(emitter: &Emitter<'_>, body: &Body, names: &HashMap<ClassId, Stri
 
 /// A class handle's type, through a `ref`.
 fn class_ty(emitter: &Emitter<'_>, ty: Ty) -> Ty {
-    match emitter.types.kind(ty) {
+    let held = match emitter.types.kind(ty) {
         TyKind::Ref { inner, .. } => *inner,
         _ => ty,
+    };
+    // `[BLD-FFI-5a]` — a `thread_shared` owner of an object is the object's pointer.
+    match emitter.types.kind(held) {
+        TyKind::Link { target, .. } if matches!(emitter.types.kind(*target), TyKind::Class(_)) => *target,
+        _ => held,
     }
 }
 
@@ -274,7 +279,7 @@ fn crossing(emitter: &Emitter<'_>, ty: Ty, name: &str, names: &HashMap<ClassId, 
     // Another class's object: its handle, which the method borrows.
     if let TyKind::Class(other) = *emitter.types.kind(class_ty(emitter, ty)) {
         let Some(other_name) = names.get(&other) else {
-            return Err(format!("it takes a `{}`, whose class is not `@sync`", emitter.types.display(class_ty(emitter, ty))));
+            return Err(format!("it takes a `{}`, which is not `thread_shared`", emitter.types.display(class_ty(emitter, ty))));
         };
         let by_address = matches!(emitter.types.kind(ty), TyKind::Ref { .. });
         return Ok(Crossing {

@@ -19,7 +19,7 @@ fn fill(ref mut b: Bag, ref mut other: Bag):
 
 fn main():
     b = Bag([])
-    c = b
+    c = shares mut b
     fill(ref mut b, ref mut c)
     for x in c.items:
         println(x)

@@ -8,8 +8,8 @@ struct Pt:
     x: int = 1
 
 fn main():
-    a = mem.size_of[shares Pt]()    #$ error[E0900]: `shares` before a type is not built by this compiler yet
-    b = mem.size_of[thread_shared Pt]()    #$ error[E0900]: `thread_shared` before a type is not built by this compiler yet
-    c = mem.size_of[weakref Pt]()    #$ error[E0900]: `weakref` before a type is not built by this compiler yet
+    a = mem.size_of[shares Pt]()
+    b = mem.size_of[thread_shared Pt]()
+    c = mem.size_of[weakref Pt]()
     d = mem.size_of[sharedref mut Pt]()    #$ error[E0900]: `sharedref mut` before a type is not built by this compiler yet
     println(a, b, c, d)

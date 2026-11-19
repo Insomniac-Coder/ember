@@ -8,29 +8,28 @@
 #$ assert-c: contains("ember_weak_upgrade(")
 #$ assert-c: !contains("ember_box_new_copy")
 
-# A generic class in Box[dyn Observe] returns its Weak[Shared[T]] field through
+# A generic class in Box[dyn Observe] returns its weakref T field through
 # an object-safe interface slot. The result is an independent weak observer;
-# upgrading it still requires the separate Shared owner and explicit get().
+# upgrading it still requires the separate `shares` owner, read as its value.
 interface Observe:
-    fn observer() -> Weak[Shared[Token]]
+    fn observer() -> weakref Token
 
 struct Token:
     value: i32
 
 [T]
 class Observer implements Observe:
-    weak: Weak[Shared[Token]]
+    weak: weakref Token
     marker: T
 
-    fn observer() -> Weak[Shared[Token]]:
-        return this.weak
+    fn observer() -> weakref Token:
+        return weakref this.weak
 
 fn main():
-    strong = Shared(Token(7))
-    boxed: owns dyn Observe = owns Observer[bool](Weak(strong), true)
+    strong = shares mut Token(7)
+    boxed: owns dyn Observe = owns Observer[bool](weakref strong, true)
     weak = boxed.observer()
-    match weak.upgrade():
-        Some(owner):
-            println(owner.get().value)
-        None:
-            println(0)
+    if weak exists as owner:
+        println(owner.value)
+    else:
+        println(0)

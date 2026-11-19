@@ -16,25 +16,30 @@ class Token:
     fn drop():
         println(7)
 
-fn expired() -> Weak[Token]:
+fn expired() -> weakref Token:
     token = Token(42)
-    return Weak(token)
+    return weakref token
 
 fn main():
-    empty = Weak[Token].empty()
-    match empty.upgrade():
-        Some(_) => println(0)
-        None => println(42)
+    empty: weakref Token = None
+    if empty exists as _:
+        println(0)
+    else:
+        println(42)
 
     token = Token(42)
-    weak = Weak(token)
+    weak = weakref token
     copy = weak
-    match copy.upgrade():
-        Some(first) if first.value == 0 => println(0)
-        Some(value) => println(value.value)
-        None => println(0)
+    if copy exists as value:
+        if value.value == 0:
+            println(0)
+        else:
+            println(value.value)
+    else:
+        println(0)
 
     stale = expired()
-    match stale.upgrade():
-        Some(_) => println(0)
-        None => println(42)
+    if stale exists as _:
+        println(0)
+    else:
+        println(42)

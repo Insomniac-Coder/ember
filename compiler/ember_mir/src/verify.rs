@@ -622,6 +622,7 @@ mod tests {
             callable_regions: None,
             closure_environment: None,
             closure_captures_by_move: false,
+            stored_at: Vec::new(),
             path: None,
             class_owner: None,
             class_virtual_slot: None,
@@ -1749,6 +1750,7 @@ fn place_ty(body: &Body, types: &TypeTable, place: &Place) -> Ty {
                 ty = fields.get(*i).map(|f| f.ty).unwrap_or(ty);
                 variant = None;
             }
+            (Projection::Field(0), TyKind::Link { .. }) => ty = types.link_field(ty).unwrap_or(ty),
             (Projection::Field(i), TyKind::Struct(id)) => {
                 let fields = &types.struct_def(*id).fields;
                 ty = fields.get(*i).map(|f| f.ty).unwrap_or(ty);
@@ -1965,6 +1967,7 @@ mod view_invariant_tests {
             callable_regions: None,
             closure_environment: None,
             closure_captures_by_move: false,
+            stored_at: Vec::new(),
             path: None,
             class_owner: None,
             class_virtual_slot: None,
@@ -2184,6 +2187,7 @@ mod interface_upcast_invariant_tests {
             callable_regions: None,
             closure_environment: None,
             closure_captures_by_move: false,
+            stored_at: Vec::new(),
             path: None,
             class_owner: None,
             class_virtual_slot: None,

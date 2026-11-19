@@ -9,11 +9,11 @@
 #$ assert-c: contains("ember_weak_release(")
 #$ assert-c: contains("ember_weak_upgrade(")
 
-# An owned Weak[Shared[Token]] argument crossing a ref mut composed dynamic
+# An owned weakref Token argument crossing a ref mut composed dynamic
 # carrier gets its independent observer copy. The mutable Observe slot updates
 # the generic class, then the Bump slot observes that same payload.
 interface Observe:
-    fn observe(owns weak: Weak[Shared[Token]]) -> i32
+    fn observe(owns weak: weakref Token) -> i32
 
 interface Bump:
     fn bump() -> i32
@@ -26,21 +26,20 @@ class Reader implements Observe, Bump:
     marker: T
     count: i32
 
-    fn observe(owns weak: Weak[Shared[Token]]) -> i32:
+    fn observe(owns weak: weakref Token) -> i32:
         this.count = this.count + 1
-        match weak.upgrade():
-            Some(owner):
-                return owner.get().value
-            None:
-                return 0
+        if weak exists as owner:
+            return owner.value
+        else:
+            return 0
 
     fn bump() -> i32:
         return this.count
 
-fn inspect(ref mut value: dyn Observe + Bump, weak: Weak[Shared[Token]]) -> i32:
-    return value.observe(owns weak) + value.bump()
+fn inspect(ref mut value: dyn Observe + Bump, weak: weakref Token) -> i32:
+    return value.observe(owns (weakref weak)) + value.bump()
 
 fn main():
-    strong = Shared(Token(7))
+    strong = shares mut Token(7)
     reader = Reader[bool](true, 0)
-    println(inspect(ref mut reader, Weak(strong)))
+    println(inspect(ref mut reader, weakref strong))

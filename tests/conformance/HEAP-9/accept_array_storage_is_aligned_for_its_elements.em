@@ -18,5 +18,5 @@ fn main():
     for i in 0..1000:
         xs.push(owns (i as u128))
     grown = misaligned(xs.as_span())
-    copy = xs.clone()
+    copy = copy of xs
     println(align_of[u128](), first, grown, misaligned(copy.as_span()))

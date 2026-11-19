@@ -6,24 +6,23 @@
 #$ assert-c: contains("ember_weak_release(")
 #$ assert-c: contains("ember_weak_upgrade(")
 
-# A Weak[Shared[T]] returned from a class field remains a valid observer after
-# both its source Holder and the last Shared owner leave scope. It retains only
+# A weakref T returned from a class field remains a valid observer after
+# both its source Holder and the last `shares` owner leave scope. It retains only
 # the control block, so upgrade must report None and never resurrect Token.
 struct Token:
     value: i32
 
 class Holder:
-    weak: Weak[Shared[Token]]
+    weak: weakref Token
 
-fn expired() -> Weak[Shared[Token]]:
-    strong = Shared(Token(7))
-    holder = Holder(Weak(strong))
-    return holder.weak
+fn expired() -> weakref Token:
+    strong = shares mut Token(7)
+    holder = Holder(weakref strong)
+    return weakref holder.weak
 
 fn main():
     weak = expired()
-    match weak.upgrade():
-        Some(_):
-            println(0)
-        None:
-            println(7)
+    if weak exists as _:
+        println(0)
+    else:
+        println(7)

@@ -3,7 +3,7 @@
 #$ profiles: debug, development, release
 #$ stdout: 42
 
-# A class weak handle is a non-owning edge, so it does not add a strong edge
+# A class link is a non-owning edge, so it does not add a strong edge
 # to the `[WK-5]` ownership graph. Its live upgrade still yields an owning
 # handle while the original class handle remains alive.
 class Token:
@@ -11,9 +11,8 @@ class Token:
 
 fn main():
     strong = Token(42)
-    weak: Weak[Token] = Weak(strong)
-    match weak.upgrade():
-        Some(owner):
-            println(owner.value)
-        None:
-            println(0)
+    weak: weakref Token = weakref strong
+    if weak exists as owner:
+        println(owner.value)
+    else:
+        println(0)

@@ -2094,19 +2094,25 @@ pub enum Builtin {
     /// box type travel with the operation so the backend can allocate exactly
     /// one `T` without recovering a compiler-private wrapper relationship.
     BoxNew { elem: Ty, boxed: Ty },
-    /// `[HEAP-3]`, `[HEAP-6]` — `Shared(owned value)`. The payload and
-    /// compiler-known handle type travel together so the backend can allocate
-    /// one counted object with the ordinary class-header control block.
+    /// `[HEAP-3]`, `[RC-1]` — a value made in a block of its own with the header of `[OBJ-1]`: `shares
+    /// v` of a value that is not a class object, a local a line shares (D5), and `SyncShared(v)`. The
+    /// value and the block's type (`Shared[T]`'s, whose type information the backend writes) travel
+    /// together, so the backend allocates one counted block and moves the value in.
     SharedNew { elem: Ty, shared: Ty },
-    /// `[WK-1]`/`[WK-2]` — `Weak(class_handle)`. The class and wrapper types
-    /// travel with the operation so the backend can retain the control block
-    /// without increasing the object's strong reference count.
-    WeakNew { class: Ty, weak: Ty },
-    /// `[WK-3]` — `weak.upgrade() -> Option[C]`. MIR branches on the runtime
-    /// query and constructs the owned option payload exactly once.
-    WeakUpgrade { class: Ty, option: EnumId },
-    /// `[WK-1]` — `Weak[C].empty()` has no object/control-block allocation.
-    WeakEmpty { weak: Ty },
+    /// `[WK-11]` — a link that holds no target (`parent: weakref Node = None`): a null pointer.
+    LinkNone { link: Ty },
+    /// `[RC-1]`, `[WK-11]` — `shares x`, `shares mut x`, `weakref x` of a class object (M4 slice A):
+    /// its one argument is a reference to the handle or owner `x` names; one more owner (+1) or link
+    /// (a weak +1) of the same object, the same pointer.
+    LinkMake { kind: ember_types::LinkKind, link: Ty },
+    /// `[RC-1]` (M4 slice C) — a class object's one owner becomes a `shares mut C` owner: its one
+    /// argument, the handle, is handed over; the same pointer, and no count, since the object still has
+    /// one owner. The declaration of a local a line of its function shares.
+    LinkAdopt { link: Ty },
+    /// `[WK-12]` — `if w exists as p:` on a `weakref C` link: `Some` of the object while it lives
+    /// (a +1, given back at the view's end), `None` once it has ended; for a value in a block, `Some` of
+    /// a `shares T` owner.
+    LinkOpen { class: Ty, option: EnumId },
     /// `a.push(x)`. The receiver is a `ref mut`, so it grows in place.
     ArrayPush,
     /// Part VI's slice row, `[TXT-4]` — `v[lo..hi]` of a view (`Span` or
@@ -2539,9 +2545,10 @@ impl Builtin {
             Builtin::ClassSuperInit { .. } => "super.init",
             Builtin::BoxNew { .. } => "Box",
             Builtin::SharedNew { .. } => "Shared",
-            Builtin::WeakNew { .. } => "Weak",
-            Builtin::WeakUpgrade { .. } => "upgrade",
-            Builtin::WeakEmpty { .. } => "empty",
+            Builtin::LinkNone { .. } => "None",
+            Builtin::LinkMake { kind, .. } => kind.word(),
+            Builtin::LinkAdopt { .. } => "shares mut",
+            Builtin::LinkOpen { .. } => "exists as",
             Builtin::ArrayPush => "push",
             Builtin::ArrayLen => "len",
             Builtin::StringNew => "String",

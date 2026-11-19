@@ -214,7 +214,6 @@ pub const FNS: &[RtFn] = &[
     f("obj_release", "void", &["$obj_header*"]),
     panic_fn("obj_retain_failed", &["$obj_header*", "uint32_t"]),
     f("obj_release_ended", "void", &["$obj_header*", "uint32_t"]),
-    f("obj_check_thread", "void", &["const $obj_header*"]),
     f("weak_retain", "void", &["$obj_header*"]),
     f("weak_release", "void", &["$obj_header*"]),
     f("downcast", "void*", &["$obj_header*", "const $type_info*"]),

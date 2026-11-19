@@ -8,11 +8,11 @@
 #$ assert-c: contains("ember_weak_upgrade(")
 #$ assert-c: !contains("ember_box_new_copy")
 
-# An owned Weak[Shared[Token]] argument crossing a Box[dyn] call remains only
-# a control-block observer after its Shared target expires. The generic class
-# receives and destroys its independent copy while upgrade() takes None.
+# An owned weakref Token argument crossing a Box[dyn] call remains only
+# a control-block observer after its `shares` target expires. The generic class
+# receives and destroys its independent copy while `exists as` takes None.
 interface Observe:
-    fn observe(owns weak: Weak[Shared[Token]]) -> i32
+    fn observe(owns weak: weakref Token) -> i32
 
 struct Token:
     value: i32
@@ -21,16 +21,15 @@ struct Token:
 class Reader implements Observe:
     marker: T
 
-    fn observe(owns weak: Weak[Shared[Token]]) -> i32:
-        match weak.upgrade():
-            Some(owner):
-                return owner.get().value
-            None:
-                return 0
+    fn observe(owns weak: weakref Token) -> i32:
+        if weak exists as owner:
+            return owner.value
+        else:
+            return 0
 
-fn expired() -> Weak[Shared[Token]]:
-    strong = Shared(Token(7))
-    return Weak(strong)
+fn expired() -> weakref Token:
+    strong = shares mut Token(7)
+    return weakref strong
 
 fn main():
     weak = expired()

@@ -9,33 +9,32 @@
 #$ assert-c: contains("ember_weak_upgrade(")
 
 # A ref mut dyn Revise carrier borrows a generic class, updates its counter,
-# and returns an independent Weak[Shared[T]] copy. The mutable dynamic access
+# and returns an independent weakref T copy. The mutable dynamic access
 # ends with the call while the caller may still upgrade the returned observer.
 interface Revise:
-    fn observer() -> Weak[Shared[Token]]
+    fn observer() -> weakref Token
 
 struct Token:
     value: i32
 
 [T]
 class Observer implements Revise:
-    weak: Weak[Shared[Token]]
+    weak: weakref Token
     marker: T
     count: i32
 
-    fn observer() -> Weak[Shared[Token]]:
+    fn observer() -> weakref Token:
         this.count = this.count + 1
-        return this.weak
+        return weakref this.weak
 
-fn inspect(ref mut value: dyn Revise) -> Weak[Shared[Token]]:
+fn inspect(ref mut value: dyn Revise) -> weakref Token:
     return value.observer()
 
 fn main():
-    strong = Shared(Token(7))
-    observer = Observer[bool](Weak(strong), true, 0)
+    strong = shares mut Token(7)
+    observer = Observer[bool](weakref strong, true, 0)
     weak = inspect(ref mut observer)
-    match weak.upgrade():
-        Some(owner):
-            println(owner.get().value)
-        None:
-            println(0)
+    if weak exists as owner:
+        println(owner.value)
+    else:
+        println(0)

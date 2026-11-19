@@ -12,10 +12,10 @@
 
 class Node:
     name: String
-    next: Option[Node]
+    next: Option[shares mut Node]
 
 fn main():
     a = Node("a", None)
-    b = Node("b", Some(a))
-    a.next = Some(b)
+    b = Node("b", Some(shares mut a))
+    a.next = Some(shares mut b)
     println("built")

@@ -12,33 +12,32 @@
 # field without keeping either object alive. The write access ends with the
 # call, and the observer returned after helper teardown must upgrade to None.
 interface Revise:
-    fn observer() -> Weak[Shared[Token]]
+    fn observer() -> weakref Token
 
 struct Token:
     value: i32
 
 [T]
 class Observer implements Revise:
-    weak: Weak[Shared[Token]]
+    weak: weakref Token
     marker: T
     count: i32
 
-    fn observer() -> Weak[Shared[Token]]:
+    fn observer() -> weakref Token:
         this.count = this.count + 1
-        return this.weak
+        return weakref this.weak
 
-fn inspect(ref mut value: dyn Revise) -> Weak[Shared[Token]]:
+fn inspect(ref mut value: dyn Revise) -> weakref Token:
     return value.observer()
 
-fn expired() -> Weak[Shared[Token]]:
-    strong = Shared(Token(7))
-    observer = Observer[bool](Weak(strong), true, 0)
+fn expired() -> weakref Token:
+    strong = shares mut Token(7)
+    observer = Observer[bool](weakref strong, true, 0)
     return inspect(ref mut observer)
 
 fn main():
     weak = expired()
-    match weak.upgrade():
-        Some(owner):
-            println(owner.get().value)
-        None:
-            println(7)
+    if weak exists as owner:
+        println(owner.value)
+    else:
+        println(7)

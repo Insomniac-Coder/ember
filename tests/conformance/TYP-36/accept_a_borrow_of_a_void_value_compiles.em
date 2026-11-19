@@ -23,9 +23,9 @@ fn main():
     nothing: Option[void] = None
     println(len(options), Some(()) in options, nothing in options)
     a: Array[void] = [(), ()]
-    arrays = {a.clone()}
+    arrays = {copy of a}
     m: Map[Array[void], int] = {}
-    m.insert(owns a.clone(), owns 7)
+    m.insert(owns copy of a, owns 7)
     println(len(arrays), a in arrays, m[a])
     h = DefaultHasher.default()
     u.hash(h)

@@ -14,6 +14,8 @@ use ember_types::{ClassId, Ty, TyKind, TypeTable};
 
 #[derive(Clone)]
 struct StrongEdge {
+    /// `[TYP-45]` — the field holds a counted owner, which is what can close a loop of owners.
+    counted: bool,
     from: usize,
     to: usize,
     field_owner: usize,
@@ -83,7 +85,27 @@ pub fn lint_strong_cycles(types: &TypeTable, sink: &mut Sink) {
         let Some(cycle) = shortest_cycle(&graph, &component) else {
             continue;
         };
-        report_cycle(types, &cycle, sink);
+        // `[TYP-45]` — an object has one owner, so owners alone never close a loop: one needs a field
+        // that holds a counted owner (`shares`, `shares mut`, `thread_shared`).
+        if cycle.iter().any(|edge| edge.counted) {
+            report_cycle(types, &cycle, sink);
+        }
+    }
+}
+
+/// Whether a value of `ty` holds a counted owner.
+fn holds_counted_owner(types: &TypeTable, ty: Ty, seen: &mut Vec<Ty>) -> bool {
+    if seen.contains(&ty) {
+        return false;
+    }
+    seen.push(ty);
+    match types.kind(ty) {
+        TyKind::Link { kind, .. } => !kind.is_weak(),
+        TyKind::Struct(id) => types.struct_def(*id).fields.iter().any(|field| holds_counted_owner(types, field.ty, seen)),
+        TyKind::Enum(id) => types.enum_def(*id).variants.iter().any(|variant| variant.fields.iter().any(|field| holds_counted_owner(types, field.ty, seen))),
+        TyKind::Tuple(items) => items.iter().any(|&item| holds_counted_owner(types, item, seen)),
+        TyKind::Array { elem, .. } | TyKind::ArrayN { elem, .. } | TyKind::Vec { elem, .. } => holds_counted_owner(types, *elem, seen),
+        _ => false,
     }
 }
 
@@ -158,6 +180,7 @@ fn ownership_graph(types: &TypeTable) -> Vec<Vec<StrongEdge>> {
                     field_owner: field_owner.0 as usize,
                     field: field.name.to_string(),
                     field_type: ownership_type_name(types, field.ty),
+                    counted: holds_counted_owner(types, field.ty, &mut Vec::new()),
                     type_span: field.ty_span,
                     weak_replacement: direct_weak_replacement(types, field_owner, field.ty),
                     span: field.span,
@@ -182,7 +205,7 @@ fn direct_weak_replacement(types: &TypeTable, field_owner: ClassId, ty: Ty) -> O
     let TyKind::Class(target) = types.kind(ty) else {
         return None;
     };
-    Some(format!("Weak[{}]", class_name(types, *target)))
+    Some(format!("weakref {}", class_name(types, *target)))
 }
 
 fn inspect_strong_edge(types: &TypeTable, edge: &StrongEdge) -> OwnershipEdge {
@@ -243,6 +266,9 @@ fn collect_strong_targets(
         TyKind::Class(class) => {
             targets.insert(*class);
         }
+        // `[RC-1]` — another owner is an owner edge to its target; `[WK-11]` a link is none.
+        TyKind::Link { kind: ember_types::LinkKind::Weakref | ember_types::LinkKind::WeakrefThreadShared, .. } => {}
+        TyKind::Link { target, .. } => collect_strong_targets(types, *target, seen, targets),
         // An `[OBJ-2]` class-interface handle owns a real class object, but
         // its erased declaration cannot name one statically. Keep it out of
         // the concrete SCC graph; `contains_unknown_owner` records the
@@ -250,9 +276,6 @@ fn collect_strong_targets(
         TyKind::ClassInterface(_) => {}
         TyKind::Struct(id) => {
             let def = types.struct_def(*id);
-            if def.origin.as_ref().is_some_and(|(name, _)| name.is("Weak")) {
-                return;
-            }
             if let Some((name, arguments)) = &def.origin
                 && (name.is("Shared") || name.is("SyncShared") || name.is("Box"))
             {
@@ -331,16 +354,11 @@ fn collect_weak_targets(
         return;
     }
     match types.kind(ty) {
+        // `[WK-11]` — a link's target, by its owners.
+        TyKind::Link { kind: ember_types::LinkKind::Weakref | ember_types::LinkKind::WeakrefThreadShared, target } => targets.extend(strong_targets(types, *target)),
+        TyKind::Link { target, .. } => collect_weak_targets(types, *target, seen, targets),
         TyKind::Struct(id) => {
             let def = types.struct_def(*id);
-            if let Some((name, arguments)) = &def.origin
-                && name.is("Weak")
-            {
-                for argument in arguments {
-                    targets.extend(strong_targets(types, *argument));
-                }
-                return;
-            }
             for field in &def.fields {
                 collect_weak_targets(types, field.ty, seen, targets);
             }
@@ -412,11 +430,10 @@ fn contains_unknown_owner_inner(types: &TypeTable, ty: Ty, seen: &mut HashSet<Ty
         | TyKind::Param { .. }
         | TyKind::Pack(_)
         | TyKind::Assoc { .. } => true,
+        TyKind::Link { kind: ember_types::LinkKind::Weakref | ember_types::LinkKind::WeakrefThreadShared, .. } => false,
+        TyKind::Link { target, .. } => contains_unknown_owner_inner(types, *target, seen),
         TyKind::Struct(id) => {
             let def = types.struct_def(*id);
-            if def.origin.as_ref().is_some_and(|(name, _)| name.is("Weak")) {
-                return false;
-            }
             def.fields
                 .iter()
                 .any(|field| contains_unknown_owner_inner(types, field.ty, seen))
@@ -620,7 +637,7 @@ fn report_cycle(types: &TypeTable, cycle: &[StrongEdge], sink: &mut Sink) {
         // no rewrite of its type (an `Option`, a collection, a generic recipe).
         let owner = class_name(types, ClassId(first.field_owner as u32));
         diagnostic = diagnostic.help(format!(
-            "if `{owner}.{}` is a back-reference, make it hold a `Weak` handle",
+            "if `{owner}.{}` is a back-reference, make it a `weakref` link",
             first.field
         ));
     }
@@ -651,7 +668,7 @@ fn class_name(types: &TypeTable, class: ClassId) -> String {
 mod tests {
     use super::*;
     use ember_span::{Span, Symbol};
-    use ember_types::{ClassDef, ClassOpenness, FieldDef, FieldVis, StructDef};
+    use ember_types::{ClassDef, ClassOpenness, FieldDef, FieldVis};
 
     fn class(types: &mut TypeTable, name: &str) -> ClassId {
         types.add_class(ClassDef {
@@ -687,8 +704,10 @@ mod tests {
         let child = class(&mut types, "Child");
         let parent_ty = types.intern(TyKind::Class(parent));
         let child_ty = types.intern(TyKind::Class(child));
-        types.class_def_mut(parent).fields = vec![field("child", child_ty)];
-        types.class_def_mut(child).fields = vec![field("parent", parent_ty)];
+        let parent_owner = types.intern_link(ember_types::LinkKind::SharesMut, parent_ty);
+        let child_owner = types.intern_link(ember_types::LinkKind::SharesMut, child_ty);
+        types.class_def_mut(parent).fields = vec![field("child", child_owner)];
+        types.class_def_mut(child).fields = vec![field("parent", parent_owner)];
 
         let mut sink = Sink::new();
         lint_strong_cycles(&types, &mut sink);
@@ -709,17 +728,7 @@ mod tests {
         let child = class(&mut types, "Child");
         let parent_ty = types.intern(TyKind::Class(parent));
         let child_ty = types.intern(TyKind::Class(child));
-        let weak_child = types.add_struct(StructDef {
-            name: Symbol::intern("Weak[Child]"),
-            fields: Vec::new(),
-            span: Span::DUMMY,
-            derives_copy: true,
-            has_drop: false,
-            drops_fields: false,
-            origin: Some((Symbol::intern("Weak"), vec![child_ty])),
-            declaring_module: 0,
-        });
-        let weak_child_ty = types.intern(TyKind::Struct(weak_child));
+        let weak_child_ty = types.intern(TyKind::Link { kind: ember_types::LinkKind::Weakref, target: child_ty });
         types.class_def_mut(parent).fields = vec![field("child", weak_child_ty)];
         types.class_def_mut(child).fields = vec![field("parent", parent_ty)];
 

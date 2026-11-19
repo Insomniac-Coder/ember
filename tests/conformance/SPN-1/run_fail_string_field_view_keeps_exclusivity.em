@@ -15,7 +15,7 @@ class TextBox:
 
 fn main():
     box = TextBox()
-    alias = box
+    alias = shares mut box
     view = box.text.as_str()
     alias.clear_text()
     println(view)

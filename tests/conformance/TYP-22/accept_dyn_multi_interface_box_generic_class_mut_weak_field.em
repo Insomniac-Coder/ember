@@ -9,7 +9,7 @@
 
 # A generic class payload in Box[dyn Read + Bump] keeps one multi-interface
 # dynamic carrier. Its mut slot updates the original class field, while the
-# shared slot upgrades a Weak[Shared[T]] field through Shared.get().
+# shared slot upgrades a weakref T field through the owner read as its value.
 interface Read:
     fn read() -> i32
 
@@ -21,23 +21,22 @@ struct Token:
 
 [T]
 class Counter implements Read, Bump:
-    weak: Weak[Shared[Token]]
+    weak: weakref Token
     marker: T
     count: i32
 
     fn read() -> i32:
-        match this.weak.upgrade():
-            Some(owner):
-                return owner.get().value + this.count
-            None:
-                return this.count
+        if this.weak exists as owner:
+            return owner.value + this.count
+        else:
+            return this.count
 
     fn bump() -> i32:
         this.count = this.count + 1
         return this.count
 
 fn main():
-    strong = Shared(Token(7))
-    boxed: owns dyn Read + Bump = owns Counter[bool](Weak(strong), true, 0)
+    strong = shares mut Token(7)
+    boxed: owns dyn Read + Bump = owns Counter[bool](weakref strong, true, 0)
     println(boxed.bump())
     println(boxed.read())
