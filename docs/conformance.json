@@ -19,7 +19,7 @@
         "XV.6"
       ],
       "rules": 436,
-      "done": 247,
+      "done": 249,
       "missing": [
         "ATT-1",
         "BRW-1",
@@ -82,7 +82,6 @@
         "DET-4",
         "DET-5",
         "DRP-1",
-        "DRP-5",
         "DRP-6",
         "DRP-8",
         "EFF-1",
@@ -164,7 +163,6 @@
         "MOD-9a",
         "OWN-11",
         "OWN-13",
-        "OWN-6",
         "OWN-7",
         "OWN-8",
         "SPN-1",
@@ -224,7 +222,7 @@
         "XV.7"
       ],
       "rules": 627,
-      "done": 312,
+      "done": 314,
       "missing": [
         "ALC-1",
         "ALC-2",
@@ -313,7 +311,6 @@
         "DET-4",
         "DET-5",
         "DRP-1",
-        "DRP-5",
         "DRP-6",
         "DRP-8",
         "DRV-1",
@@ -440,7 +437,6 @@
         "OPT-1",
         "OWN-11",
         "OWN-13",
-        "OWN-6",
         "OWN-7",
         "OWN-8",
         "PAR-1",
@@ -549,7 +545,7 @@
         "XVI"
       ],
       "rules": 690,
-      "done": 344,
+      "done": 346,
       "missing": [
         "ALC-1",
         "ALC-2",
@@ -640,7 +636,6 @@
         "DET-4",
         "DET-5",
         "DRP-1",
-        "DRP-5",
         "DRP-6",
         "DRP-8",
         "DRV-1",
@@ -796,7 +791,6 @@
         "OPT-1",
         "OWN-11",
         "OWN-13",
-        "OWN-6",
         "OWN-7",
         "OWN-8",
         "PAR-1",
@@ -905,7 +899,7 @@
         "Annex B"
       ],
       "rules": 756,
-      "done": 376,
+      "done": 378,
       "missing": [
         "ALC-1",
         "ALC-2",
@@ -996,7 +990,6 @@
         "DET-4",
         "DET-5",
         "DRP-1",
-        "DRP-5",
         "DRP-6",
         "DRP-8",
         "DRV-1",
@@ -1186,7 +1179,6 @@
         "OPT-1",
         "OWN-11",
         "OWN-13",
-        "OWN-6",
         "OWN-7",
         "OWN-8",
         "PAR-1",

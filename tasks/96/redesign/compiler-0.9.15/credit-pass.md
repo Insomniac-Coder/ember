@@ -38,7 +38,6 @@ not credited, with the clause that is missing and the milestone that builds it.
 
 | Rule | What is missing | Milestone |
 |---|---|---|
-| OWN-6, DRP-5 | `mem.take` on an `Option` is `E2040` (W8's first task) | W8 |
 | DRP-1 | a view field `from` a `let` field is read in `drop` | M5 |
 | DRP-6 | a `sharedref mut` link | M5 |
 | DRP-8 | ending a value counts as a call of its `drop`, for every rule that needs it | M6a |
