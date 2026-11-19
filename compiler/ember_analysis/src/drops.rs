@@ -982,6 +982,30 @@ fn class_object_of_field(place: &Place, body: &Body, types: &TypeTable) -> Optio
     None
 }
 
+/// `[OWN-11]` — the value a place reaches through an owner or link (`inv.items` for `inv = shares mut
+/// Inventory(...)`): the other owners can still reach it, so nothing is taken out of it.
+fn shared_value_of_part(place: &Place, body: &Body, types: &TypeTable) -> Option<Ty> {
+    let mut ty = body.local(place.local).ty;
+    for projection in &place.projection {
+        match (projection, types.kind(ty)) {
+            (Projection::Field(0), TyKind::Link { .. }) => return types.link_field(ty),
+            (Projection::Field(i), TyKind::Struct(id)) => ty = types.struct_def(*id).fields.get(*i)?.ty,
+            (Projection::Field(i), TyKind::Tuple(items)) => ty = *items.get(*i)?,
+            _ => return None,
+        }
+    }
+    None
+}
+
+/// What a value is called in a message: "two owners of one list".
+fn owned_noun(ty: Ty, types: &TypeTable) -> String {
+    match types.kind(ty) {
+        TyKind::Str | TyKind::Vec { text: true, .. } => "text".to_string(),
+        TyKind::Vec { .. } | TyKind::Array { .. } | TyKind::ArrayN { .. } => "list".to_string(),
+        _ => "value".to_string(),
+    }
+}
+
 /// A place as the program wrote it: `p.name`, `q.items`.
 fn describe_place(place: &Place, body: &Body, types: &TypeTable) -> String {
     let mut text = body.local(place.local).name.clone().unwrap_or_else(|| format!("_{}", place.local.0));
@@ -1109,7 +1133,10 @@ fn check_borrowed_moves(body: &Body, types: &TypeTable, sink: &mut Sink) -> usiz
         }
         // `[EXP-6]`, `[OWN-11]` — the object still holds the field, and every alias of the handle
         // can still reach it and would see the hole: `E3013` (`E3012` is folded into it).
-        if let Some(object) = class_object_of_field(place, body, types) {
+        let reached = class_object_of_field(place, body, types)
+            .map(|object| (object, "object, which other names may reach"))
+            .or_else(|| shared_value_of_part(place, body, types).map(|value| (value, "value, which other owners may reach")));
+        if let Some((object, reach)) = reached {
             let part = describe_place(place, body, types);
             let owner = body.local(place.local).name.clone().unwrap_or_else(|| "the object".to_string());
             let class = types.display(object);
@@ -1125,7 +1152,7 @@ fn check_borrowed_moves(body: &Body, types: &TypeTable, sink: &mut Sink) -> usiz
                 Diagnostic::error(
                     codes::E3013,
                     span,
-                    format!("`{owner}` is a `{class}` object, which other names may reach, so `{part}` cannot be taken out and leave a hole; take it and leave a value in its place: `{line}`"),
+                    format!("`{owner}` is a `{class}` {reach}, so `{part}` cannot be taken out and leave a hole; take it and leave a value in its place: `{line}`"),
                 )
                 .primary_label("taken out here")
                 .note("the object keeps the field, and every handle to it can still reach it [OWN-11]")
@@ -1935,7 +1962,7 @@ impl Reporter<'_> {
         } else {
             match site.as_ref().map(|site| &site.keep) {
                 Some(Keep::Store { dest }) => (
-                    format!("to keep both, write `{dest} = copy of {name}` (a copy of your own) or `{dest} = {owner} {name}` (two owners of one value)"),
+                    format!("to keep both, write `{dest} = copy of {name}` (a copy of your own) or `{dest} = {owner} {name}` (two owners of one {})", owned_noun(ty, self.types)),
                     format!("write `{dest} = copy of {name}` (a copy of your own) or `{dest} = {owner} {name}` (two owners), or use `{name}` before it is handed over"),
                 ),
                 _ => (

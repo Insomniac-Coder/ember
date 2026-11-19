@@ -11,5 +11,5 @@ fn main():
     xs = [1, 2, 3]
     other = [9, 9]
     r = call(fn(v) => other.as_span(), xs)
-    mem.drop(other) #$ error[E3021]: `other` cannot be moved while it is borrowed
-    println(r)
+    mem.drop(other)
+    println(r)  #$ error[E3060]: `other` was handed over, and a view of it is still used here

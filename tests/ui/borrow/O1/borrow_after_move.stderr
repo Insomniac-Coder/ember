@@ -1,4 +1,4 @@
-error[E3040]: `values` was handed over to `moved` on line 4 and is used on line 6; to keep both, write `moved = copy of values` (a copy of your own) or `moved = shares values` (two owners of one value)
+error[E3040]: `values` was handed over to `moved` on line 4 and is used on line 6; to keep both, write `moved = copy of values` (a copy of your own) or `moved = shares values` (two owners of one list)
  --> tests/ui/borrow/O1/borrow_after_move.em:6:28
   |
 4 |     moved = values

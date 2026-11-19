@@ -16,6 +16,14 @@ not credited, with the clause that is missing and the milestone that builds it.
 | CLS-9a | a view field `from` a `let` field is read in `drop`: view fields with `from` are not parsed yet | M5 |
 | CLS-12 | `@cached` | M11 |
 
+## Ownership
+
+| Rule | What is missing | Milestone |
+|---|---|---|
+| OWN-6 | `mem.take` on an `Option` is `E2040` (W8's first task) | W8 |
+| OWN-7, OWN-8 | `sharedref mut` links, and `E2116` for a value whose views point into its own `let` field | M5 |
+| OWN-11 | a name opened with `exists as` over a call's result is a view: `done.push(owns job)` in `while jobs.pop() exists as job:` should be `E3013` with the help `match owns jobs.pop():`, and is accepted | M5 |
+
 ## Shared owners and links
 
 | Rule | What is missing | Milestone |

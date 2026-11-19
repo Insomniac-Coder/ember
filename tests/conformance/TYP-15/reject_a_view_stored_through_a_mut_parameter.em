@@ -13,5 +13,5 @@ fn main():
     name = "ann"
     s = String.from("zed")
     put(ref mut name, s.as_str())
-    mem.drop(s) #$ error[E3021]: `s` cannot be moved while it is borrowed
-    println(name)
+    mem.drop(s)
+    println(name)  #$ error[E3060]: `s` was handed over, and a view of it is still used here

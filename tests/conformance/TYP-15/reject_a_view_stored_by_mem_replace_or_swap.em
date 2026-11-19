@@ -8,19 +8,19 @@ fn main():
     a = "ann"
     s = String.from("zed")
     old = mem.replace(ref mut a, s.as_str())
-    mem.drop(s) #$ error[E3021]: `s` cannot be moved while it is borrowed
-    println(a, old)
+    mem.drop(s)
+    println(a, old)  #$ error[E3060]: `s` was handed over, and a view of it is still used here
 
     b = "bob"
     t = String.from("yan")
     v = t.as_str()
     mem.swap(ref mut b, ref mut v)
-    mem.drop(t) #$ error[E3021]: `t` cannot be moved while it is borrowed
-    println(b)
+    mem.drop(t)
+    println(b)  #$ error[E3060]: `t` was handed over, and a view of it is still used here
 
     c = "cy"
     u = String.from("xu")
     r = ref mut c
     r = u.as_str()
-    mem.drop(u) #$ error[E3021]: `u` cannot be moved while it is borrowed
-    println(c)
+    mem.drop(u)
+    println(c)  #$ error[E3060]: `u` was handed over, and a view of it is still used here

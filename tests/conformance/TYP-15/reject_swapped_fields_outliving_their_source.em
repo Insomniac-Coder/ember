@@ -19,5 +19,5 @@ fn main():
     t = String.from("second")
     p = P(s.as_str(), t.as_str())
     swap_fields(ref mut p)
-    mem.drop(t) #$ error[E3021]: `t` cannot be moved while it is borrowed
-    println(p.a)
+    mem.drop(t)
+    println(p.a)  #$ error[E3060]: `t` was handed over, and a view of it is still used here

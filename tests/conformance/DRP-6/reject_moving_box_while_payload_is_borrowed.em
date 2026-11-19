@@ -8,5 +8,5 @@ fn consume(owns value: owns i32):
 fn main():
     boxed: owns i32 = owns 9
     payload: ref i32 = boxed
-    consume(owns boxed) #$ error[E3021]: `boxed` cannot be moved while it is borrowed
-    println(payload)
+    consume(owns boxed)
+    println(payload)  #$ error[E3060]: `boxed` was handed over, and a view of it is still used here

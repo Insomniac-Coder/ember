@@ -4951,6 +4951,11 @@ fn check_point(
                     codes::E3021,
                     format!("{name} cannot be read while it is mutably borrowed"),
                 ),
+                // `[OWN-3]` — not handed over while a `ref mut` name of it is still used.
+                (true, Access::Move) => (
+                    codes::E3022,
+                    format!("{name} cannot be handed over while a `ref mut` name of it is still used"),
+                ),
                 (_, Access::Move) => (
                     codes::E3021,
                     format!("{name} cannot be moved while it is borrowed"),
@@ -5069,6 +5074,23 @@ fn check_point(
                 sink.emit_classified(diagnostic
                     .help("declare the borrowed value in an enclosing scope, or drop its borrower before leaving this scope")
                     .note("borrowed storage must remain valid through every use, including a destructor [DRP-7]"));
+                continue;
+            }
+            // `[OWN-3]`, `[BRW-17]` — a hand-over reshapes the giver's place: the view still used
+            // after it is the error, at that use.
+            if matches!(access, Access::Move)
+                && !loan.capability.is_mut()
+                && let Some(later) = later
+            {
+                if !repeated {
+                    sink.emit_classified(
+                        Diagnostic::error(codes::E3060, later, format!("{name} was handed over, and a view of it is still used here"))
+                            .primary_label("the view is used here")
+                            .secondary(span, "handed over here")
+                            .secondary(loan.span, "the view is made here")
+                            .help("use the view before the hand-over, or hand over a copy: `copy of`"),
+                    );
+                }
                 continue;
             }
             // `[CTL-2]` survives `for` desugaring as an explicit semantic
