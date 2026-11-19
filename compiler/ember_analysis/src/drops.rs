@@ -631,6 +631,8 @@ fn builtin_publishing_arguments(which: ember_mir::Builtin) -> &'static [usize] {
         | ember_mir::Builtin::SharedNew { .. }
         | ember_mir::Builtin::LinkAdopt { .. }
         | ember_mir::Builtin::IntoRaw { .. } => &[0],
+        // `[CLS-7a]` — one more owner of the object being ended.
+        ember_mir::Builtin::LinkMake { kind, .. } if !kind.is_weak() => &[0],
         _ => &[],
     }
 }

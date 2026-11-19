@@ -6996,7 +6996,11 @@ impl<'a> Checker<'a> {
         for (module, loaded) in modules.iter().enumerate() {
             for item in &loaded.module.items {
                 let ast::ItemKind::Class(decl) = &item.kind else { continue };
-                if self.class_ids.get(&self.qualified_in_module(module, decl.name.name)) != Some(&id) {
+                // `[CLS-4]` — an instance of a generic class declares what its generic declares.
+                let qualified = self.qualified_in_module(module, decl.name.name);
+                if self.class_ids.get(&qualified) != Some(&id)
+                    && self.types.class_def(id).origin.as_ref().is_none_or(|(origin, _)| *origin != qualified)
+                {
                     continue;
                 }
                 for member in &decl.members {

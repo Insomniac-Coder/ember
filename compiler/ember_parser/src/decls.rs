@@ -1223,6 +1223,22 @@ impl Parser<'_> {
         let worded = self.pos != before_word;
         let mut reads = self.wrote_ref_at(before_word);
 
+        // `[CLS-7]`, `[GRM-41]` — `mut this`: a method changes its object with no word, and does not list it.
+        if self.at_kw(Kw::This) && mode == Mode::Mut {
+            let mut written = start.to(self.span());
+            self.bump();
+            if self.at_punct(Punct::Comma) {
+                let comma = self.span();
+                written = written.to(ember_span::Span::new(comma.file, comma.start, self.src[comma.end as usize..].find(|c: char| c != ' ').map_or(comma.end, |gap| comma.end + gap as u32)));
+            }
+            let line = self.line_with(written, "");
+            self.report(
+                Diagnostic::error(codes::E0113, start, "`mut` alone is no word for `this`: a method changes its object with no word")
+                    .help(format!("write `{line}`")),
+            );
+            return Param { id, mode, is_const, view: false, kind: ParamKind::Receiver { ty: None, implicit: true }, default: None, span: written };
+        }
+
         // `[FN-4]` — the receiver follows the same modes as any parameter.
         if self.at_kw(Kw::SelfValue) {
             self.bump();
@@ -1353,7 +1369,7 @@ impl Parser<'_> {
         if self.at_kw(Kw::Mut) {
             let span = self.span();
             self.bump();
-            if !self.at_kw(Kw::SelfValue) {
+            if !self.at_kw(Kw::SelfValue) && !self.at_kw(Kw::This) {
                 self.report(
                     Diagnostic::error(codes::E0113, span, "`mut` alone is no word for a parameter: one the function may change is `ref mut`")
                         .help(format!("write `{}`", self.line_with(span, "ref mut"))),
