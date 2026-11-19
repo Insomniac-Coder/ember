@@ -1,5 +1,19 @@
 # Ember — handoff
 
+> **2026-11-19 (evening) — PAUSED by the owner ("After this pause all work, we will continue later").** START HERE.
+> Resume only when the owner says so.
+>
+> - **Pushed: origin/main** has M5's A2-2 (E3063), A2-4a (a reshape ends a read-only view: E3060 at its later use),
+>   A2-4b (E3021's text) and W9's work (E2112, E2113, E2173, TYP-10, TYP-23, DIA-16). Overall 22% (phase 1 35, 2 17,
+>   3 6). The gate (three ways) and the bench (25 of 25, both backends) passed before the push.
+> - **The heat guard is disarmed** (the owner: "for now disarm the CPU heat guard"); start it only when he says.
+> - **Stop tolerant** (the owner): the push gate is `tools/push_gate.ps1` and the bench `python tools/bench_resume.py
+>   [--backend c]`; a rerun goes on from the last finished piece (`docs/AUTOPILOT.md` §3).
+> - **Next when resumed:** M5 (`tasks/96/redesign/compiler-0.9.15/M5-plan.md`: A2-4c index proofs, A2-5 positions,
+>   A2-6 loops, A2-7 spans, A2-8 `sharedref mut`; the bank `tasks/96/redesign/jobs/ahead/M5/` has 61 files left); the
+>   next helper job (TYP-17/IFC-6, IFC-3/IFC-4, explicit type arguments on built-in generic methods, the DIA rules W9
+>   probed; `review.md`, W9's section); the Hardened_15 questions in `review.md`.
+>
 > **2026-11-19 (afternoon) — working, autonomous, one helper beside the lead (the owner: "resume the work autonomously
 > and at most you can use one more agent to help you out").** START HERE. The blocks below are history.
 >

@@ -166,7 +166,18 @@ with the optimised compiler, 77 s when the programs had not changed.
   chance, files, C or `unsafe` always run (`ALWAYS_RUN` in `annotations.py`). `EMBER_NO_RUN_CACHE=1` runs everything. The
   cargo suite and the push gate never reuse a run.
 
-**The heat guard.** The owner, 2026-11-19, verbatim: "if the CPU temp hits 102 more than 3 times you pause all
+**Stop tolerant: a stopped run goes on from where it stopped.** The owner, 2026-11-19, verbatim: "for future run
+modify all the script to be "stop tolerant" lets say some benchmark, gate etc is stopped, make it so that instead of
+starting from scratch again just start from the last point". The push gate is `tools/push_gate.ps1` (the three
+runs as pieces: each test target, the release build, each gate, each C warning sweep; a piece's result is kept under
+`target/push-gate/<key>/` once it has finished, the key being the commit and every uncommitted change, so a rerun on
+the same tree runs only the pieces not done; `-Fresh` starts over; the summary is `target/push-gate/summary.txt`).
+The bench is `python tools/bench_resume.py [--backend c]` (each pair's result kept under `target/bench-resume/` for
+that compiler build, backend and core; a `void` or `inconclusive` pair is measured again). The quick check reuses
+each unchanged run already (above). A new script that runs for minutes keeps its finished parts the same way.
+
+**The heat guard (disarmed by the owner, 2026-11-19: "for now disarm the CPU heat guard"; start it again only when
+the owner says so).** The owner, 2026-11-19, verbatim: "if the CPU temp hits 102 more than 3 times you pause all
 things and wait for it to get down to a reasonable temperature and then you resume". `tools/heat_guard.ps1` does it
 and runs whenever work runs: each climb to 102 °C counts once (again only after falling below 100 °C), the fourth
 suspends every build and test process of the repository, and they resume after 80 °C has held for 30 s (85 °C once
