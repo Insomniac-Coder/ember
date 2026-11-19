@@ -3140,36 +3140,6 @@ fn l3013_is_disabled_without_a_manifest_setting() {
     );
 }
 
-/// `[EXC-7]` — a final class has no open hierarchy to re-enter. Its
-/// `virtual` spelling remains covered by `W2111`, but enabling `L3013` must
-/// not add a long-term-access warning for the statically closed call.
-#[test]
-fn l3013_ignores_virtual_calls_in_a_final_class() {
-    let root = workspace_root();
-    let package = temporary_directory("l3013-final-class");
-    let source = package.join(ember_branding::source_file("main"));
-    std::fs::write(
-        package.join(MANIFEST),
-        "[lints]\nl3013 = \"warn\"\n",
-    )
-    .expect("manifest is writable");
-    std::fs::write(
-        &source,
-        "class FinalThing:\n    value: i32\n\n    fn init():\n        this.value = 7\n\n    virtual fn ping() -> i32:\n        return this.value\n\n    virtual fn relay() -> i32:\n        this.value += 1\n        return this.ping()\n\nfn main():\n    thing = FinalThing()\n    println(thing.relay())\n",
-    )
-    .expect("source is writable");
-
-    let source_arg = source.to_string_lossy().into_owned();
-    let checked = ember(&["check", &source_arg], &root);
-    let _ = std::fs::remove_dir_all(&package);
-    assert_eq!(checked.exit, 0, "program did not check:\n{}", checked.stderr);
-    assert!(
-        !without_source_echo(&checked.stderr).contains("L3013"),
-        "L3013 warned for a final class:\n{}",
-        checked.stderr
-    );
-}
-
 /// `[EXC-7]` — erasing a final class behind `ref dyn` must not turn its
 /// statically closed receiver hierarchy into a re-entry warning.
 #[test]

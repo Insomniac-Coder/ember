@@ -11796,20 +11796,24 @@ impl<'a> Checker<'a> {
                 }
                 ast::ItemKind::Class(decl) => {
                     let Some(&ty) = self.named_types.get(&self.qualified(decl.name.name)) else { continue };
-                    // `[CLS-4]` — virtual dispatch has no effect on a final
-                    // class.  Keep the declaration accepted, but surface the
-                    // existing warning so the author can either remove the
-                    // modifier or opt the class into inheritance explicitly.
+                    // `[CLS-4]` — `virtual` in a class that cannot be subclassed
+                    // (neither `open` nor `abstract`) is `E2112`.
                     if decl.openness == ast::Openness::Final {
                         for member in &decl.members {
                             if let ast::MemberKind::Fn(method) = &member.kind
                                 && method.dispatch == ast::Dispatch::Virtual
                             {
-                                self.sink.emit(Diagnostic::warning(
-                                    codes::W2111,
-                                    method.name.span,
-                                    "`virtual` has no effect in a final class",
-                                ));
+                                let class = decl.name.name.to_string();
+                                let name = method.name.name.to_string();
+                                self.sink.emit(
+                                    Diagnostic::error(
+                                        codes::E2112,
+                                        method.name.span,
+                                        format!(
+                                            "`{class}` cannot be subclassed, so `virtual` on `{name}` changes nothing; to let subclasses replace it write `open class {class}:`, or remove `virtual`"
+                                        ),
+                                    ),
+                                );
                             }
                         }
                     }

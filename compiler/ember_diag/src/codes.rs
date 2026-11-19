@@ -481,7 +481,7 @@ codes! {
     W2091 = (Warning, 2091, Types, "[CTL-5]", "unreachable match arm");
     W2015 = (Warning, 2015, Types, "[LEX-17a]", "float literal has more digits than its type keeps");
     W2016 = (Warning, 2016, Types, "[PAN-1]", "`debug_assert` argument has an effect of its own that changes nothing (it prints, or takes a lock and lets it go)");
-    W2111 = (Warning, 2111, Types, "[CLS-4]", "`virtual` has no effect in a final class");
+    W2111 = (Warning, 2111, Types, "[CLS-4]", "retired: `virtual` in a class that cannot be subclassed is refused (`E2112`)");
     W2190 = (Warning, 2190, Types, "[ERR-5]", "unused `Result`, `check_disjoint`'s included");
     W2192 = (Warning, 2192, Types, "[VER-3]", "use of a deprecated item");
     W5001 = (Warning, 5001, Ffi, "[FFI-6]", "function-like macro ignored");
