@@ -2,10 +2,11 @@
 #$ rules: FN-9, BCK-7
 #$ profiles: debug, development
 #$ stdout: 6 [7]
-# `[FN-9]` — a class object has one owner, so `ref mut n: Node` may change the object: write its
-# fields, call its `mut self` methods and change what its fields hold (a plain `n: Node` only reads it,
-# `reject_a_reading_class_parameter_changes_nothing.em`). `[BCK-7]`: an access through a handle is no
-# loan of the handle's local.
+# `[FN-9]` — a mode on a class-handle parameter governs the handle, not the object: a borrowed
+# handle parameter may write the object's fields, call its `mut self` methods and change what its
+# fields hold, under Part VIII's exclusivity rules (D-590: each was `E3023`, as if writing
+# through the handle re-pointed it). `[BCK-7]`: an access through a handle is no loan of the
+# handle's local.
 
 class Node:
     v: int
@@ -14,18 +15,18 @@ class Node:
     fn inc():
         this.v += 1
 
-fn set(ref mut n: Node):
+fn set(n: Node):
     n.v = 5
 
-fn call(ref mut n: Node):
+fn call(n: Node):
     n.inc()
 
-fn push(ref mut n: Node):
+fn push(n: Node):
     n.items.push(owns 7)
 
 fn main():
     n = Node(1, [])
-    set(ref mut n)
-    call(ref mut n)
-    push(ref mut n)
+    set(n)
+    call(n)
+    push(n)
     println(n.v, n.items)

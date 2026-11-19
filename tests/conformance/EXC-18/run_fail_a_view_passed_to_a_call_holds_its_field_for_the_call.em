@@ -15,11 +15,11 @@ class Bag:
     fn replace():
         this.items = [7]
 
-fn show(v: Span[int], ref mut other: Bag):
+fn show(v: Span[int], other: Bag):
     other.replace()
     println(v[0])
 
 fn main():
     b = Bag()
     c = shares mut b
-    show(b.items.as_span(), ref mut c)
+    show(b.items.as_span(), c)

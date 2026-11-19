@@ -3126,9 +3126,6 @@ struct Checker<'a> {
     /// (`Result[U, String]`), and what an `Ok(…)`/`Err(…)`/`Some(…)` that is its whole body takes of it.
     lambda_result_hint: Option<Ty>,
     wrapper_hint: Option<Ty>,
-    /// `[FN-9]` — the place being written is a class handle a method changes the object of, not a
-    /// name being given a new value.
-    writing_through_handle: bool,
     /// D-546 — each lambda's last value checked without an error, by its
     /// span (`synth_lambda`).
     lambda_values: HashMap<Span, Expr>,
@@ -4296,7 +4293,6 @@ impl<'a> Checker<'a> {
             lambda_depth: 0,
             lambda_result_hint: None,
             wrapper_hint: None,
-            writing_through_handle: false,
             lambda_values: HashMap::new(),
             skipped_instances: 0,
             opaque_lambdas: HashSet::new(),
@@ -48950,12 +48946,20 @@ impl<'a> Checker<'a> {
         if !self.borrowed_params.contains(&local) {
             return false;
         }
-        // `[FN-9]` — a class object has one owner, so `p: Player` reads the object: a write through
-        // `p` is `E3023`, as it is through a struct. Only the object of a method (`this.hp += 1`,
-        // `[CLS-7]`) is its own to change.
+        // A class receiver is borrowed as a handle, while its object's
+        // fields use their own runtime access words. Writing one field does
+        // not re-point the borrowed handle (`[CLS-7]`, `[EXC-19]`). `[FN-9]`:
+        // the same for every borrowed handle parameter, whose mode governs
+        // the handle, not the object: a write through it is the object's,
+        // under Part VIII's exclusivity rules.
         let mut current = place;
         loop {
             if self.class_method_field_index(current).is_some() { return false; }
+            if let ExprKind::Field { base, .. } = &current.kind
+                && matches!(self.types.kind(base.ty), TyKind::Class(_))
+            {
+                return false;
+            }
             current = match &current.kind {
                 ExprKind::Field { base, .. } | ExprKind::Index { base, .. } | ExprKind::Deref(base) => base,
                 _ => break,
@@ -49011,7 +49015,7 @@ impl<'a> Checker<'a> {
         // D-823 (B2) — the whole parameter given a new value is Python's rebinding of a name: the
         // value it means is a new local's, and the caller's stays as it was.
         let rebinding = match &place.kind {
-            ExprKind::Local(_) => !self.writing_through_handle,
+            ExprKind::Local(_) => true,
             ExprKind::Deref(inner) => assigns && matches!(inner.kind, ExprKind::Local(_)),
             _ => false,
         } && !self.callable_parameter_locals.contains(&local);
@@ -49081,8 +49085,7 @@ impl<'a> Checker<'a> {
             diagnostic = diagnostic.note(format!("Python rebinds a parameter's name; an Ember parameter is the caller's `{shown}`, borrowed [FN-1]"));
         }
 
-        // A class already has identity: `Cell`, `RefCell` and "make it a class" are no advice for its object.
-        if offer_interior_mutability && !rebinding && !matches!(self.types.kind(ty), TyKind::Class(_)) {
+        if offer_interior_mutability && !rebinding {
             diagnostic = if self.types.is_copy(ty) {
                 diagnostic.help(
                     "if the value is genuinely shared, use `Cell[T]` for the `Copy` payload or \
@@ -61623,14 +61626,13 @@ impl<'a> Checker<'a> {
         // borrowed.
         self.reject_readonly_write_in_mut_argument(&receiver, span);
         let through_shared_ref = self.reject_write_through_shared_ref(&receiver, span);
-        // `[FN-9]` — a class object has one owner: a method that may change its object is not
-        // called through a `p` that only reads it (`E3023`, `[EXC-15]`).
+        // `[FN-9]` — a class method's `mut self` is a write access to the
+        // object, never a re-pointing of the handle (ODR-072), so a borrowed
+        // handle parameter may call one, under Part VIII's exclusivity rules.
         let class_handle = matches!(self.types.kind(receiver.ty), TyKind::Class(_));
         let mut refused = false;
-        if !through_shared_ref {
-            self.writing_through_handle = class_handle;
+        if !through_shared_ref && !class_handle {
             refused = self.reject_borrowed_parameter_write(&receiver, span, false);
-            self.writing_through_handle = false;
         }
         // `[RC-7]`, `[THR-1]` — but an owner that only reads does not change its object.
         if class_handle && !refused {

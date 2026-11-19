@@ -691,3 +691,9 @@ Rulings on W8's questions:
    (reading A); the job's line for the `x: int` case was the lead's mistake. Nothing to build.
 2. `AnyError` and `Send`: reading B, wait for M11's `dyn (A, B)`. No `unsafe extend` in std to stand in for it.
 3. DIA-2: unchanged.
+
+Taken out again (same day): W8's FN-9 (`edf40eb4`, `5faca934`). With it, std.ecs stops compiling: a fetch makes the
+storage it fetches, so the world is changed through `this`, and every `ref mut this` given to a call is E2103, though
+`[CLS-7]`'s own example gives one (`this.handlers[this.current](ref mut this)`). Allowing it is sound only with
+`[BRW-21]`'s E3031 from the callees' summaries (M6a), so FN-9 lands again there; CLS-7 and FN-9 are not credited
+(credit-pass.md). W8's quick check did not run the ECS tests; the error-page check (E4030, E7020) found it.

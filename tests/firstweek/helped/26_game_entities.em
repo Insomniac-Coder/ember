@@ -17,21 +17,21 @@ open class Entity:
         this.health = max(this.health - amount, 0)
         println(f"    {this.name} takes {amount} damage ({this.health} left)")
 
-    virtual fn act(ref mut target: Entity):
+    virtual fn act(target: Entity):
         target.take_damage(this.attack)
 
     virtual fn describe() -> String:
         return f"{this.name} ({this.health} hp)"
 
 class Goblin(Entity):
-    override fn act(ref mut target: Entity):
+    override fn act(target: Entity):
         println(f"  {this.name} stabs wildly")
         target.take_damage(this.attack)
 
 class Troll(Entity):
     resting: bool = false
 
-    override fn act(ref mut target: Entity):
+    override fn act(target: Entity):
         if this.resting:
             println(f"  {this.name} is catching its breath")
             this.resting = false
@@ -43,7 +43,7 @@ class Troll(Entity):
 class Hero(Entity):
     potions: int = 2
 
-    override fn act(ref mut target: Entity):
+    override fn act(target: Entity):
         if this.health < 15 and this.potions > 0:
             this.potions -= 1
             this.health += 20
@@ -56,16 +56,16 @@ class Hero(Entity):
         return f"{this.name} the hero ({this.health} hp, {this.potions} potions)"
 
 fn main():
-    hero: Entity = Hero("Ayla", 40, 7)
+    hero = Hero("Ayla", 40, 7)
     monsters: Array[shares mut Entity] = [shares mut Goblin("Snik", 12, 3), shares mut Troll("Grum", 30, 4), shares mut Goblin("Nab", 10, 3)]
     turn = 1
     while hero.alive() and any(m.alive() for m in monsters):
         println(f"turn {turn}: {hero.describe()}")
         alive = [shares mut m for m in monsters if m.alive()]
-        hero.act(ref mut alive[0])
+        hero.act(alive[0])
         for m in monsters.iter_mut():
             if m.alive() and hero.alive():
-                m.act(ref mut hero)
+                m.act(hero)
         turn += 1
         if turn > 30:
             break

@@ -12,6 +12,7 @@ not credited, with the clause that is missing and the milestone that builds it.
 | CLS-2 | `init` may call a method once the fields its body reads are set: today every call of a method before all fields are set is `E2100`. The check reads each override's body; in a class that is not `pub` an override that reads nothing unset is accepted | M11 |
 | CLS-4 | `E2112` is still the warning `W2111`; `E2113` (an `override` whose first line differs) is registered and never emitted, so a differing `override` is accepted; the header promise of `[THR-8]` for `pub open` classes | M11, M9 |
 | CLS-6 | the kept results of `@cached` methods end with the fields: `@cached` does not exist yet | M11 |
+| CLS-7, FN-9 | a plain class parameter only reads its object (`E3023` for a change through it). W8 built it, and it is taken out again: std.ecs then needs `ref mut this` given to a call (`Q.Ops.fetch(ref mut this)`, `change.apply(ref mut this)`), which `[CLS-7]`'s own example allows (`this.handlers[this.current](ref mut this)`) but which is sound only with `[BRW-21]`'s `E3031` for a call that may end the object, from the callees' summaries; today every `ref mut this` argument is `E2103`. W8's commits `edf40eb4` and `5faca934` land again with that | M6a |
 | CLS-9a | a view field `from` a `let` field is read in `drop`: view fields with `from` are not parsed yet | M5 |
 | CLS-12 | `@cached` | M11 |
 

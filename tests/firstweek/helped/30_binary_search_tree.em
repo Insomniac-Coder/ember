@@ -9,17 +9,17 @@ class TreeNode:
     fn init(owns key: String):
         this.key = key
 
-fn insert_into(ref mut node: TreeNode, key: StrView) -> bool:
+fn insert_into(node: TreeNode, key: StrView) -> bool:
     if key == node.key:
         node.count += 1
         return false
     if key < node.key:
-        if node.left exists as ref mut left:
-            return insert_into(ref mut left, key)
+        if node.left exists as left:
+            return insert_into(left, key)
         node.left = Some(TreeNode(key.to_string()))
         return true
-    if node.right exists as ref mut right:
-        return insert_into(ref mut right, key)
+    if node.right exists as right:
+        return insert_into(right, key)
     node.right = Some(TreeNode(key.to_string()))
     return true
 
@@ -40,8 +40,8 @@ class Tree:
 
     fn insert(key: StrView):
         match this.root:
-            Some(ref mut r):
-                if insert_into(ref mut r, key):
+            Some(r):
+                if insert_into(r, key):
                     this.size += 1
             None:
                 this.root = Some(TreeNode(key.to_string()))
