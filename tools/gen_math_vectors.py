@@ -127,8 +127,8 @@ def vec(name, elem, n, kind):
     out.append(f"    type Output = {name}")
     for _, method, sym in ops:
         out.append("")
-        out.append(f"    fn {method}(o: {name}) -> {name}:")
-        out.append(f"        return {ctor([f'this.{c} {sym} o.{c}' for c in comps])}")
+        out.append(f"    fn {method}(rhs: {name}) -> {name}:")
+        out.append(f"        return {ctor([f'this.{c} {sym} rhs.{c}' for c in comps])}")
     if kind != "uint":
         out.append("")
         out.append(f"    fn neg() -> {name}:")
@@ -139,16 +139,16 @@ def vec(name, elem, n, kind):
     out.append(f"    type Output = {name}")
     for _, method, sym in ops:
         out.append("")
-        out.append(f"    fn {method}(s: {elem}) -> {name}:")
-        out.append(f"        return {ctor([f'this.{c} {sym} s' for c in comps])}")
+        out.append(f"    fn {method}(rhs: {elem}) -> {name}:")
+        out.append(f"        return {ctor([f'this.{c} {sym} rhs' for c in comps])}")
     out.append("")
     # A scalar on the left.
     out.append(f"extend {elem} implements {', '.join(f'{op[0]}[{name}]' for op in ops)}:")
     out.append(f"    type Output = {name}")
     for _, method, sym in ops:
         out.append("")
-        out.append(f"    fn {method}(v: {name}) -> {name}:")
-        out.append(f"        return {ctor([f'this {sym} v.{c}' for c in comps])}")
+        out.append(f"    fn {method}(rhs: {name}) -> {name}:")
+        out.append(f"        return {ctor([f'this {sym} rhs.{c}' for c in comps])}")
     out.append("")
     return "\n".join(out)
 
