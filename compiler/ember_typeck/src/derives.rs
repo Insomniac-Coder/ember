@@ -22,6 +22,8 @@ pub(crate) struct DeriveRequest {
     pub exempt: Vec<Symbol>,
     /// The derive's name where it is written: the block written for it has this span.
     pub span: Span,
+    /// `[ERR-3]` — a request of `@from`: only this variant's field is checked.
+    pub variant: Option<Symbol>,
 }
 
 const WRITTEN: [&str; 4] = ["Ord", "Default", "Display", "Component"];
@@ -54,7 +56,7 @@ pub(crate) fn desugar_derives(modules: &[LoadedModule], sink: &mut Sink) -> (Opt
             for derive in CHECKED {
                 if let Some(span) = derive_span(&item.attrs, derive) {
                     let name = item_name(item);
-                    requests.push(DeriveRequest { module, name, derive, requires: interface(derive), exempt: Vec::new(), span });
+                    requests.push(DeriveRequest { module, name, derive, requires: interface(derive), exempt: Vec::new(), span, variant: None });
                 }
             }
             for derive in WRITTEN {
@@ -108,7 +110,7 @@ pub(crate) fn desugar_derives(modules: &[LoadedModule], sink: &mut Sink) -> (Opt
                 };
                 generated.extend(block);
                 if let Some(requires) = requires {
-                    requests.push(DeriveRequest { module, name, derive, requires: interface(requires), exempt, span });
+                    requests.push(DeriveRequest { module, name, derive, requires: interface(requires), exempt, span, variant: None });
                 }
             }
         }

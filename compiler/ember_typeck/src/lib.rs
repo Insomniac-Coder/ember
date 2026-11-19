@@ -442,10 +442,11 @@ fn check_round(
     let status_errors = errors::desugar_status_errors(modules);
     let modules: &[LoadedModule] = status_errors.as_deref().unwrap_or(modules);
     // `[ERR-3]` — `@derive(Error)` is the `extend` blocks it stands for.
-    let derived = errors::desugar_error_derives(modules, sink);
+    let (derived, mut derive_requests) = errors::desugar_error_derives(modules, sink);
     let modules: &[LoadedModule] = derived.as_deref().unwrap_or(modules);
     // `[DRV-1]` — `@derive(Ord)`, `Default` and `Display` too.
-    let (written, derive_requests) = derives::desugar_derives(modules, sink);
+    let (written, written_requests) = derives::desugar_derives(modules, sink);
+    derive_requests.extend(written_requests);
     let modules: &[LoadedModule] = written.as_deref().unwrap_or(modules);
     // `[RFL-2]` — `@reflect` is the implementation of `std.ser.Reflect` it stands for.
     let reflected = derives::desugar_reflect(modules);
@@ -6393,7 +6394,7 @@ impl<'a> Checker<'a> {
             (
                 "std.core",
                 &[
-                    "Eq", "Ord", "Ordering", "Default", "Clone", "Copy", "Send", "Sync", "Sized", "Display", "Debug", "Printable", "From",
+                    "Eq", "Ord", "Ordering", "Default", "Clone", "Copy", "Send", "Sync", "ThreadShared", "Sized", "Display", "Debug", "Printable", "From",
                     // `[STD-9]` (verdict 117) — the console's output functions are the library's.
                     "print", "println", "eprint", "eprintln", "Error", "AnyError", "Iterator", "IntoIterator", "Range", "RangeInclusive", "RangeFrom",
                     "RangeTo", "Add", "Sub", "Mul", "Div", "FloorDiv", "Rem", "Pow", "Neg", "Not", "BitAnd", "BitOr",
@@ -15004,6 +15005,7 @@ impl<'a> Checker<'a> {
                     "std.core.Copy" => "Copy",
                     "std.core.Send" => "Send",
                     "std.core.Sync" => "Sync",
+                    "std.core.ThreadShared" => "ThreadShared",
                     "std.core.Sized" => "Sized",
                     _ => return None,
                 };
@@ -15058,18 +15060,18 @@ impl<'a> Checker<'a> {
                 _ => {
                     let Some((name, args)) = self.types.marker_key(target) else { continue };
                     let send_bound = Symbol::intern("std.core.Send");
-                    let sync_bound = Symbol::intern("std.core.Sync");
+                    let sync_bounds = [Symbol::intern("std.core.Sync"), Symbol::intern("std.core.ThreadShared")];
                     let args = args
                         .iter()
                         .map(|&arg| match *self.types.kind(arg) {
                             TyKind::Param { index, .. } => {
                                 let bounds = generics.get(index as usize).map(|param| param.bounds.clone()).unwrap_or_default();
-                                ember_types::MarkerArg::Any { send: bounds.contains(&send_bound), sync: bounds.contains(&sync_bound) }
+                                ember_types::MarkerArg::Any { send: bounds.contains(&send_bound), sync: sync_bounds.iter().any(|bound| bounds.contains(bound)) }
                             }
                             _ => ember_types::MarkerArg::Exact(arg),
                         })
                         .collect();
-                    self.types.add_manual_marker(ember_types::ManualMarker { name, send: word == "Send", sync: word == "Sync", args });
+                    self.types.add_manual_marker(ember_types::ManualMarker { name, send: word == "Send", sync: word != "Send", args });
                 }
             }
         }
@@ -45916,7 +45918,7 @@ impl<'a> Checker<'a> {
         match interface.as_str() {
             "std.core.Copy" => return self.types.is_copy(ty),
             "std.core.Send" => return self.is_send(ty),
-            "std.core.Sync" => return self.is_sync(ty),
+            "std.core.Sync" | "std.core.ThreadShared" => return self.is_sync(ty),
             "std.core.Sized" => return !matches!(self.types.kind(ty), TyKind::Dyn { .. } | TyKind::Opaque(_)),
             _ => {}
         }
@@ -58692,7 +58694,7 @@ impl<'a> Checker<'a> {
                 match *self.types.kind(ty) {
                     TyKind::Struct(id) => fields.extend(self.types.struct_def(id).fields.iter().map(|f| (f.ty, f.span, f.name, "field"))),
                     TyKind::Enum(id) => {
-                        let payload = self.types.enum_def(id).variants.iter().flat_map(|v| v.fields.iter());
+                        let payload = self.types.enum_def(id).variants.iter().filter(|v| request.variant.is_none_or(|only| v.name == only)).flat_map(|v| v.fields.iter());
                         fields.extend(payload.map(|f| (f.ty, f.span, f.name, "payload")));
                     }
                     _ => {}
@@ -58700,7 +58702,7 @@ impl<'a> Checker<'a> {
             } else if let Some(decl) = self.generic_structs.get(&name) {
                 fields.extend(decl.fields.iter().map(|f| (f.ty, f.span, f.name, "field")));
             } else if let Some(decl) = self.generic_enums.get(&name) {
-                let payload = decl.variants.iter().flat_map(|v| v.fields.iter());
+                let payload = decl.variants.iter().filter(|v| request.variant.is_none_or(|only| v.name == only)).flat_map(|v| v.fields.iter());
                 fields.extend(payload.map(|f| (f.ty, f.span, f.name, "payload")));
             }
             let interface = Symbol::intern(request.requires);
@@ -58710,9 +58712,12 @@ impl<'a> Checker<'a> {
                     continue;
                 }
                 let shown = self.types.display(ty);
+                let note = match request.variant {
+                    Some(_) => "a variant marked `@from` gets `From[E]` for its field's type `E: needs Error` [ERR-3]".to_string(),
+                    None => format!("`@derive({})` needs every field to be {shown_interface} [DRV-1]", request.derive),
+                };
                 self.sink.emit(
-                    Diagnostic::error(codes::E2080, span, format!("{what} `{field}` has type `{shown}`, which is not {shown_interface}"))
-                        .note(format!("`@derive({})` needs every field to be {shown_interface} [DRV-1]", request.derive)),
+                    Diagnostic::error(codes::E2080, span, format!("{what} `{field}` has type `{shown}`, which is not {shown_interface}")).note(note),
                 );
                 self.refused_derives.insert(request.span);
             }
