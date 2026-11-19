@@ -10,5 +10,6 @@ error[E3040]: `values` was handed over to `moved` on line 4 and is used on line 
   = help: write `moved = copy of values` (a copy of your own) or `moved = shares values` (two owners), or use `values` before it is handed over
   = note: the view would point at memory whose owner gave it away
   = note: `=` hands a list, a map or a set over; in Python both names would point at one list (Appendix E)
+  = note: a `shares` or `shares mut` owner costs, while the program runs, one count per owner made or ended, and one compare with the count's maximum per owner made [DIA-16]
 
 error: could not compile due to 1 error(s)
