@@ -21,7 +21,7 @@ fn main():
     xs = [3, 1, 4, 1, 5]
     ys = [9, 2]
     looked = 0
-    fn tall_fn(x: ref int) -> bool:
+    fn tall_fn(ref x: int) -> bool:
         looked += 1
         return x > 3
     tall = tall_fn
@@ -29,7 +29,7 @@ fn main():
     b = ys.iter().any(tall)
     println(a, b, looked)
     mapped = 0
-    fn double_fn(x: ref int) -> int:
+    fn double_fn(ref x: int) -> int:
         mapped += 1
         return x * 2
     double = double_fn
@@ -37,17 +37,17 @@ fn main():
     second = ys.iter().map(double).sum()
     println(first, second, mapped - 5)
     seen = 0
-    fn positive_fn(x: ref int) -> bool:
+    fn positive_fn(ref x: int) -> bool:
         seen += 1
         return x > 0
     positive = positive_fn
     tries = 0
-    fn big_fn(x: ref int) -> bool:
+    fn big_fn(ref x: int) -> bool:
         tries += 1
         return x > 3
     big = big_fn
     at_tries = 0
-    fn four_fn(x: ref int) -> bool:
+    fn four_fn(ref x: int) -> bool:
         at_tries += 1
         return x == 4
     four = four_fn
@@ -56,7 +56,7 @@ fn main():
     at = xs.iter().position(four)
     println(all_positive, seen - 2, found, tries, at, at_tries)
     steps = 0
-    fn add_fn(a: int, b: ref int) -> int:
+    fn add_fn(a: int, ref b: int) -> int:
         steps += 1
         return a + b
     add = add_fn

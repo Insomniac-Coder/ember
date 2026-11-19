@@ -17,24 +17,24 @@ struct Counter:
 
 ## `[LT-1a]` — the attribute overrides rule 3, so the caller may keep using
 ## `a` while it holds the result.
-fn pick(a: ref i32, other: ref i32) -> ref i32 from other:
+fn pick(ref a: String, ref other: String) -> ref String from other:
     return other
 
 ## Rule 2: one view-typed parameter, so the return is tied to it with nothing
 ## to write down.
-fn give(a: ref i32) -> ref i32:
+fn give(ref a: String) -> ref String:
     return a
 
 fn main():
     c: Counter = Counter(7)
     println(c.peek())
 
-    x: i32 = 1
-    y: i32 = 2
+    x: String = "1".to_string()
+    y: String = "2".to_string()
     println(pick(ref x, ref y))
 
     ## `[TYP-14]` — a returned reference used where a value is wanted reads
     ## through, whatever produced it. Handling that only for a named local
     ## left this printing a pointer as if it were a string.
-    n: i32 = 5
-    println(give(ref n) + 1)
+    n: String = "12345".to_string()
+    println(give(ref n).len() + 1)

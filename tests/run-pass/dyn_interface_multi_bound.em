@@ -21,7 +21,7 @@ struct Pair implements Left, Right:
     fn right() -> i32:
         return this.second
 
-fn print_both(value: ref dyn Left + Right):
+fn print_both(ref value: dyn Left + Right):
     println(value.left())
     println(value.right())
 

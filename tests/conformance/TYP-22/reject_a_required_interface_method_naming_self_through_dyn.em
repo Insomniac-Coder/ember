@@ -8,10 +8,10 @@
 interface Shape: needs (Eq, Ord):
     fn area() -> int
 
-fn first(a: ref dyn Shape, b: ref dyn Shape) -> int:
+fn first(ref a: dyn Shape, ref b: dyn Shape) -> int:
     return a.area()
 
-fn order(a: ref dyn Shape, b: ref dyn Shape):
+fn order(ref a: dyn Shape, ref b: dyn Shape):
     a.cmp(b)    #$ error[E2050]: `cmp` takes `other: Self`, and through a `dyn Shape` the kind of `other` is unknown; test the kinds first
 
 fn main():

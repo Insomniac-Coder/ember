@@ -11,7 +11,7 @@
 struct Person:
     age: int
 
-fn via_local_ref(r: ref Person) -> ref int:
+fn via_local_ref(ref r: Person) -> ref int:
     q: ref Person = r
     return q.age
 

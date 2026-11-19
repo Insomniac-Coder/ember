@@ -17,14 +17,14 @@ struct Money:
 extend Money implements Mul[i64]:
     type Output = Money
 
-    fn mul(k: i64) -> Money:
-        return Money(this.cents * k)
+    fn mul(rhs: i64) -> Money:
+        return Money(this.cents * rhs)
 
 extend i64 implements Mul[Money]:
     type Output = Money
 
-    fn mul(m: Money) -> Money:
-        return m * this
+    fn mul(rhs: Money) -> Money:
+        return rhs * this
 
 fn main():
     m = Money(250)

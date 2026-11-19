@@ -1,7 +1,7 @@
 #$ rules: DIA-12
 #$ test: compile-fail
 #$ error[E1010]: `valeu`
-#$ help: did you mean `value`?
+#$ help: the nearest name is `value`
 from support.base import Base
 
 class Derived(Base):

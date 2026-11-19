@@ -5,13 +5,12 @@
 ## attribute saying which one the result points into, so the caller may keep
 ## using the other.
 
-fn pick(a: ref i32, b: ref i32) -> ref i32 from a:
+fn pick(ref a: String, ref b: String) -> ref String from a:
     return a
 
 fn main():
-    x: i32 = 1
-    y: i32 = 2
-    p: ref i32 = ref x
-    q: ref i32 = ref y
-    v: i32 = pick(p, q)
-    println(v)
+    x: String = "1".to_string()
+    y: String = "2".to_string()
+    p: ref String = ref x
+    q: ref String = ref y
+    println(pick(p, q))

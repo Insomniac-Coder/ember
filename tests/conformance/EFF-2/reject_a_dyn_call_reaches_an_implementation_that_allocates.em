@@ -22,7 +22,7 @@ extend Ring implements Shape:
         return [this.sides, this.sides].len()
 
 @noalloc
-fn area_of(shape: ref dyn Shape) -> int:
+fn area_of(ref shape: dyn Shape) -> int:
     return shape.area()    #$ error[E4001]: `@noalloc` function `area_of` reaches an allocation
 
 fn main():

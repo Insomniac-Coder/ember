@@ -21,7 +21,7 @@ class Pair implements Parent, Child:
     fn child() -> i32:
         return this.right
 
-fn total(value: ref dyn Child) -> i32:
+fn total(ref value: dyn Child) -> i32:
     return value.parent() + value.child()
 
 fn main():

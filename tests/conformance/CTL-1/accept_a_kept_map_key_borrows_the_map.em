@@ -30,14 +30,14 @@ extend WordIter implements Iterator:
         this.at += 1
         return Some(ref this.owner[i])
 
-fn longest_key(m: ref Map[String, int]) -> StrView:
+fn longest_key(ref m: Map[String, int]) -> StrView:
     best = ""
     for k in m.keys():
         if k.len() > best.len():
             best = k
     return best
 
-fn first_key(m: ref Map[String, int]) -> Option[ref String]:
+fn first_key(ref m: Map[String, int]) -> Option[ref String]:
     it = m.keys()
     return it.next()
 

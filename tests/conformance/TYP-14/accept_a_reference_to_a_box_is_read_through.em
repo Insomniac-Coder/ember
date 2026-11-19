@@ -20,7 +20,7 @@ extend Square implements Shape:
     fn area() -> float:
         return this.side * this.side
 
-fn measure(s: ref dyn Shape) -> float:
+fn measure(ref s: dyn Shape) -> float:
     return s.area()
 
 fn measure_square(s: Square) -> float:

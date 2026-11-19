@@ -1,4 +1,4 @@
-fn size(xs: ref Array[i32]) -> usize:
+fn size(ref xs: Array[i32]) -> usize:
     return xs.len()
 
 fn fill(ready: bool) -> usize:

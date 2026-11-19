@@ -452,7 +452,7 @@ pub open class World:
     pub fn named(name: StrView) -> usize:
         return name.len()
 
-    pub fn sum(pair: ref Pair) -> i32:
+    pub fn sum(ref pair: Pair) -> i32:
         return pair.a + pair.b
 
     pub fn merged(other: thread_shared World) -> i32:

@@ -534,7 +534,7 @@ extend[T] CppWeak[T] implements Clone:
 ## `[FFI-17e]` — compiler-known: a C++ container's elements as a view, and a smart pointer's
 ## object as a reference, each borrowing `owner`.
 [O, T]
-fn cpp_span(owner: ref O, pointer: *mut T, count: usize) -> Span[T]:
+fn cpp_span(ref owner: O, pointer: *mut T, count: usize) -> Span[T]:
     pass
 
 [O, T]
@@ -542,5 +542,5 @@ fn cpp_span_mut(ref mut owner: O, pointer: *mut T, count: usize) -> MutSpan[T]:
     pass
 
 [O, T]
-fn cpp_pointee(owner: ref O, pointer: *mut T) -> ref T:
+fn cpp_pointee(ref owner: O, pointer: *mut T) -> ref T:
     pass

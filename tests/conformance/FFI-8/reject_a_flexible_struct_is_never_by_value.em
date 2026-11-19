@@ -5,7 +5,7 @@
 
 import c "packets.h"
 
-fn copy_of(packet: ref c.Packet) -> c.Packet:    #$ error[E5017]: ends with a flexible array member
+fn copy_of(ref packet: c.Packet) -> c.Packet:    #$ error[E5017]: ends with a flexible array member
     return packet
 
 fn main():

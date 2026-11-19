@@ -12,7 +12,7 @@
 # `Set` or a `Map` hashes, and the `void` a `match` binds (D-449).
 from std.collections import DefaultHasher
 
-fn take(x: ref void) -> int:
+fn take(ref x: void) -> int:
     return 1
 
 fn main():

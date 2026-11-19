@@ -9,12 +9,12 @@ struct V:
 
 extend V implements Add[i64]:
     type Output = int
-    fn add(other: i64) -> int:
+    fn add(rhs: i64) -> int:
         return 64
 
 extend V implements Add[i128]:
     type Output = int
-    fn add(other: i128) -> int:
+    fn add(rhs: i128) -> int:
         return 128
 
 fn main():

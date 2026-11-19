@@ -17,7 +17,7 @@ class Pixel implements Factory:
     fn draw() -> i32:
         return this.value
 
-fn draw_it(value: ref dyn Factory) -> i32:
+fn draw_it(ref value: dyn Factory) -> i32:
     return value.draw()
 
 fn main():

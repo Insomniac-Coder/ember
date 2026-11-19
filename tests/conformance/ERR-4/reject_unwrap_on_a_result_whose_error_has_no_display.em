@@ -1,5 +1,5 @@
 #$ test: compile-fail
-#$ rules: ERR-4
+#$ rules: ERR-4, ERR-1
 # `[ERR-4]` — `unwrap` and `expect` on a `Result[T, E]` need `E: needs Display`: `E2040` otherwise,
 # whose help is to implement `Display`.
 

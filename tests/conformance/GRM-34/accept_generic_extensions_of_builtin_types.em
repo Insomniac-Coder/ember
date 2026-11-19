@@ -51,7 +51,7 @@ extend[T, E] Result[T, E] implements Check:
 fn show(d: D) -> String:
     return d.describe()
 
-fn tell(d: ref dyn Describe) -> String:
+fn tell(ref d: dyn Describe) -> String:
     return d.describe()
 
 xs = [Name(1), Name(2)]

@@ -6,7 +6,7 @@
 interface Drawable:
     fn draw() -> i32
 
-fn take(x: ref dyn Drawable) -> i32:
+fn take(ref x: dyn Drawable) -> i32:
     return x.draw()
 
 fn main():

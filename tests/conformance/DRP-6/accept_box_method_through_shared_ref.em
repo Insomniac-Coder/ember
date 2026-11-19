@@ -11,7 +11,7 @@ struct Token:
     fn read() -> i32:
         return this.value
 
-fn read_boxed(value: ref owns Token) -> i32:
+fn read_boxed(ref value: owns Token) -> i32:
     return value.read()
 
 fn main():

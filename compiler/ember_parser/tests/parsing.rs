@@ -487,9 +487,9 @@ fn an_f_string_keeps_its_format_spec() {
 #[test]
 fn type_forms_all_parse() {
     let out = dump(
-        "fn f(a: ref i32, ref mut b: Vec3, c: *mut u8, d: (i32, f32), e: dyn Drawable, g: [f32; 16], h: extern \"C\" fn(i32) -> i32) -> Result[void, E]:\n    pass\n",
+        "fn f(ref a: i32, ref mut b: Vec3, c: *mut u8, d: (i32, f32), e: dyn Drawable, g: [f32; 16], h: extern \"C\" fn(i32) -> i32) -> Result[void, E]:\n    pass\n",
     );
-    assert!(out.contains("a: ref i32"), "{out}");
+    assert!(out.contains("a: i32"), "{out}");
     assert!(out.contains("mut b: Vec3"), "{out}");
     assert!(out.contains("c: *mut u8"), "{out}");
     assert!(out.contains("d: (i32, f32)"), "{out}");

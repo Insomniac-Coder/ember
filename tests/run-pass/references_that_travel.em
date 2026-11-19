@@ -28,15 +28,15 @@ fn through_a_reborrow() -> i32:
 
 ## `[LT-1]` rule 2: the result points into the one view-typed parameter, so
 ## the caller holds the borrow only while it holds the result.
-fn keep(a: ref i32) -> ref i32:
+fn keep(ref a: String) -> ref String:
     return a
 
-fn through_a_call() -> i32:
-    k: i32 = 3
-    r: ref i32 = keep(ref k)
-    v: i32 = r
-    k = 5
-    return v + k
+fn through_a_call() -> int:
+    k: String = "333".to_string()
+    r: ref String = keep(ref k)
+    v: int = r.len()
+    k = "55555".to_string()
+    return v + k.len()
 
 fn main():
     println(through_a_copy())

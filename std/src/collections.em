@@ -1186,17 +1186,17 @@ extend[T: needs (Eq, Hash, Clone), H: needs (Hasher, Default)] Set[T, H]:
 extend[T: needs (Eq, Hash, Clone), H: needs (Hasher, Default)] Set[T, H] implements BitOr, BitAnd, Sub, BitXor:
     type Output = Set[T, H]
 
-    fn bitor(other: Set[T, H]) -> Set[T, H]:
-        return this.union(other)
+    fn bitor(rhs: Set[T, H]) -> Set[T, H]:
+        return this.union(rhs)
 
-    fn bitand(other: Set[T, H]) -> Set[T, H]:
-        return this.intersection(other)
+    fn bitand(rhs: Set[T, H]) -> Set[T, H]:
+        return this.intersection(rhs)
 
-    fn sub(other: Set[T, H]) -> Set[T, H]:
-        return this.difference(other)
+    fn sub(rhs: Set[T, H]) -> Set[T, H]:
+        return this.difference(rhs)
 
-    fn bitxor(other: Set[T, H]) -> Set[T, H]:
-        return this.symmetric_difference(other)
+    fn bitxor(rhs: Set[T, H]) -> Set[T, H]:
+        return this.symmetric_difference(rhs)
 
 extend[T: needs (Eq, Hash, Ord, Clone), H: needs (Hasher, Default)] Set[T, H]:
     pub fn sorted_elements() -> Array[T]:
@@ -1524,8 +1524,8 @@ extend[T, B: needs HandleSplit] Pool[T, B] implements Index[Handle[T, B]]:
     type Output = T
 
     ## `pool[h]` — the value `h` refers to; a stale handle panics.
-    fn index(h: Handle[T, B]) -> ref T:
-        match this.get(h):
+    fn index(i: Handle[T, B]) -> ref T:
+        match this.get(i):
             Some(value):
                 return value
             None:

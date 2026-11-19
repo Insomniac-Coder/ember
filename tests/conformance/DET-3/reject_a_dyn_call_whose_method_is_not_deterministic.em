@@ -16,7 +16,7 @@ extend Triple implements Scale:
         return x * 3.0
 
 @deterministic
-fn run(s: ref dyn Scale, x: f64) -> f64:
+fn run(ref s: dyn Scale, x: f64) -> f64:
     return s.apply(x)
 
 fn main():

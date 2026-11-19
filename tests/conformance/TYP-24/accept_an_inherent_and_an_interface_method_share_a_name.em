@@ -19,7 +19,7 @@ extend Bag implements Sized:
     fn len() -> int:
         return this.n + 100
 
-fn tell(s: ref dyn Sized) -> int:
+fn tell(ref s: dyn Sized) -> int:
     return s.len()
 
 b = Bag(2)

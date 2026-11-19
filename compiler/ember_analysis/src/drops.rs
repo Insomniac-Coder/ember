@@ -709,7 +709,7 @@ fn operand_is_drop_self(
 
 /// `[OBJ-5]`, `[CLS-7a]` — the object being ended, named as the program names it, the statement as
 /// written (its line), and a field to keep a copy of: "`drop` ends this `Player`; an owner made from it would
-/// point at a freed object; keep a copy of what you need".
+/// point at a freed object; keep a copy of `this.name`".
 fn report_drop_self_escape(sink: &mut Sink, types: &TypeTable, self_ty: Ty, span: Span) {
     let inner = match types.kind(self_ty) {
         TyKind::Ref { inner, .. } => *inner,
@@ -724,14 +724,18 @@ fn report_drop_self_escape(sink: &mut Sink, types: &TypeTable, self_ty: Ty, span
     let plain_move = sink.diagnostics().iter().position(|d| d.code == Some(codes::E3013) && spans_meet(d.primary.span, span) && d.message.starts_with("cannot move `this` out of `drop`"));
     let line = ember_diag::line_mark(span);
     let help = match field {
-        Some(field) => format!("on line {line}, hand over a copy of what you need where it has `this`: `copy of this.{field}`; or move the data out with `mem.take`"),
+        Some(field) => format!("on line {line}, hand over a copy where it has `this`: `copy of this.{field}`; or move the data out with `mem.take`"),
         None => format!("on line {line}, hand over a value of your own where it has `this`; or move the data out with `mem.take`"),
+    };
+    let kept = match field {
+        Some(field) => format!("keep a copy of `this.{field}`"),
+        None => "keep a copy of the data it holds".to_string(),
     };
     let diagnostic = Diagnostic::error(
         codes::E3016,
         span,
         format!(
-            "`drop` ends this `{}`; an owner made from it would point at a freed object; keep a copy of what you need",
+            "`drop` ends this `{}`; an owner made from it would point at a freed object; {kept}",
             types.display(inner)
         ),
     )

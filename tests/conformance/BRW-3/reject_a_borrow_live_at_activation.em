@@ -3,17 +3,17 @@
 # `[BRW-3]`'s other half: a borrow of the place that is itself an argument is
 # live when the `mut` borrow activates. Both a `ref` parameter (auto-borrowed,
 # `[TYP-5]` rule 7) and a borrowed `String` passed by address (`[BRW-8]`) are
-# such a borrow; `refill` would clear the element `r` points to.
+# such a borrow (a `Copy` element would be passed as a copy, so these are `String`s); `refill` would clear the element `r` points to.
 
-fn f(ref mut v: Array[int], x: ref int):
-    v.push(owns x)
+fn f(ref mut v: Array[String], ref x: String):
+    v.push(owns copy of x)
 
 fn refill(ref mut dst: Array[String], r: String):
     dst.clear()
     println(r)
 
 fn main():
-    v: Array[int] = [5]
+    v: Array[String] = ["5"]
     f(ref mut v, v[0])    #$ error[E3021]: `v[0]` is borrowed here and mutably borrowed elsewhere
     xs: Array[String] = ["a"]
     refill(ref mut xs, xs[0])    #$ error[E3021]: `xs[0]` is borrowed here and mutably borrowed elsewhere

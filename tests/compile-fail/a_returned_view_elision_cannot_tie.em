@@ -9,7 +9,7 @@
 ## returning `b` compiled. The caller then went on using `b` while holding a
 ## reference into it, which is the whole thing `from` exists to prevent.
 
-fn pick(a: ref i32, b: ref i32) -> ref i32 from a:
+fn pick(ref a: String, ref b: String) -> ref String from a:
     return b
 
 struct Counter:
@@ -18,7 +18,7 @@ struct Counter:
     ## `[LT-1]` rule 1 — a method's result points into `this`; one whose body
     ## returns a view of another source parameter points, for its callers, into
     ## every source parameter (rule 3, `[LT-22]`).
-    fn pick(other: ref i32) -> ref i32:
+    fn pick(ref other: String) -> ref String:
         return other
 
     ## An object taken over (`owns this`) is the callee's own and dies with the
@@ -28,8 +28,8 @@ struct Counter:
         return ref this.n
 
 fn main():
-    x: i32 = 1
-    y: i32 = 2
+    x: String = "1".to_string()
+    y: String = "2".to_string()
     println(pick(ref x, ref y))
     c: Counter = Counter(3)
     println(c.pick(ref x))

@@ -57,7 +57,7 @@ struct Pair:
     a: u8
     b: T
 
-fn first(t: ref u8) -> u8:
+fn first(ref t: u8) -> u8:
     return t
 
 fn main():

@@ -6,7 +6,7 @@
 # A reference passed into the function is not a unit-stride element access,
 # and xs[2 * i] is strided. Neither gains a grouped running-total proof.
 
-fn repeated(xs: Span[int], value: ref int) -> int:
+fn repeated(xs: Span[int], ref value: int) -> int:
     total = 0
     for _ in xs:
         total += value

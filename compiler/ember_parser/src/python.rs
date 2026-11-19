@@ -330,7 +330,7 @@ impl Parser<'_> {
         if !params.iter().any(|param| matches!(param.kind, ParamKind::Receiver { .. })) {
             let id = self.next_id();
             let after = lparen.shrink_to_end();
-            params.insert(0, Param { id, mode: Mode::Mut, is_const: false, kind: ParamKind::Receiver { ty: None, implicit: true }, default: None, span: after });
+            params.insert(0, Param { view: false, id, mode: Mode::Mut, is_const: false, kind: ParamKind::Receiver { ty: None, implicit: true }, default: None, span: after });
         }
     }
 

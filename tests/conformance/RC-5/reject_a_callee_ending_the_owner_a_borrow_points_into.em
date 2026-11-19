@@ -15,7 +15,7 @@ class Child:
         println("drop", this.name)
 
 ## `[RC-5]` — no call in a view's life may end the object it views: handing `c` over beside a view into it is refused.
-fn take(r: ref int, owns c: Child) -> int:
+fn take(ref r: int, owns c: Child) -> int:
     println("dropping")
     mem.drop(c)
     println("read", r)

@@ -446,12 +446,12 @@ pub interface ParamOps:
     ## Its storages in `world` (each made, empty, if no entity has had one yet).
     static fn fetch(world: World) -> Fetch
     ## Borrows them for a run.
-    static fn view(fetch: ref Fetch) -> View
+    static fn view(ref fetch: Fetch) -> View
     ## The entities it requires one of its components of, in its storage's order: the query
     ## iterates the shortest such list and probes the rest (`None` requires nothing).
     static fn driver(view: View) -> Option[Span[Entity]]
     ## Its item for `e`, read-only, or `None` where `e` does not match it.
-    static fn get(view: ref View, e: Entity) -> Option[ReadItem]
+    static fn get(ref view: View, e: Entity) -> Option[ReadItem]
     ## Its item for `e`, or `None` where `e` does not match it.
     static fn get_mut(ref mut view: View, e: Entity) -> Option[Item]
     ## `[ECS-4]` — its accesses, at run time: each component it reads or writes.
@@ -522,13 +522,13 @@ extend[T: needs Component] Read[T] implements ParamOps:
     static fn fetch(world: World) -> AosStorage[T]:
         return aos_storage[T](world)
 
-    static fn view(fetch: ref AosStorage[T]) -> Read[T]:
+    static fn view(ref fetch: AosStorage[T]) -> Read[T]:
         return Read[T](set=SetView(entities=fetch.entities.as_span(), sparse=fetch.sparse.as_span()), values=fetch.dense.as_span())
 
     static fn driver(view: Read[T]) -> Option[Span[Entity]]:
         return Some(view.set.entities)
 
-    static fn get(view: ref Read[T], e: Entity) -> Option[ref T]:
+    static fn get(ref view: Read[T], e: Entity) -> Option[ref T]:
         match view.set.slot(e):
             Some(at):
                 return Some(ref view.values[at])
@@ -562,13 +562,13 @@ extend[T: needs Component] Write[T] implements ParamOps:
     static fn fetch(world: World) -> AosStorage[T]:
         return aos_storage[T](world)
 
-    static fn view(fetch: ref AosStorage[T]) -> Write[T]:
+    static fn view(ref fetch: AosStorage[T]) -> Write[T]:
         return Write[T](set=SetView(entities=fetch.entities.as_span(), sparse=fetch.sparse.as_span()), values=fetch.dense.as_mut_span())
 
     static fn driver(view: Write[T]) -> Option[Span[Entity]]:
         return Some(view.set.entities)
 
-    static fn get(view: ref Write[T], e: Entity) -> Option[ref T]:
+    static fn get(ref view: Write[T], e: Entity) -> Option[ref T]:
         match view.set.slot(e):
             Some(at):
                 return Some(ref view.values[at])
@@ -614,13 +614,13 @@ extend[T: needs Component] ReadSoa[T] implements ParamOps:
     static fn fetch(world: World) -> SoaStorage[T]:
         return soa_storage[T](world)
 
-    static fn view(fetch: ref SoaStorage[T]) -> ReadSoa[T]:
+    static fn view(ref fetch: SoaStorage[T]) -> ReadSoa[T]:
         return ReadSoa[T](set=SetView(entities=fetch.entities.as_span(), sparse=fetch.sparse.as_span()), values=ref fetch.dense)
 
     static fn driver(view: ReadSoa[T]) -> Option[Span[Entity]]:
         return Some(view.set.entities)
 
-    static fn get(view: ref ReadSoa[T], e: Entity) -> Option[SoARef[T]]:
+    static fn get(ref view: ReadSoa[T], e: Entity) -> Option[SoARef[T]]:
         match view.set.slot(e):
             Some(at):
                 return Some(view.values[at])
@@ -655,13 +655,13 @@ extend[T: needs Component] WriteSoa[T] implements ParamOps:
     static fn fetch(world: World) -> SoaStorage[T]:
         return soa_storage[T](world)
 
-    static fn view(fetch: ref SoaStorage[T]) -> WriteSoa[T]:
+    static fn view(ref fetch: SoaStorage[T]) -> WriteSoa[T]:
         return WriteSoa[T](set=SetView(entities=fetch.entities.as_span(), sparse=fetch.sparse.as_span()), values=ref mut fetch.dense)
 
     static fn driver(view: WriteSoa[T]) -> Option[Span[Entity]]:
         return Some(view.set.entities)
 
-    static fn get(view: ref WriteSoa[T], e: Entity) -> Option[SoARef[T]]:
+    static fn get(ref view: WriteSoa[T], e: Entity) -> Option[SoARef[T]]:
         match view.set.slot(e):
             Some(at):
                 return Some(view.values[at])
@@ -695,13 +695,13 @@ extend[O: needs ParamOps] Maybe[O] implements ParamOps:
     static fn fetch(world: World) -> O.Fetch:
         return O.fetch(world)
 
-    static fn view(fetch: ref O.Fetch) -> Maybe[O]:
+    static fn view(ref fetch: O.Fetch) -> Maybe[O]:
         return Maybe[O](inner=O.view(fetch))
 
     static fn driver(view: Maybe[O]) -> Option[Span[Entity]]:
         return None
 
-    static fn get(view: ref Maybe[O], e: Entity) -> Option[Option[O.ReadItem]]:
+    static fn get(ref view: Maybe[O], e: Entity) -> Option[Option[O.ReadItem]]:
         return Some(O.get(ref view.inner, e))
 
     static fn get_mut(ref mut view: Maybe[O], e: Entity) -> Option[Option[O.Item]]:
@@ -731,13 +731,13 @@ extend[T: needs Component] Without[T] implements ParamOps:
         _made = T.Read.fetch(world)
         return cast world.storages[T.component_hash()] as AnyStorage
 
-    static fn view(fetch: ref AnyStorage) -> Without[T]:
+    static fn view(ref fetch: AnyStorage) -> Without[T]:
         return Without[T](set=SetView(entities=fetch.entities.as_span(), sparse=fetch.sparse.as_span()))
 
     static fn driver(view: Without[T]) -> Option[Span[Entity]]:
         return None
 
-    static fn get(view: ref Without[T], e: Entity) -> Option[()]:
+    static fn get(ref view: Without[T], e: Entity) -> Option[()]:
         if view.set.slot(e).is_some():
             return None
         return Some(())
@@ -769,13 +769,13 @@ extend Entities implements ParamOps:
     static fn fetch(world: World) -> ():
         return ()
 
-    static fn view(fetch: ref ()) -> Entities:
+    static fn view(ref fetch: ()) -> Entities:
         return Entities()
 
     static fn driver(view: Entities) -> Option[Span[Entity]]:
         return None
 
-    static fn get(view: ref Entities, e: Entity) -> Option[Entity]:
+    static fn get(ref view: Entities, e: Entity) -> Option[Entity]:
         return Some(e)
 
     static fn get_mut(ref mut view: Entities, e: Entity) -> Option[Entity]:
@@ -814,13 +814,13 @@ extend[A: needs ParamOps, B: needs ParamOps] (A, B) implements ParamOps:
     static fn fetch(world: World) -> (A.Fetch, B.Fetch):
         return (A.fetch(world), B.fetch(world))
 
-    static fn view(fetch: ref (A.Fetch, B.Fetch)) -> (A.View, B.View):
+    static fn view(ref fetch: (A.Fetch, B.Fetch)) -> (A.View, B.View):
         return (A.view(ref fetch.0), B.view(ref fetch.1))
 
     static fn driver(view: (A.View, B.View)) -> Option[Span[Entity]]:
         return shorter(A.driver(view.0), B.driver(view.1))
 
-    static fn get(view: ref (A.View, B.View), e: Entity) -> Option[(A.ReadItem, B.ReadItem)]:
+    static fn get(ref view: (A.View, B.View), e: Entity) -> Option[(A.ReadItem, B.ReadItem)]:
         got0 = A.get(ref view.0, e)?
         got1 = B.get(ref view.1, e)?
         return Some((got0, got1))
@@ -848,13 +848,13 @@ extend[A: needs ParamOps, B: needs ParamOps, C: needs ParamOps] (A, B, C) implem
     static fn fetch(world: World) -> (A.Fetch, B.Fetch, C.Fetch):
         return (A.fetch(world), B.fetch(world), C.fetch(world))
 
-    static fn view(fetch: ref (A.Fetch, B.Fetch, C.Fetch)) -> (A.View, B.View, C.View):
+    static fn view(ref fetch: (A.Fetch, B.Fetch, C.Fetch)) -> (A.View, B.View, C.View):
         return (A.view(ref fetch.0), B.view(ref fetch.1), C.view(ref fetch.2))
 
     static fn driver(view: (A.View, B.View, C.View)) -> Option[Span[Entity]]:
         return shorter(shorter(A.driver(view.0), B.driver(view.1)), C.driver(view.2))
 
-    static fn get(view: ref (A.View, B.View, C.View), e: Entity) -> Option[(A.ReadItem, B.ReadItem, C.ReadItem)]:
+    static fn get(ref view: (A.View, B.View, C.View), e: Entity) -> Option[(A.ReadItem, B.ReadItem, C.ReadItem)]:
         got0 = A.get(ref view.0, e)?
         got1 = B.get(ref view.1, e)?
         got2 = C.get(ref view.2, e)?
@@ -885,13 +885,13 @@ extend[A: needs ParamOps, B: needs ParamOps, C: needs ParamOps, D: needs ParamOp
     static fn fetch(world: World) -> (A.Fetch, B.Fetch, C.Fetch, D.Fetch):
         return (A.fetch(world), B.fetch(world), C.fetch(world), D.fetch(world))
 
-    static fn view(fetch: ref (A.Fetch, B.Fetch, C.Fetch, D.Fetch)) -> (A.View, B.View, C.View, D.View):
+    static fn view(ref fetch: (A.Fetch, B.Fetch, C.Fetch, D.Fetch)) -> (A.View, B.View, C.View, D.View):
         return (A.view(ref fetch.0), B.view(ref fetch.1), C.view(ref fetch.2), D.view(ref fetch.3))
 
     static fn driver(view: (A.View, B.View, C.View, D.View)) -> Option[Span[Entity]]:
         return shorter(shorter(shorter(A.driver(view.0), B.driver(view.1)), C.driver(view.2)), D.driver(view.3))
 
-    static fn get(view: ref (A.View, B.View, C.View, D.View), e: Entity) -> Option[(A.ReadItem, B.ReadItem, C.ReadItem, D.ReadItem)]:
+    static fn get(ref view: (A.View, B.View, C.View, D.View), e: Entity) -> Option[(A.ReadItem, B.ReadItem, C.ReadItem, D.ReadItem)]:
         got0 = A.get(ref view.0, e)?
         got1 = B.get(ref view.1, e)?
         got2 = C.get(ref view.2, e)?
@@ -925,13 +925,13 @@ extend[A: needs ParamOps, B: needs ParamOps, C: needs ParamOps, D: needs ParamOp
     static fn fetch(world: World) -> (A.Fetch, B.Fetch, C.Fetch, D.Fetch, E.Fetch):
         return (A.fetch(world), B.fetch(world), C.fetch(world), D.fetch(world), E.fetch(world))
 
-    static fn view(fetch: ref (A.Fetch, B.Fetch, C.Fetch, D.Fetch, E.Fetch)) -> (A.View, B.View, C.View, D.View, E.View):
+    static fn view(ref fetch: (A.Fetch, B.Fetch, C.Fetch, D.Fetch, E.Fetch)) -> (A.View, B.View, C.View, D.View, E.View):
         return (A.view(ref fetch.0), B.view(ref fetch.1), C.view(ref fetch.2), D.view(ref fetch.3), E.view(ref fetch.4))
 
     static fn driver(view: (A.View, B.View, C.View, D.View, E.View)) -> Option[Span[Entity]]:
         return shorter(shorter(shorter(shorter(A.driver(view.0), B.driver(view.1)), C.driver(view.2)), D.driver(view.3)), E.driver(view.4))
 
-    static fn get(view: ref (A.View, B.View, C.View, D.View, E.View), e: Entity) -> Option[(A.ReadItem, B.ReadItem, C.ReadItem, D.ReadItem, E.ReadItem)]:
+    static fn get(ref view: (A.View, B.View, C.View, D.View, E.View), e: Entity) -> Option[(A.ReadItem, B.ReadItem, C.ReadItem, D.ReadItem, E.ReadItem)]:
         got0 = A.get(ref view.0, e)?
         got1 = B.get(ref view.1, e)?
         got2 = C.get(ref view.2, e)?
@@ -968,13 +968,13 @@ extend[A: needs ParamOps, B: needs ParamOps, C: needs ParamOps, D: needs ParamOp
     static fn fetch(world: World) -> (A.Fetch, B.Fetch, C.Fetch, D.Fetch, E.Fetch, F.Fetch):
         return (A.fetch(world), B.fetch(world), C.fetch(world), D.fetch(world), E.fetch(world), F.fetch(world))
 
-    static fn view(fetch: ref (A.Fetch, B.Fetch, C.Fetch, D.Fetch, E.Fetch, F.Fetch)) -> (A.View, B.View, C.View, D.View, E.View, F.View):
+    static fn view(ref fetch: (A.Fetch, B.Fetch, C.Fetch, D.Fetch, E.Fetch, F.Fetch)) -> (A.View, B.View, C.View, D.View, E.View, F.View):
         return (A.view(ref fetch.0), B.view(ref fetch.1), C.view(ref fetch.2), D.view(ref fetch.3), E.view(ref fetch.4), F.view(ref fetch.5))
 
     static fn driver(view: (A.View, B.View, C.View, D.View, E.View, F.View)) -> Option[Span[Entity]]:
         return shorter(shorter(shorter(shorter(shorter(A.driver(view.0), B.driver(view.1)), C.driver(view.2)), D.driver(view.3)), E.driver(view.4)), F.driver(view.5))
 
-    static fn get(view: ref (A.View, B.View, C.View, D.View, E.View, F.View), e: Entity) -> Option[(A.ReadItem, B.ReadItem, C.ReadItem, D.ReadItem, E.ReadItem, F.ReadItem)]:
+    static fn get(ref view: (A.View, B.View, C.View, D.View, E.View, F.View), e: Entity) -> Option[(A.ReadItem, B.ReadItem, C.ReadItem, D.ReadItem, E.ReadItem, F.ReadItem)]:
         got0 = A.get(ref view.0, e)?
         got1 = B.get(ref view.1, e)?
         got2 = C.get(ref view.2, e)?
@@ -1014,13 +1014,13 @@ extend[A: needs ParamOps, B: needs ParamOps, C: needs ParamOps, D: needs ParamOp
     static fn fetch(world: World) -> (A.Fetch, B.Fetch, C.Fetch, D.Fetch, E.Fetch, F.Fetch, G.Fetch):
         return (A.fetch(world), B.fetch(world), C.fetch(world), D.fetch(world), E.fetch(world), F.fetch(world), G.fetch(world))
 
-    static fn view(fetch: ref (A.Fetch, B.Fetch, C.Fetch, D.Fetch, E.Fetch, F.Fetch, G.Fetch)) -> (A.View, B.View, C.View, D.View, E.View, F.View, G.View):
+    static fn view(ref fetch: (A.Fetch, B.Fetch, C.Fetch, D.Fetch, E.Fetch, F.Fetch, G.Fetch)) -> (A.View, B.View, C.View, D.View, E.View, F.View, G.View):
         return (A.view(ref fetch.0), B.view(ref fetch.1), C.view(ref fetch.2), D.view(ref fetch.3), E.view(ref fetch.4), F.view(ref fetch.5), G.view(ref fetch.6))
 
     static fn driver(view: (A.View, B.View, C.View, D.View, E.View, F.View, G.View)) -> Option[Span[Entity]]:
         return shorter(shorter(shorter(shorter(shorter(shorter(A.driver(view.0), B.driver(view.1)), C.driver(view.2)), D.driver(view.3)), E.driver(view.4)), F.driver(view.5)), G.driver(view.6))
 
-    static fn get(view: ref (A.View, B.View, C.View, D.View, E.View, F.View, G.View), e: Entity) -> Option[(A.ReadItem, B.ReadItem, C.ReadItem, D.ReadItem, E.ReadItem, F.ReadItem, G.ReadItem)]:
+    static fn get(ref view: (A.View, B.View, C.View, D.View, E.View, F.View, G.View), e: Entity) -> Option[(A.ReadItem, B.ReadItem, C.ReadItem, D.ReadItem, E.ReadItem, F.ReadItem, G.ReadItem)]:
         got0 = A.get(ref view.0, e)?
         got1 = B.get(ref view.1, e)?
         got2 = C.get(ref view.2, e)?
@@ -1063,13 +1063,13 @@ extend[A: needs ParamOps, B: needs ParamOps, C: needs ParamOps, D: needs ParamOp
     static fn fetch(world: World) -> (A.Fetch, B.Fetch, C.Fetch, D.Fetch, E.Fetch, F.Fetch, G.Fetch, H.Fetch):
         return (A.fetch(world), B.fetch(world), C.fetch(world), D.fetch(world), E.fetch(world), F.fetch(world), G.fetch(world), H.fetch(world))
 
-    static fn view(fetch: ref (A.Fetch, B.Fetch, C.Fetch, D.Fetch, E.Fetch, F.Fetch, G.Fetch, H.Fetch)) -> (A.View, B.View, C.View, D.View, E.View, F.View, G.View, H.View):
+    static fn view(ref fetch: (A.Fetch, B.Fetch, C.Fetch, D.Fetch, E.Fetch, F.Fetch, G.Fetch, H.Fetch)) -> (A.View, B.View, C.View, D.View, E.View, F.View, G.View, H.View):
         return (A.view(ref fetch.0), B.view(ref fetch.1), C.view(ref fetch.2), D.view(ref fetch.3), E.view(ref fetch.4), F.view(ref fetch.5), G.view(ref fetch.6), H.view(ref fetch.7))
 
     static fn driver(view: (A.View, B.View, C.View, D.View, E.View, F.View, G.View, H.View)) -> Option[Span[Entity]]:
         return shorter(shorter(shorter(shorter(shorter(shorter(shorter(A.driver(view.0), B.driver(view.1)), C.driver(view.2)), D.driver(view.3)), E.driver(view.4)), F.driver(view.5)), G.driver(view.6)), H.driver(view.7))
 
-    static fn get(view: ref (A.View, B.View, C.View, D.View, E.View, F.View, G.View, H.View), e: Entity) -> Option[(A.ReadItem, B.ReadItem, C.ReadItem, D.ReadItem, E.ReadItem, F.ReadItem, G.ReadItem, H.ReadItem)]:
+    static fn get(ref view: (A.View, B.View, C.View, D.View, E.View, F.View, G.View, H.View), e: Entity) -> Option[(A.ReadItem, B.ReadItem, C.ReadItem, D.ReadItem, E.ReadItem, F.ReadItem, G.ReadItem, H.ReadItem)]:
         got0 = A.get(ref view.0, e)?
         got1 = B.get(ref view.1, e)?
         got2 = C.get(ref view.2, e)?

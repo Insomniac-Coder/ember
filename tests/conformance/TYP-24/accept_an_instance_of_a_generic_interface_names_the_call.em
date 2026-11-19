@@ -24,13 +24,13 @@ struct V:
 
 extend V implements Add[int]:
     type Output = int
-    fn add(other: int) -> int:
-        return this.x + other
+    fn add(rhs: int) -> int:
+        return this.x + rhs
 
 extend V implements Add[V]:
     type Output = int
-    fn add(other: V) -> int:
-        return this.x + other.x + 100
+    fn add(rhs: V) -> int:
+        return this.x + rhs.x + 100
 
 fn main():
     w = W(x = 5)

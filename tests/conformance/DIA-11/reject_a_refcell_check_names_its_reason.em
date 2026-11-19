@@ -5,10 +5,10 @@
 ## to check at run time, so the suggestion is to change the type.
 
 @no_alias_checks
-fn peek(cell: ref RefCell[int]) -> int:
+fn peek() -> int:
+    cell = RefCell(4)
     with g = cell.borrow():  #$ error[E4030]: the check's reason is `requested_by_type`
         return g
 
 fn main():
-    cell = RefCell(4)
-    println(peek(ref cell))
+    println(peek())

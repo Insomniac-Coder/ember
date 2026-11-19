@@ -3,10 +3,10 @@
 # `[BRW-7]` — borrowing a local never given a value is `E3050`; borrowing one a move reached is
 # `[OWN-3]`'s `E3040` (ODR-114); one error each, never both for one local.
 
-fn peek(r: ref int) -> int:
+fn peek(ref r: int) -> int:
     return r
 
-fn size(r: ref String) -> int:
+fn size(ref r: String) -> int:
     return 0
 
 fn main():

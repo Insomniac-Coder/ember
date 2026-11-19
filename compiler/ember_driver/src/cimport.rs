@@ -3283,7 +3283,7 @@ impl Writer {
                         format!(
                             "## `[FFI-17a]` (ODR-199) — `{spelled}` as an Ember callable: its call is the thunk's, its capture the `std::function`, deleted with it.\n\
                              fn {ops}_callable(owns holder: CppFunction) -> {callable}:\n    return owned fn({}){returned} => {ops}_invoke(holder{})\n\n\
-                             fn {ops}_invoke(holder: ref CppFunction{}){returned}:\n    unsafe:  # SAFETY(ffi): the holder owns a live `{spelled}` of this signature\n        {}{ops}_call(holder.as_ptr(){})\n",
+                             fn {ops}_invoke(ref holder: CppFunction{}){returned}:\n    unsafe:  # SAFETY(ffi): the holder owns a live `{spelled}` of this signature\n        {}{ops}_call(holder.as_ptr(){})\n",
                             params.join(", "),
                             comma(&forwarded),
                             comma(&params),
@@ -6163,7 +6163,7 @@ pub fn load(
     let file = map.add(PathBuf::from(format!("<import {} {header} as {}>", if cpp { "cpp" } else { "c" }, path.join("."))), rendered);
     let text = map.file(file).text.clone();
     let lexed = ember_lexer::lex(file, &text, sink);
-    let module = ember_parser::parse(file, &text, lexed.tokens, sink);
+    let module = ember_parser::parse_import(file, &text, lexed.tokens, sink);
     // `[FFI-29b]` — a single-header library's implementation, compiled once per build: in this
     // import's shim, with its macros defined; a second request for one header is `E5014`.
     let mut shim = String::new();
@@ -6276,7 +6276,7 @@ pub fn load(
             let file = map.add(PathBuf::from(format!("<import cpp {header} as {}>", child.join("."))), text);
             let text = map.file(file).text.clone();
             let lexed = ember_lexer::lex(file, &text, sink);
-            let module = ember_parser::parse(file, &text, lexed.tokens, sink);
+            let module = ember_parser::parse_import(file, &text, lexed.tokens, sink);
             let foreign = ember_typeck::ForeignImport {
                 header: foreign.header.clone(),
                 identities: foreign.identities.clone(),

@@ -12,8 +12,8 @@ struct Vec3:
 
 extend f32 implements Mul[Vec3]:
     type Output = Vec3
-    fn mul(v: Vec3) -> Vec3:
-        return Vec3(x = this * v.x)
+    fn mul(rhs: Vec3) -> Vec3:
+        return Vec3(x = this * rhs.x)
 
 interface Size:
     fn size() -> int

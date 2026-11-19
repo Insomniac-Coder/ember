@@ -10,7 +10,7 @@
 fn add_two(value: i32) -> i32:
     return value + 2
 
-fn update(cell: ref Cell[i32]):
+fn update(ref cell: Cell[i32]):
     cell.update(add_two)
 
 fn main():

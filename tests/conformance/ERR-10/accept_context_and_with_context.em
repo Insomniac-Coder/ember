@@ -27,12 +27,12 @@ fn load(n: int) -> Result[int]:
     v = disk(n).context("reading the disk")?
     return Ok(v)
 
-fn outer(n: int, calls: ref Cell[int]) -> Result[int]:
+fn outer(n: int, ref calls: Cell[int]) -> Result[int]:
     name = "app.cfg"
     v = load(n).with_context(owns fn() => message(name, calls))?
     return Ok(v * 10)
 
-fn message(name: StrView, calls: ref Cell[int]) -> String:
+fn message(name: StrView, ref calls: Cell[int]) -> String:
     calls.set(calls.get() + 1)
     return f"loading {name}"
 

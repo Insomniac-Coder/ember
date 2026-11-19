@@ -8,7 +8,7 @@
 fn main():
     xs = [3, 1, 4]
     looked = 0
-    fn tall_fn(x: ref int) -> bool:
+    fn tall_fn(ref x: int) -> bool:
         looked += 1
         return x > 3
     tall = tall_fn
@@ -16,7 +16,7 @@ fn main():
     println(looked)  #$ error[E3021]: `looked` cannot be read while it is mutably borrowed
     b = xs.iter().any(tall)
     mapped = 0
-    fn double_fn(x: ref int) -> int:
+    fn double_fn(ref x: int) -> int:
         mapped += 1
         return x * 2
     double = double_fn

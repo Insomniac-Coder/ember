@@ -35,7 +35,7 @@ class Pair implements Read, Write:
     fn write() -> i32:
         return this.score
 
-fn total(value: ref dyn Read + Write) -> i32:
+fn total(ref value: dyn Read + Write) -> i32:
     return value.read() + value.write()
 
 fn main():

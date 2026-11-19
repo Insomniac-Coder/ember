@@ -1,5 +1,5 @@
 #$ test: compile-fail
-#$ rules: FN-8
+#$ rules: FN-8, ERR-1
 #$ help: implement `Display` for `Failure`
 # `[FN-8]` — `fn main() -> Result[void, E]` needs `E: needs Display`: an `Err` is printed with
 # `Display`, so an `E` that only has `Debug` is `E2040`, an unmet bound.

@@ -33,7 +33,7 @@ extend Load implements Error:
     fn source() -> Option[ref dyn Error]:
         return Some(ref this.cause)
 
-fn chain(e: ref dyn Error):
+fn chain(ref e: dyn Error):
     println(f"{e} / {e!r}")
     println(e)
     next = e.source()

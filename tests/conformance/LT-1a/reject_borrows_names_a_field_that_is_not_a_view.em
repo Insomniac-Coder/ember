@@ -36,7 +36,7 @@ enum Pick:
         return "a"
 
 #$ error[E2031]: `from` names `owner`, which is not a parameter or a field of `this`
-fn free(xs: ref Array[int]) -> ref int from owner:
+fn free(ref xs: Array[int]) -> ref int from owner:
     return ref xs[0]
 
 fn main():

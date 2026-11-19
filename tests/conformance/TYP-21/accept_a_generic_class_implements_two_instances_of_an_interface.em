@@ -30,13 +30,13 @@ struct Pair2:
 
 extend[T] Pair2[T] implements Add[int]:
     type Output = int
-    fn add(other: int) -> int:
-        return other + 1
+    fn add(rhs: int) -> int:
+        return rhs + 1
 
 extend[T] Pair2[T] implements Add[bool]:
     type Output = int
-    fn add(other: bool) -> int:
-        if other:
+    fn add(rhs: bool) -> int:
+        if rhs:
             return 1
         return 0
 
@@ -46,13 +46,13 @@ class Counter:
 
 extend[T] Counter[T] implements Add[int]:
     type Output = int
-    fn add(other: int) -> int:
-        return other + 1
+    fn add(rhs: int) -> int:
+        return rhs + 1
 
 extend[T] Counter[T] implements Add[bool]:
     type Output = int
-    fn add(other: bool) -> int:
-        if other:
+    fn add(rhs: bool) -> int:
+        if rhs:
             return 1
         return 0
 

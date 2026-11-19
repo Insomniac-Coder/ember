@@ -4,6 +4,6 @@ error[E1010]: cannot find `calculte` in this scope
 5 |     println(calculte(2))
   |             ^^^^^^^^
   |
-  = help: did you mean `calculate`?
+  = help: the nearest name is `calculate`
 
 error: could not compile due to 1 error(s)

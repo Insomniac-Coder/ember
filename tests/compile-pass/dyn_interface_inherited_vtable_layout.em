@@ -9,7 +9,7 @@ interface Parent:
 interface Child: needs Parent:
     fn child() -> i32
 
-fn take(x: ref dyn Child) -> i32:
+fn take(ref x: dyn Child) -> i32:
     return x.child()
 
 fn main():

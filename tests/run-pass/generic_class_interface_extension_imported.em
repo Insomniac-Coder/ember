@@ -6,7 +6,7 @@
 from generic_class_interface_extension_support.model import Holder
 from generic_class_interface_extension_support.traits import Measure
 
-fn measure(value: ref dyn Measure) -> i32:
+fn measure(ref value: dyn Measure) -> i32:
     return value.measure()
 
 fn main():

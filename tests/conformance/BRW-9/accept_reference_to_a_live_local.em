@@ -3,7 +3,7 @@
 #$ profiles: debug, development, release
 #$ stdout: 42
 
-fn borrowed_value(value: ref i32) -> i32:
+fn borrowed_value(ref value: i32) -> i32:
     return value
 
 fn main():

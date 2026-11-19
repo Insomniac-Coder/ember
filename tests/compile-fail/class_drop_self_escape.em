@@ -8,7 +8,7 @@
 class Token:
     fn drop():
         retained: Array[Token] = Array[Token]()
-        retained.push(owns this) #$ error[E3016]: `drop` ends this `Token`; an owner made from it would point at a freed object; keep a copy of what you need
+        retained.push(owns this) #$ error[E3016]: `drop` ends this `Token`; an owner made from it would point at a freed object; keep a copy of the data it holds
 
 fn main():
     _token = Token()

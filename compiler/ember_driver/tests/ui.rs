@@ -246,7 +246,7 @@ fn committed_basic_name_suggestion_matches_and_fixed_source_compiles() {
         before.display()
     );
     assert!(
-        actual.contains("did you mean `count`?"),
+        actual.contains("the nearest name is `count`"),
         "N1 should suggest the visible binding with its exact spelling:\n{actual}"
     );
 
@@ -282,7 +282,7 @@ fn committed_struct_field_name_suggestion_matches_and_fixed_source_compiles() {
         before.display()
     );
     assert!(
-        actual.contains("did you mean `x`?"),
+        actual.contains("the nearest name is `x`"),
         "N1 should suggest the visible struct field with its exact spelling:\n{actual}"
     );
 
@@ -320,7 +320,7 @@ fn committed_inherited_class_field_name_suggestion_matches_and_fixed_source_comp
         before.display()
     );
     assert!(
-        actual.contains("did you mean `value`?"),
+        actual.contains("the nearest name is `value`"),
         "N1 should suggest the inherited field with its exact spelling:\n{actual}"
     );
 
@@ -356,7 +356,7 @@ fn committed_module_item_name_suggestion_matches_and_fixed_source_compiles() {
         before.display()
     );
     assert!(
-        actual.contains("did you mean `calculate`?"),
+        actual.contains("the nearest name is `calculate`"),
         "N1 should suggest the visible module item with its exact spelling:\n{actual}"
     );
 
@@ -432,7 +432,7 @@ fn qualified_name_suggestion_preserves_namespace_and_targets_leaf() {
     let stderr = normalize(&before.stderr);
     assert_eq!(error_codes(&stderr), ["E1010"]);
     assert!(
-        stderr.contains("did you mean `io.print`?"),
+        stderr.contains("the nearest name is `io.print`"),
         "N1 should render the source-qualified candidate while preserving its alias:\n{stderr}"
     );
     let lines = stderr.lines().collect::<Vec<_>>();
@@ -495,7 +495,7 @@ fn qualified_name_suggestion_preserves_namespace_and_targets_leaf() {
     let foreign_stderr = normalize(&foreign.stderr);
     assert_eq!(error_codes(&foreign_stderr), ["E1010"]);
     assert!(
-        !foreign_stderr.contains("did you mean"),
+        !foreign_stderr.contains("the nearest name"),
         "a `pub(package)` name from another package must not leak as a suggestion:\n{foreign_stderr}"
     );
     std::fs::remove_dir_all(&package).expect("only the test package is removed");
@@ -510,11 +510,7 @@ fn qualified_n1_ranking_is_stable_and_bad_prefixes_do_not_search_members() {
     let (exit, first) = check(&candidates, &root);
     assert_ne!(exit, 0, "the misspelled qualified item must be rejected");
     assert_eq!(error_codes(&first), ["E1010"]);
-    let ordered = [
-        "did you mean `picks.prin`?",
-        "did you mean `picks.print`?",
-        "did you mean `picks.prit`?",
-    ];
+    let ordered = ["the nearest names are `picks.prin`, `picks.print` and `picks.prit`"];
     let positions = ordered.map(|suggestion| {
         first
             .find(suggestion)
@@ -537,7 +533,7 @@ fn qualified_n1_ranking_is_stable_and_bad_prefixes_do_not_search_members() {
     assert_ne!(prefix_exit, 0);
     assert_eq!(error_codes(&prefix_stderr), ["E1010"]);
     assert!(
-        !prefix_stderr.contains("did you mean"),
+        !prefix_stderr.contains("the nearest name"),
         "a failed prefix must not search the final segment:\n{prefix_stderr}"
     );
     let lines = prefix_stderr.lines().collect::<Vec<_>>();
@@ -594,7 +590,7 @@ fn unknown_type_suggests_visible_import_alias_and_corrected_type_compiles() {
     let stderr = normalize(&before.stderr);
     assert_eq!(error_codes(&stderr), ["E1010", "E1010"]);
     assert!(
-        stderr.contains("did you mean `Dot`?") && stderr.contains("did you mean `Vect`?"),
+        stderr.contains("the nearest name is `Dot`") && stderr.contains("the nearest name is `Vect`"),
         "N1 should suggest visible aliases in plain and generic type positions:\n{stderr}"
     );
 
@@ -637,11 +633,7 @@ fn cross_file_name_suggestions_ignore_file_and_import_discovery_order() {
     ];
     // `eprint` is the prelude's, a library function now (`[STD-9]`, verdict 117), so a name near
     // it is offered too, after the program's own.
-    let expected = vec![
-        "did you mean `prtin`?".to_owned(),
-        "did you mean `print`?".to_owned(),
-        "did you mean `eprint`?".to_owned(),
-    ];
+    let expected = vec!["the nearest names are `prtin`, `print` and `eprint`".to_owned()];
 
     for (label, creation_order, imports) in cases {
         let package = scratch.join(label);

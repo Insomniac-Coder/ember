@@ -24,12 +24,12 @@ extend[U] Wrap[U] implements Conv[bool]:
 
 extend[T: needs Copy] Wrap[T] implements Add[int]:
     type Output = int
-    fn add(other: int) -> int:
-        return other + 1
+    fn add(rhs: int) -> int:
+        return rhs + 1
 
 extend[T: needs Copy] Wrap[T] implements Add[Wrap[T]]:
     type Output = int
-    fn add(other: Wrap[T]) -> int:
+    fn add(rhs: Wrap[T]) -> int:
         return 100
 
 [C: needs Conv[Array[int]]]

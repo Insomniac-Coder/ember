@@ -15,8 +15,8 @@ struct V:
 
 extend V implements Add[V]:
     type Output = int
-    fn add(other: V) -> int:
-        return this.x + other.x
+    fn add(rhs: V) -> int:
+        return this.x + rhs.x
 
 extend V implements Producer:
     type Output = bool

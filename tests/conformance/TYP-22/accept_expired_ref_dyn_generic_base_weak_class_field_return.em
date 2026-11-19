@@ -33,7 +33,7 @@ class Holder(Base[T]) implements Observe:
     fn observer() -> weakref Token:
         return weakref this.weak
 
-fn inspect(value: ref dyn Observe) -> weakref Token:
+fn inspect(ref value: dyn Observe) -> weakref Token:
     return value.observer()
 
 fn expired() -> weakref Token:

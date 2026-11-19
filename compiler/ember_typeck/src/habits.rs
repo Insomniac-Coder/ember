@@ -298,9 +298,8 @@ impl Checker<'_> {
             return answered;
         }
         let mut diagnostic = diagnostic;
-        for candidate in self.method_name_suggestions(ty, name.name, name.span) {
-            diagnostic = diagnostic.suggest(format!("did you mean `{candidate}`?"), name.span, candidate);
-        }
+        let names: Vec<(String, String)> = self.method_name_suggestions(ty, name.name, name.span).into_iter().map(|name| (name.clone(), name)).collect();
+        diagnostic = crate::name_suggestions::nearest_help(diagnostic, &names, name.span);
         Some(self.note_unmet_extension_bound(diagnostic, ty, name.name))
     }
 

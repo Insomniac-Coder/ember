@@ -25,14 +25,8 @@ fn find(xs: Span[int], wanted: int) -> Option[int]:
             return Some(i)
     return None
 
-fn empty(o: ref Option[int]) -> bool:
+fn empty(ref o: Option[int]) -> bool:
     return o is None
-
-fn same(a: ref int, b: ref int) -> bool:
-    return a is b
-
-fn same_node(a: ref shares mut Node, b: ref shares mut Node) -> bool:
-    return a is b
 
 fn main():
     nothing: Option[int] = None
@@ -45,8 +39,16 @@ fn main():
     m = 1
     p = Pair(1, 1)
     r: ref int = ref n
-    println(same(ref n, ref n), same(ref n, ref m), same(ref p.a, ref p.b), r is ref n, r is not ref m)
+    r1: ref int = ref n
+    r2: ref int = ref n
+    r3: ref int = ref m
+    r4: ref int = ref p.a
+    r5: ref int = ref p.b
+    println(r1 is r2, r1 is r3, r4 is r5, r is ref n, r is not ref m)
     first = Node(1)
     alias = shares mut first
     other = shares mut Node(1)
-    println(same_node(ref first, ref alias), same_node(ref first, ref other), first is alias)
+    f1: ref shares mut Node = ref first
+    f2: ref shares mut Node = ref alias
+    f3: ref shares mut Node = ref other
+    println(f1 is f2, f1 is f3, first is alias)

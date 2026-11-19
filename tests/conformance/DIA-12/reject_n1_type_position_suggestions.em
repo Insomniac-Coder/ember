@@ -2,8 +2,8 @@
 #$ test: compile-fail
 #$ error[E1010]: cannot find type `Dto` in this scope
 #$ error[E1010]: cannot find type `Vetc` in this scope
-#$ help: did you mean `Dot`?
-#$ help: did you mean `Vect`?
+#$ help: the nearest name is `Dot`
+#$ help: the nearest name is `Vect`
 from support.models import Point as Dot, Vector as Vect
 
 fn takes(value: Dto):

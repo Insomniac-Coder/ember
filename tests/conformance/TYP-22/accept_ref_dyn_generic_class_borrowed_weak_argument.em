@@ -27,7 +27,7 @@ class Reader implements Observe:
         else:
             return 0
 
-fn inspect(value: ref dyn Observe, weak: weakref Token) -> i32:
+fn inspect(ref value: dyn Observe, weak: weakref Token) -> i32:
     return value.observe(weak)
 
 # `program` holds the test, so its values die before `main`'s last

@@ -1453,11 +1453,11 @@ pub(crate) fn fn_decl(span: Span) -> ast::FnDecl {
 }
 
 pub(crate) fn receiver(span: Span) -> ast::Param {
-    ast::Param { id: ast::NodeId::DUMMY, mode: ast::Mode::Borrow, is_const: false, kind: ast::ParamKind::Receiver { ty: None, implicit: false }, default: None, span }
+    ast::Param { view: false, id: ast::NodeId::DUMMY, mode: ast::Mode::Borrow, is_const: false, kind: ast::ParamKind::Receiver { ty: None, implicit: false }, default: None, span }
 }
 
 pub(crate) fn named_param(name: Symbol, mode: ast::Mode, ty: ast::TypeExpr, span: Span) -> ast::Param {
-    ast::Param { id: ast::NodeId::DUMMY, mode, is_const: false, kind: ast::ParamKind::Named { name: ast::Ident { name, span }, ty }, default: None, span }
+    ast::Param { view: false, id: ast::NodeId::DUMMY, mode, is_const: false, kind: ast::ParamKind::Named { name: ast::Ident { name, span }, ty }, default: None, span }
 }
 
 pub(crate) fn member(mut decl: ast::FnDecl, body: ast::Block, span: Span) -> ast::Member {

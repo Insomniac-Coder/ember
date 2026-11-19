@@ -37,7 +37,7 @@ fn expired() -> weakref Token:
     strong = shares mut Token(7)
     return weakref strong
 
-fn inspect(value: ref dyn Observe + Bump, weak: weakref Token) -> i32:
+fn inspect(ref value: dyn Observe + Bump, weak: weakref Token) -> i32:
     return value.observe(weak) + value.bump()
 
 # `program` holds the test, so its values die before `main`'s last

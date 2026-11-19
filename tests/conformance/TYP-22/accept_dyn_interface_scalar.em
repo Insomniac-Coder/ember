@@ -16,7 +16,7 @@ extend i32 implements Inspect:
     fn inspect() -> i32:
         return this
 
-fn inspect_ref(value: ref dyn Inspect) -> i32:
+fn inspect_ref(ref value: dyn Inspect) -> i32:
     return value.inspect()
 
 fn main():

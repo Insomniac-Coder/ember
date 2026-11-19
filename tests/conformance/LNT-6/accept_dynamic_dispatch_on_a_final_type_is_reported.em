@@ -23,7 +23,7 @@ class Circle implements Shape:
     fn area() -> f64:
         return 3.0 * this.r * this.r
 
-fn area_of(s: ref dyn Shape) -> f64:
+fn area_of(ref s: dyn Shape) -> f64:
     return s.area()
 
 fn main():

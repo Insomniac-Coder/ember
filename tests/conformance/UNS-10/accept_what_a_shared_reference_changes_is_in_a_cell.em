@@ -24,25 +24,25 @@ struct Stats:
     name: int
 
 @noinline
-fn poke(cell: ref Cell[int]):
+fn poke(ref cell: Cell[int]):
     cell.set(cell.get() + 1)
 
 @noinline
-fn grow(cell: ref RefCell[int]):
+fn grow(ref cell: RefCell[int]):
     with g = cell.borrow_mut():
         g += 1
 
 @noinline
-fn tick(stats: ref Stats):
+fn tick(ref stats: Stats):
     stats.hits.fetch_add(1, MemoryOrder.Relaxed)
 
 @noinline
-fn bump(m: ref Mutex[int]):
+fn bump(ref m: Mutex[int]):
     with g = m.lock():
         g += 1
 
 @noinline
-fn sum(p: ref Pair) -> int:
+fn sum(ref p: Pair) -> int:
     return p.a + p.b
 
 fn main():

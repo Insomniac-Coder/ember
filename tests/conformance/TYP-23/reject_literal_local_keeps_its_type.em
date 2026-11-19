@@ -1,7 +1,7 @@
 #$ test: compile-fail
 #$ rules: TYP-23, LEX-16
 #$ error[E2020]: expected `i32`, found `i64`
-#$ help: declare it as `total: i32 = ...` to make it `i32`
+#$ help: declare it as `total: i32 = 0` to make it `i32`
 # ODR-022: `total = 0` declares an `int` at the declaration; a later use that
 # needs another type does not change it, and the help names the annotation.
 

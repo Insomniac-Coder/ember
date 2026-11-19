@@ -16,7 +16,7 @@ class Holder:
 extend[T] Holder[T] implements Answer:
     pass
 
-fn answer(value: ref dyn Answer) -> i32:
+fn answer(ref value: dyn Answer) -> i32:
     return value.answer()
 
 fn main():

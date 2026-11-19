@@ -30,7 +30,7 @@ fn expired() -> weakref Token:
     strong = shares mut Token(7)
     return weakref strong
 
-fn inspect(value: ref dyn Observe, weak: weakref Token) -> i32:
+fn inspect(ref value: dyn Observe, weak: weakref Token) -> i32:
     return value.observe(owns (weakref weak))
 
 fn main():

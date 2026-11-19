@@ -6,7 +6,7 @@
 # (Another owner is made only by a line that says so, `[HEAP-6]`.)
 from std.ffi import CppShared
 
-fn read_through_cpp(pointer: ref CppShared[i32]) -> i32:
+fn read_through_cpp(ref pointer: CppShared[i32]) -> i32:
     copy: CppShared[i32] = copy of pointer
     return copy.get()
 

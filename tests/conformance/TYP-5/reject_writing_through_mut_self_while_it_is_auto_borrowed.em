@@ -11,7 +11,7 @@ struct Person:
         this.age = 9    #$ error[E3021]: cannot be written while it is borrowed
         return r
 
-fn age_of(p: ref Person) -> ref int:
+fn age_of(ref p: Person) -> ref int:
     return p.age
 
 fn main():

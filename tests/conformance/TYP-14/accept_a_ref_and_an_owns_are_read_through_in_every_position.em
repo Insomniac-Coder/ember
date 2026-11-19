@@ -18,7 +18,7 @@ struct Mesh:
 fn plain(m: Mesh) -> int:
     return m.n
 
-fn via_ref(m: ref Mesh) -> int:
+fn via_ref(ref m: Mesh) -> int:
     return m.n + m.count() + plain(m)
 
 fn main():

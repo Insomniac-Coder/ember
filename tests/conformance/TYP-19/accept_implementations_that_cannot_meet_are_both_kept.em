@@ -34,13 +34,13 @@ struct V:
 
 extend V implements Add[int]:
     type Output = int
-    fn add(other: int) -> int:
-        return this.x + other
+    fn add(rhs: int) -> int:
+        return this.x + rhs
 
 extend V implements Add[V]:
     type Output = int
-    fn add(other: V) -> int:
-        return this.x + other.x + 1
+    fn add(rhs: V) -> int:
+        return this.x + rhs.x + 1
 
 extend[T] Wrap[Array[T]] implements Kind:
     fn kind() -> StrView:

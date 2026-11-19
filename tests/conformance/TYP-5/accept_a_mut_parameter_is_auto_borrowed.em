@@ -17,11 +17,11 @@ struct Person:
     fn look() -> int:
         return inner(this)
 
-fn inner(r: ref Person) -> int:
+fn inner(ref r: Person) -> int:
     return r.age
 
 [T: needs Copy]
-fn same(x: ref T) -> T:
+fn same(ref x: T) -> T:
     return x
 
 fn via_mut(ref mut x: int) -> int:

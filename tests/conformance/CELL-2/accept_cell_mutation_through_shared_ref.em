@@ -8,7 +8,7 @@
 # Cell's explicit interior-mutation API remains available through `ref Cell`.
 # Auto-dereference reaches the Cell receiver, while Cell—not a mutable source
 # reference—owns the permitted mutation boundary.
-fn bump(cell: ref Cell[i32]):
+fn bump(ref cell: Cell[i32]):
     cell.set(cell.get() + 1)
 
 fn main():

@@ -11,7 +11,7 @@ type Level = i32 in 0 ..= 10
 
 extend Level implements Add[Level]:    #$ error[E2041]: `Level` already implements `Add[Level]`
     type Output = Level
-    fn add(other: Level) -> Level:
+    fn add(rhs: Level) -> Level:
         return Level.clamped(5)
 
 extend Level implements Eq:    #$ error[E2041]: `Level` already implements `Eq`
@@ -24,7 +24,7 @@ extend Level implements Clone:    #$ error[E2041]: `Level` already implements `C
 
 extend i32 implements Mul[Level]:    #$ error[E2041]: `i32` already implements `Mul[Level]`
     type Output = i32
-    fn mul(other: Level) -> i32:
+    fn mul(rhs: Level) -> i32:
         return 0
 
 fn main():

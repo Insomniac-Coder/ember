@@ -6,7 +6,7 @@ interface Factory:
         todo()
     fn draw() -> i32
 
-fn take(x: ref dyn Factory) -> i32:
+fn take(ref x: dyn Factory) -> i32:
     return x.draw()
 
 fn main():

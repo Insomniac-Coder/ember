@@ -356,7 +356,11 @@ impl Program<'_> {
             }
             13 => {
                 let (name, ty) = (self.name(), self.ty());
-                self.line(indent, &format!("fn {name}({name}: {ty}) -> {ty}:"));
+                let param = match ty.strip_prefix("ref ") {
+                    Some(rest) => format!("ref {name}: {rest}"),
+                    None => format!("{name}: {ty}"),
+                };
+                self.line(indent, &format!("fn {name}({param}) -> {ty}:"));
                 self.block(indent + 1, d);
             }
             14 => {
@@ -378,7 +382,17 @@ impl Program<'_> {
                 let name = self.name();
                 // `[GRM-13]` — a mode is a word before the name: `ref mut p: T`.
                 let params: Vec<String> = (0..self.rng.below(3))
-                    .map(|i| if self.rng.chance(20) { format!("ref mut p{i}: Array[i32]") } else { format!("p{i}: {}", self.ty()) })
+                    .map(|i| {
+                        if self.rng.chance(20) {
+                            return format!("ref mut p{i}: Array[i32]");
+                        }
+                        // `[FN-1]` — a `ref` at the top of a parameter's type is `E0117`: the word goes on the name.
+                        let ty = self.ty();
+                        match ty.strip_prefix("ref ") {
+                            Some(rest) => format!("ref p{i}: {rest}"),
+                            None => format!("p{i}: {ty}"),
+                        }
+                    })
                     .collect();
                 let ret = if self.rng.chance(50) { format!(" -> {}", self.ty()) } else { String::new() };
                 if self.rng.chance(20) {

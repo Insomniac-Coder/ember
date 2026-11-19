@@ -2172,14 +2172,18 @@ impl Parser<'_> {
             let before_word = self.pos;
             let (mut mode, is_const) = self.parse_param_word(false);
             let worded = self.pos != before_word;
+            let mut reads = self.wrote_ref_at(before_word);
             let name = self.expect_ident();
             // A lambda parameter's type is optional; it is inferred from the
             // expected function type (`[TYP-23]` rule 4).
             let ty = if self.eat_punct(Punct::Colon) {
-                if !worded && self.refuse_mode_in_type(name) {
-                    mode = Mode::Mut;
+                let before_type = self.pos;
+                if !worded && let Some(m) = self.refuse_mode_in_type(name) {
+                    mode = m;
+                    reads |= self.wrote_ref_at(before_type);
                 }
-                self.parse_type()
+                let ty = self.parse_type();
+                if reads { self.view_of(ty) } else { ty }
             } else {
                 TypeExpr { id: self.next_id(), kind: TypeKind::Infer, span: name.span }
             };
@@ -2201,6 +2205,7 @@ impl Parser<'_> {
                 id,
                 mode,
                 is_const,
+                view: reads,
                 kind: ParamKind::Named { name, ty },
                 default: None,
                 span: start.to(self.prev_span()),
