@@ -4531,9 +4531,15 @@ mod tests {
     }
 
     #[test]
-    fn explicit_sync_handle_has_thread_properties_and_no_access_words() {
+    fn a_class_is_send_by_its_fields_and_an_atomic_one_has_no_access_words() {
         let (mut table, c) = TypeTable::new();
         let array = table.intern(TyKind::Vec { elem: c.i64, text: false });
+        let ptr = table.intern(TyKind::Ptr { mutable: false, inner: c.i64 });
+        let pinned = table.add_class(ClassDef {
+            name: Symbol::intern("Pinned"), fields: vec![field("value", ptr)],
+            span: Span::DUMMY, is_sync: false, openness: ClassOpenness::Final,
+            base: None, has_drop: false, origin: None, declaring_module: 0,
+        });
         let local = table.add_class(ClassDef {
             name: Symbol::intern("Local"), fields: vec![field("value", array)],
             span: Span::DUMMY, is_sync: false, openness: ClassOpenness::Final,
@@ -4546,9 +4552,10 @@ mod tests {
         });
         let local_ty = table.intern(TyKind::Class(local));
         let shared_ty = table.intern(TyKind::Class(shared));
-        let ptr = table.intern(TyKind::Ptr { mutable: false, inner: c.i64 });
-        assert!(!table.is_send(local_ty) && !table.is_sync(local_ty));
+        let pinned_ty = table.intern(TyKind::Class(pinned));
+        assert!(table.is_send(local_ty) && table.is_sync(local_ty));
         assert!(table.is_send(shared_ty) && table.is_sync(shared_ty));
+        assert!(!table.is_send(pinned_ty) && !table.is_sync(pinned_ty));
         assert!(!table.is_send(ptr) && !table.is_sync(ptr));
         assert!(table.class_field_has_access_word(local, 0));
         assert!(!table.class_field_has_access_word(shared, 0));
@@ -4645,8 +4652,8 @@ mod tests {
         assert_eq!(table.layout(player), Layout::scalar(8));
         assert_eq!(table.display(player), "Player");
         assert_eq!(table.canonical_name(player).unwrap(), "Player");
-        assert!(table.is_copy(entity));
-        assert!(table.is_copy(player));
+        assert!(!table.is_copy(entity), "[TYP-45] an object has one owner");
+        assert!(!table.is_copy(player));
         assert!(table.needs_drop(entity));
         assert!(table.needs_drop(player));
         assert!(!table.is_view(player));

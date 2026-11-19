@@ -14,7 +14,7 @@ every construct means; the guide shows how to use them.
 6. [Structs, enums and `match`](06-structs-enums-match.md) — your own types, and `Option`.
 7. [Errors](07-errors.md) — `Result`, `?`, and panics.
 8. [Ownership](08-ownership.md) — moves, borrowing, `mut` and `owned` parameters, `clone`.
-9. [Classes](09-classes.md) — objects shared by handles, inheritance, `Weak`.
+9. [Classes](09-classes.md) — objects and their owners, inheritance, `weakref`.
 10. [Modules and packages](10-modules-and-packages.md) — `import`, the standard library, `ember.toml`.
 11. [Tests and tools](11-tests-and-tools.md) — `@test`, `ember test`, `fmt`, `lint`, `explain`.
 12. [Coming from Python](12-coming-from-python.md) — what carries over, what is spelled

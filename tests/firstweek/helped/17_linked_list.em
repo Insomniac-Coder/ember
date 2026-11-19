@@ -2,62 +2,66 @@
 
 class Node:
     value: int
-    next: Option[Node] = None
+    next: Option[shares mut Node] = None
 
     fn init(value: int):
         this.value = value
 
+fn last_of(owns node: shares mut Node) -> shares mut Node:
+    if node.next exists as n:
+        return last_of(shares mut n)
+    return node
+
 class LinkedList:
-    head: Option[Node] = None
+    head: Option[shares mut Node] = None
     size: int = 0
 
     fn push_front(value: int):
-        node = Node(value)
-        node.next = this.head
+        node = shares mut Node(value)
+        node.next = this.head.take()
         this.head = Some(node)
         this.size += 1
 
     fn pop_front() -> Option[int]:
-        if this.head exists as node:
-            this.head = node.next
+        if this.head.take() exists as node:
+            this.head = node.next.take()
             this.size -= 1
             return Some(node.value)
         return None
 
     fn push_back(value: int):
-        node = Node(value)
-        if this.head is None:
-            this.head = Some(node)
+        node = shares mut Node(value)
+        if this.head exists as first:
+            last = last_of(shares mut first)
+            last.next = Some(node)
         else:
-            current = this.head.unwrap()
-            while current.next exists as n:
-                current = n
-            current.next = Some(node)
+            this.head = Some(node)
         this.size += 1
 
     fn contains(value: int) -> bool:
-        current = this.head
+        current = ref this.head
         while current exists as node:
             if node.value == value:
                 return true
-            current = node.next
+            current = ref node.next
         return false
 
     fn reverse():
-        prev: Option[Node] = None
-        current = this.head
-        while current exists as node:
-            current = node.next
+        prev: Option[shares mut Node] = None
+        current = this.head.take()
+        while current is not None:
+            node = current.unwrap()
+            current = node.next.take()
             node.next = prev
             prev = Some(node)
         this.head = prev
 
     fn to_array() -> Array[int]:
         result: Array[int] = []
-        current = this.head
+        current = ref this.head
         while current exists as node:
             result.push(owns node.value)
-            current = node.next
+            current = ref node.next
         return result
 
     fn show():

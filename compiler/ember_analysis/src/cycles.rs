@@ -704,8 +704,10 @@ mod tests {
         let child = class(&mut types, "Child");
         let parent_ty = types.intern(TyKind::Class(parent));
         let child_ty = types.intern(TyKind::Class(child));
-        types.class_def_mut(parent).fields = vec![field("child", child_ty)];
-        types.class_def_mut(child).fields = vec![field("parent", parent_ty)];
+        let parent_owner = types.intern_link(ember_types::LinkKind::SharesMut, parent_ty);
+        let child_owner = types.intern_link(ember_types::LinkKind::SharesMut, child_ty);
+        types.class_def_mut(parent).fields = vec![field("child", child_owner)];
+        types.class_def_mut(child).fields = vec![field("parent", parent_owner)];
 
         let mut sink = Sink::new();
         lint_strong_cycles(&types, &mut sink);

@@ -39,19 +39,19 @@ class Account:
         return Ok(this.balance)
 
 class Bank:
-    accounts: Map[int, Account] = {}
+    accounts: Map[int, shares mut Account] = {}
     next_number: int = 1000
 
-    fn open(owner: StrView, initial: int) -> Result[Account, BankError]:
-        account = Account(this.next_number, owner.to_string())
+    fn open(owner: StrView, initial: int) -> Result[shares mut Account, BankError]:
+        account = shares mut Account(this.next_number, owner.to_string())
         this.next_number += 1
         account.deposit(initial)?
-        this.accounts[account.number] = account
+        this.accounts[account.number] = shares mut account
         return Ok(account)
 
-    fn find(number: int) -> Result[Account, BankError]:
+    fn find(number: int) -> Result[shares mut Account, BankError]:
         if number in this.accounts:
-            return Ok(this.accounts[number])
+            return Ok(shares mut this.accounts[number])
         return Err(BankError.UnknownAccount(number))
 
     fn transfer(src: int, dst: int, amount: int) -> Result[(), BankError]:

@@ -198,7 +198,7 @@ def check(path):
         profiles = [p.strip() for p in listed[1].split(',') if p.strip()] if listed and ALL_PROFILES else [profile]
         return [f'{each}: {problem}' if len(profiles) > 1 else problem
                 for each in profiles for problem in run_problems(path, text, each, kind)[0]]
-    problems = []
+    problems = emitted_c_problems(path, text)
     exit_code, found = produced(path, profile, compiler_flags(text), checking_command(text))
     claimed = [False] * len(found)
     for _, code, message, line in annotations(text):
@@ -224,6 +224,40 @@ def check(path):
         run_found, code, out, err = run_problems(path, text, profile, kind)
         problems += run_found
         problems += evaluator_disagrees(path, text, profile, code, out, err)
+    return problems
+
+
+def emitted_c_problems(path, text):
+    """`#$ assert-c:`, `assert-c-count:` and `assert-c-order:` against the C the test's profiles emit: each
+    profile but `debug`, or `debug` when it is the only one, as the cargo harness reads them."""
+    lines = re.findall(r'^\s*#\$ (assert-c(?:-count|-order)?):(.*)$', text, re.M)
+    if not lines:
+        return []
+    listed = re.search(r'^#\$ profiles:\s*(.*)$', text, re.M)
+    profiles = [p.strip() for p in listed[1].split(',') if p.strip()] if listed else ['debug']
+    problems = []
+    for profile in [p for p in profiles if p != 'debug'] or profiles:
+        code, c, err = run(['build', '--backend', 'c', '--emit', 'c', '--profile', profile], path)
+        if code != 0:
+            problems.append(f'{profile}: the C was not emitted: {err.strip()[:200]!r}')
+            continue
+        for key, value in lines:
+            value = value.strip()
+            if key == 'assert-c':
+                wanted = not value.startswith('!')
+                needle = re.sub(r'^contains\(|\)$', '', value.lstrip('!').strip()).strip('"')
+                if (needle in c) != wanted:
+                    problems.append(f'{profile}: the C {"lacks" if wanted else "has"} {needle!r}')
+            elif key == 'assert-c-count':
+                body, _, count = value.rpartition('==')
+                needle = re.sub(r'^contains\(|\)$', '', body.strip()).strip('"')
+                if c.count(needle) != int(count):
+                    problems.append(f'{profile}: the C has {needle!r} {c.count(needle)} times, not {count.strip()}')
+            else:
+                first, _, second = value.partition(' then ')
+                first, second = first.strip().strip('"'), second.strip().strip('"')
+                if first not in c or second not in c or c.find(first) >= c.find(second):
+                    problems.append(f'{profile}: the C does not have {first!r} before {second!r}')
     return problems
 
 

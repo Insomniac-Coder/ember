@@ -241,7 +241,7 @@ fn a_closure_holding_an_instance_follows_it_when_it_moves() {
     let tied = PARTICLES
         .replace("# SAFETY: nothing else in the process defines this name\n@unsafe(export(\"game_frame\"))", "class Mote:\n    n: int = 0\n    keep: Option[Ticker] = None\n\n\
                   class Ticker:\n    f: fn() -> int\n\n\
-                  fn tie():\n    m = Mote()\n    step = owned fn() -> int:\n        m.n = m.n + 1\n        return m.n\n    \
+                  fn tie():\n    m = shares mut Mote()\n    held = shares mut m\n    step = owned fn() -> int:\n        held.n = held.n + 1\n        return held.n\n    \
                   m.keep = Some(Ticker(step))\n\n# SAFETY: nothing else in the process defines this name\n@unsafe(export(\"game_frame\"))")
         .replace("            for k in 0..3:\n", "            tie()\n            for k in 0..3:\n");
     let grow = |source: &str| source.replace("    n: int = 0\n", "    n: int = 0\n    more: int = 8\n");
@@ -250,10 +250,10 @@ fn a_closure_holding_an_instance_follows_it_when_it_moves() {
 
     let boxed = PARTICLES
         .replace("# SAFETY: nothing else in the process defines this name\n@unsafe(export(\"game_frame\"))", "interface Speak:\n    fn speak() -> int\n\n\
-                  class Mote implements Speak:\n    n: int = 0\n    keep: Option[Holder] = None\n\n    \
+                  class Mote implements Speak:\n    n: int = 0\n\n    \
                   fn speak() -> int:\n        return this.n\n\n\
-                  class Holder:\n    s: owns dyn Speak\n\n\
-                  fn tie():\n    m = Mote()\n    keeper = m\n    boxed: owns dyn Speak = owns m\n    keeper.keep = Some(Holder(boxed))\n\n# SAFETY: nothing else in the process defines this name\n@unsafe(export(\"game_frame\"))")
+                  class Holder:\n    s: owns dyn Speak\n    me: Option[shares mut Holder] = None\n\n\
+                  fn tie():\n    m = Mote()\n    boxed: owns dyn Speak = owns m\n    held = shares mut Holder(boxed)\n    held.me = Some(shares mut held)\n\n# SAFETY: nothing else in the process defines this name\n@unsafe(export(\"game_frame\"))")
         .replace("            for k in 0..3:\n", "            tie()\n            for k in 0..3:\n");
     let run = host_run("reload-dyn-cannot-move", &boxed, &[&grow(&boxed)], 2);
     assert!(run.stdout.contains("an instance of `Mote` must move (its new size does not fit), but 1 of its 1 references are held where the runtime cannot follow them"), "exit {} {}{}", run.exit, run.stdout, run.stderr);
@@ -284,8 +284,8 @@ fn a_relaxed_function_is_reloaded() {
 fn a_layout_change_applies_at_a_checkpoint_the_old_frames_do_not_depend_on() {
     let v1 = "import std.hot\n\nclass Particle:\n    x: int = 0\n    spare: int = 7\n    step: int = 1\n\n    \
               fn bump() -> int:\n        this.x = this.x + this.step\n        return this.x\n\n\
-              fn tick(ps: Array[Particle]) -> int:\n    total = 0\n    for p in ps:\n        q = p\n        total += q.bump()\n    return total\n\n\
-              fn main():\n    ps = [Particle(), Particle(), Particle()]\n    for i in 0..3:\n        println(tick(ps))\n        hot.checkpoint()\n";
+              fn tick(ps: Array[shares mut Particle]) -> int:\n    total = 0\n    for p in ps:\n        q = shares mut p\n        total += q.bump()\n    return total\n\n\
+              fn main():\n    ps = [shares mut Particle(), shares mut Particle(), shares mut Particle()]\n    for i in 0..3:\n        println(tick(ps))\n        hot.checkpoint()\n";
     let v2 = v1.replace("    spare: int = 7\n", "").replace("this.x = this.x + this.step", "this.x = this.x + this.step * 10");
     let (run, reloads) = reload_run("reload-checkpoint-layout", RELOAD_ALL, v1, &[&v2]);
     assert_eq!(reloads[0].exit, 0, "{}", reloads[0].stderr);
@@ -571,7 +571,7 @@ fn link_host(package: &Path, out: &Path, host: &str) -> PathBuf {
     program
 }
 
-const PARTICLES: &str = "from std.sync import Atomic, Mutex\n\n@sync\nclass Particle:\n    x: Atomic[int] = Atomic(0)\n    step: int = 1\n\n\
+const PARTICLES: &str = "from std.sync import Atomic, Mutex\n\nclass Particle:\n    x: Atomic[int] = Atomic(0)\n    step: int = 1\n\n\
     static WORLD: Mutex[Array[Particle]] = Mutex([])\n\n\
     # SAFETY: nothing else in the process defines this name\n@unsafe(export(\"game_frame\"))\nextern \"C\" fn frame(turn: i64) -> i64:\n    total: i64 = 0\n    with world = WORLD.lock():\n        \
     if world.len() == 0:\n            for k in 0..3:\n                world.push(owns Particle())\n        \
@@ -618,8 +618,8 @@ fn the_migration_table_by_name() {
 
     // Removed: the field's value is dropped in reclaim.
     let tracked = PARTICLES.replace(
-        "@sync\nclass Particle:\n",
-        "@sync\nclass Tag:\n    id: int = 0\n\n    fn drop():\n        println(\"tag dropped\")\n\n@sync\nclass Particle:\n    tag: Tag = Tag()\n",
+        "class Particle:\n",
+        "class Tag:\n    id: int = 0\n\n    fn drop():\n        println(\"tag dropped\")\n\nclass Particle:\n    tag: Tag = Tag()\n",
     );
     let untracked = tracked.replace("    tag: Tag = Tag()\n", "");
     let run = host_run("reload-removed", &tracked, &[&untracked], 2);
@@ -627,8 +627,8 @@ fn the_migration_table_by_name() {
 
     // Added with no default: refused, naming the field.
     let undefaulted = PARTICLES.replace("    step: int = 1\n", "    step: int = 1\n    mass: Tag2\n\n    fn init():\n        this.mass = Tag2(w = 1)\n").replace(
-        "@sync\nclass Particle:\n",
-        "struct Tag2:\n    w: int\n\n@sync\nclass Particle:\n",
+        "class Particle:\n",
+        "struct Tag2:\n    w: int\n\nclass Particle:\n",
     );
     let run = host_run("reload-undefaulted", PARTICLES, &[&undefaulted], 2);
     assert_eq!(run.stdout.lines().next(), Some("3"), "{}", run.stderr);
@@ -652,7 +652,7 @@ fn a_field_added_whose_type_is_default_takes_its_default() {
         ("reload-default-derived", "@derive(Default)\nstruct Mass:\n    w: int = 7\n\n"),
     ] {
         let v2 = PARTICLES
-            .replace("@sync\nclass Particle:\n", &format!("{mass}@sync\nclass Particle:\n"))
+            .replace("class Particle:\n", &format!("{mass}class Particle:\n"))
             .replace("    step: int = 1\n", "    step: int = 1\n    mass: Mass\n\n    fn init():\n        this.mass = Mass(w = 1)\n")
             .replace("total += p.x.load()", "total += p.x.load() + p.mass.w");
         let run = host_run(label, PARTICLES, &[&v2], 3);
@@ -672,7 +672,7 @@ fn a_field_changed_to_a_range_type_is_tested_by_checked() {
     let v1 = PARTICLES.replace("step: int = 1", "step: i32 = 1").replace("p.x.fetch_add(p.step)", "p.x.fetch_add(p.step as int)");
     let ranged_from = |range: &str, default: u32| {
         PARTICLES
-            .replace("@sync\nclass Particle:\n", &format!("type Step = int in {range}\n\n@sync\nclass Particle:\n"))
+            .replace("class Particle:\n", &format!("type Step = int in {range}\n\nclass Particle:\n"))
             .replace("step: int = 1", &format!("step: Step = {default}"))
     };
     let ranged = |range: &str| ranged_from(range, 5);
@@ -724,8 +724,8 @@ fn a_field_changed_to_a_range_type_is_tested_by_checked() {
 fn an_enum_payload_migrates_by_the_field_rows() {
     let v1 = PARTICLES
         .replace(
-            "@sync\nclass Particle:\n",
-            "enum Shape:\n    Dot\n    Circle(r: i32)\n\n@sync\nclass Particle:\n    shape: Shape = Shape.Circle(2)\n",
+            "class Particle:\n",
+            "enum Shape:\n    Dot\n    Circle(r: i32)\n\nclass Particle:\n    shape: Shape = Shape.Circle(2)\n",
         )
         .replace("total += p.x.load()", "total += p.x.load() + size(p.shape)")
         .replace(
@@ -772,7 +772,7 @@ fn an_enum_payload_migrates_by_the_field_rows() {
     let tagged = v1
         .replace(
             "enum Shape:\n    Dot\n    Circle(r: i32)\n",
-            "@sync\nclass Tag:\n    id: int = 0\n\n    fn drop():\n        println(\"tag dropped\")\n\nenum Shape:\n    Dot\n    Circle(r: i32, tag: Tag)\n",
+            "class Tag:\n    id: int = 0\n\n    fn drop():\n        println(\"tag dropped\")\n\nenum Shape:\n    Dot\n    Circle(r: i32, tag: Tag)\n",
         )
         .replace("Shape.Circle(2)", "Shape.Circle(2, Tag())")
         .replace("        Shape.Circle(r):\n", "        Shape.Circle(r, tag):\n");
@@ -785,7 +785,7 @@ fn an_enum_payload_migrates_by_the_field_rows() {
 
     // A struct inside an `Option`'s payload, grown: migrated depth-first.
     let spotted = PARTICLES
-        .replace("@sync\nclass Particle:\n", "@derive(Copy)\nstruct Point:\n    y: int = 4\n\n@sync\nclass Particle:\n    spot: Option[Point] = Some(Point())\n")
+        .replace("class Particle:\n", "@derive(Copy)\nstruct Point:\n    y: int = 4\n\nclass Particle:\n    spot: Option[Point] = Some(Point())\n")
         .replace("total += p.x.load()", "total += p.x.load() + p.spot.unwrap_or(Point()).y");
     let grown = spotted
         .replace("    y: int = 4\n", "    y: int = 4\n    z: int = 50\n")
@@ -816,7 +816,7 @@ fn value_data_migrates_through_its_container() {
 
     // In a class's instances.
     let marked = PARTICLES
-        .replace("@sync\nclass Particle:\n", "struct Mark:\n    w: int = 1\n\n@sync\nclass Particle:\n    marks: Array[Mark] = [Mark(), Mark()]\n")
+        .replace("class Particle:\n", "struct Mark:\n    w: int = 1\n\nclass Particle:\n    marks: Array[Mark] = [Mark(), Mark()]\n")
         .replace("total += p.x.load()", "total += p.x.load() + p.marks[0].w + p.marks[1].w");
     let remarked = marked.replace("    w: int = 1\n", "    w: int = 1\n    z: int = 10\n").replace("p.marks[1].w", "p.marks[1].w + p.marks[1].z");
     let run = host_run("reload-array-instances", &marked, &[&remarked], 3);
@@ -1036,10 +1036,10 @@ fn a_foreign_failure_in_migrate_from_is_foreign() {
     // A C function's status other than its success (`[FFI-16]`): `Foreign` too.
     let with_status = |source: &str| {
         source.replace(
-            "@sync\nclass Particle:\n",
+            "class Particle:\n",
             "@repr(i32)\n@non_exhaustive\n@ffi(status=Status, ok=Success, error=StatusError)\nenum Status:\n    Success = 0\n    Busy = 2\n\n\
              unsafe extern \"C\":\n    @ffi(result(status), link_name=\"check_c\")\n    safe fn check(n: i32) -> Status\n\n\
-             pub extern \"C\" fn check_c(n: i32) -> i32:\n    return 2 if n > 0 else 0\n\n@sync\nclass Particle:\n",
+             pub extern \"C\" fn check_c(n: i32) -> i32:\n    return 2 if n > 0 else 0\n\nclass Particle:\n",
         )
     };
     let status = with_status(MIGRATED)
@@ -1243,8 +1243,8 @@ fn the_failure_matrix() {
     // A panic in a `drop` during reclaim: after commit, so the reload has succeeded; the panic
     // aborts the process as any panic does.
     let tagged = PARTICLES.replace(
-        "@sync\nclass Particle:\n",
-        "@sync\nclass Tag:\n    id: int = 0\n\n    fn drop():\n        panic(\"the tag would not go\")\n\n@sync\nclass Particle:\n    tag: Tag = Tag()\n",
+        "class Particle:\n",
+        "class Tag:\n    id: int = 0\n\n    fn drop():\n        panic(\"the tag would not go\")\n\nclass Particle:\n    tag: Tag = Tag()\n",
     );
     let untagged = tagged.replace("    tag: Tag = Tag()\n", "");
     let run = host_run("reload-matrix-reclaim", &tagged, &[&untagged], 2);
@@ -1258,7 +1258,7 @@ fn the_failure_matrix() {
 #[test]
 fn enum_values_migrate_by_variant_name() {
     let v1 = PARTICLES
-        .replace("@sync\nclass Particle:\n", "enum Mode:\n    Slow\n    Fast\n\n@sync\nclass Particle:\n    mode: Mode = Mode.Fast\n")
+        .replace("class Particle:\n", "enum Mode:\n    Slow\n    Fast\n\nclass Particle:\n    mode: Mode = Mode.Fast\n")
         .replace("p.x.fetch_add(p.step)", "p.x.fetch_add(speed(p.mode))")
         .replace("fn main():", "fn speed(mode: Mode) -> int:\n    match mode:\n        Mode.Slow:\n            return 1\n        Mode.Fast:\n            return 10\n\nfn main():");
     let reordered = v1.replace("enum Mode:\n    Slow\n    Fast\n", "enum Mode:\n    Fast\n    Slow\n    Turbo\n")
@@ -1450,7 +1450,7 @@ fn an_instance_moves_only_where_its_references_are_found() {
     assert_eq!(run.stdout, "3\napplied, 3 migrated\n6\n9\n", "{}", run.stderr);
 }
 
-const MIGRATED: &str = "from std.sync import Atomic, Mutex\nfrom std.hot import ReloadError\n\n@sync\nclass Particle:\n    x: Atomic[int] = Atomic(0)\n    speed: int = 10\n\n    \
+const MIGRATED: &str = "from std.sync import Atomic, Mutex\nfrom std.hot import ReloadError\n\nclass Particle:\n    x: Atomic[int] = Atomic(0)\n    speed: int = 10\n\n    \
     fn init(x: int, speed: int):\n        this.x = Atomic(x)\n        this.speed = speed\n\n    \
     static fn migrate_from(old: OldSelf) -> Result[Self, ReloadError]:\n        return Ok(Particle(old.x.load() * 100, old.step * 10))\n\n\
     static WORLD: Mutex[Array[Particle]] = Mutex([])\n\n\
@@ -1465,7 +1465,7 @@ const MIGRATED: &str = "from std.sync import Atomic, Mutex\nfrom std.hot import 
 /// generated struct is visible only as `OldSelf`: the package's own `OldParticle` is another type.
 #[test]
 fn migrate_from_builds_the_new_instances() {
-    let own = |source: &str| source.replace("@sync\nclass Particle:\n", "struct OldParticle:\n    note: int = 5\n\n@sync\nclass Particle:\n");
+    let own = |source: &str| source.replace("class Particle:\n", "struct OldParticle:\n    note: int = 5\n\nclass Particle:\n");
     let dropping = own(PARTICLES).replace("    step: int = 1\n", "    step: int = 1\n\n    fn drop():\n        println(f\"dropped {this.x.load()}\")\n");
     let run = host_run("reload-migrate-from", &dropping, &[&own(MIGRATED)], 3);
     assert_eq!(run.stdout, "3\napplied, 3 migrated\n330\n360\n", "{}", run.stderr);
@@ -1811,8 +1811,8 @@ fn a_changed_layout_attribute_is_a_schema_change() {
 #[test]
 fn a_changed_base_is_refused_and_a_renamed_variant_kept() {
     let based = PARTICLES.replace(
-        "@sync\nclass Particle:\n",
-        "@sync\nopen class Body:\n    mass: int = 1\n\n@sync\nopen class Shape:\n    sides: int = 4\n\n@sync\nclass Particle(Body):\n",
+        "class Particle:\n",
+        "open class Body:\n    mass: int = 1\n\nopen class Shape:\n    sides: int = 4\n\nclass Particle(Body):\n",
     );
     let rebased = based.replace("class Particle(Body):", "class Particle(Shape):");
     let run = host_run("reload-rebased", &based, &[&rebased], 2);
@@ -1820,7 +1820,7 @@ fn a_changed_base_is_refused_and_a_renamed_variant_kept() {
     assert!(run.stdout.ends_with("6\n"), "the old code did not run on: {}", run.stdout);
 
     let v1 = PARTICLES
-        .replace("@sync\nclass Particle:\n", "enum Mode:\n    Slow\n    Fast\n\n@sync\nclass Particle:\n    mode: Mode = Mode.Fast\n")
+        .replace("class Particle:\n", "enum Mode:\n    Slow\n    Fast\n\nclass Particle:\n    mode: Mode = Mode.Fast\n")
         .replace("p.x.fetch_add(p.step)", "p.x.fetch_add(speed(p.mode))")
         .replace("fn main():", "fn speed(mode: Mode) -> int:\n    match mode:\n        Mode.Slow:\n            return 1\n        Mode.Fast:\n            return 10\n\nfn main():");
     let renamed = v1
@@ -1908,7 +1908,7 @@ int main(int argc, char** argv) {
 
 /// The benchmark's program: 10,000 live `Particle`s, each moved on by every frame, and a frame
 /// value saying which edit runs (`tag`) and that every instance is still there.
-const BENCH_WORLD: &str = "from std.sync import Atomic, Mutex\n\n@sync\nclass Particle:\n    x: Atomic[int] = Atomic(0)\n    step: int = 1\n\n\
+const BENCH_WORLD: &str = "from std.sync import Atomic, Mutex\n\nclass Particle:\n    x: Atomic[int] = Atomic(0)\n    step: int = 1\n\n\
     static WORLD: Mutex[Array[Particle]] = Mutex([])\n\nfn tag(p: Particle) -> int:\n    return 1\n\n\
     # SAFETY: nothing else in the process defines this name\n@unsafe(export(\"game_frame\"))\nextern \"C\" fn frame(turn: i64) -> i64:\n    with world = WORLD.lock():\n        \
     if world.len() == 0:\n            for k in 0..10000:\n                world.push(owns Particle())\n        \

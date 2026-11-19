@@ -47,12 +47,12 @@ class Tree:
                 this.root = Some(TreeNode(key.to_string()))
                 this.size = 1
 
-    fn find(key: StrView) -> Option[TreeNode]:
-        current = this.root
+    fn find(key: StrView) -> Option[ref TreeNode]:
+        current = ref this.root
         while current exists as n:
             if key == n.key:
-                return Some(n)
-            current = n.left if key < n.key else n.right
+                return Some(ref n)
+            current = ref n.left if key < n.key else ref n.right
         return None
 
     fn words() -> Array[String]:

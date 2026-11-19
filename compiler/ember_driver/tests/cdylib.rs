@@ -156,7 +156,7 @@ fn run_host(exe: &Path, args: &[&str], cwd: &Path) -> std::process::Output {
 
 const PLUGIN: &str = r#"class Node:
     name: String
-    next: Option[Node]
+    next: Option[shares mut Node]
 
 fn helper(x: i32) -> i32:
     return x * 2
@@ -174,9 +174,9 @@ fn on_main() -> i32:
 # SAFETY: nothing else in the process defines this name
 @unsafe(export("plugin_leak"))
 fn leak() -> i32:
-    a = Node("a", None)
-    b = Node("b", Some(a))
-    a.next = Some(b)
+    a = shares mut Node("a", None)
+    b = shares mut Node("b", Some(shares mut a))
+    a.next = Some(shares mut b)
     return 1
 
 # SAFETY: nothing else in the process defines this name

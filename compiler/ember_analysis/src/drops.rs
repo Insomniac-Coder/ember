@@ -1357,9 +1357,11 @@ fn write_flag_updates(body: &mut Body, flags: &BTreeMap<Place, LocalId>) {
                     written.push(dest.clone());
                     written.push(overflow.clone());
                 }
+                // What is dropped is gone: a flag left set would drop it again on a later turn of a
+                // loop that does not make it.
+                StmtKind::Drop { place, .. } => moved.push(place.clone()),
                 StmtKind::StorageLive(_)
                 | StmtKind::StorageDead(_)
-                | StmtKind::Drop { .. }
                 | StmtKind::BeginAccess { .. }
                 | StmtKind::BeginAccessTransfer { .. }
                 | StmtKind::EndAccess { .. }

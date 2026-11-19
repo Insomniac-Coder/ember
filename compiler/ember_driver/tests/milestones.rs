@@ -1070,11 +1070,11 @@ fn inspect_cost_reports_each_row_by_site() {
          struct Square:\n    side: int\n\n\
          extend Square implements Shape:\n    fn area() -> int:\n        return this.side * this.side\n\n\
          class Counter:\n    n: int = 0\n\n    fn bump():\n        this.n += 1\n\n\
-         fn bump_all(counters: Array[Counter]):\n    for c in counters:\n        keep = c\n        keep.bump()\n\n\
+         fn bump_all(counters: Array[shares mut Counter]):\n    for c in counters:\n        keep = shares mut c\n        keep.bump()\n\n\
          fn measure(shape: ref dyn Shape) -> int:\n    return shape.area()\n\n\
          fn get(xs: Array[int], i: int) -> int:\n    return xs[i]\n\n\
          fn main():\n    xs = [1, 2, 3]\n    s = Set[int]()\n    s.add(owns 2)\n    text = f\"value {xs[0]}\"\n\
-         \x20   square = Square(side = 2)\n    counters = [Counter(), Counter()]\n    bump_all(counters)\n\
+         \x20   square = Square(side = 2)\n    counters = [shares mut Counter(), shares mut Counter()]\n    bump_all(counters)\n\
          \x20   println(get(xs, 1), 2 in xs, 2 in s, \"lu\" in text, measure(ref square), counters[0].n)\n",
     )
     .expect("write the program");
@@ -2786,7 +2786,7 @@ fn ember_lint_reports_its_lints_at_the_levels_the_manifest_gives() {
         "",
         "fn main():",
         "    s = String.from(\"x\")",
-        "    t = s.clone()",
+        "    t = copy of s",
         "    for i in 0..3:",
         "        u = String.from(\"y\")",
         "        println(u.len() + i)",
@@ -7755,9 +7755,9 @@ class Loud(Node):
     override fn poke():
         this.value = 9
 
-fn second(n: Node):
+fn second(ref mut n: Node):
     match n.next:
-        Some(m):
+        Some(ref mut m):
             m.set(5)
         None:
             pass
@@ -7878,7 +7878,7 @@ fn main():
     println(reads_only(c), depth(3, ref mut c))
     a = Node()
     a.next = Some(Node())
-    second(a)
+    second(ref mut a)
     unlink(a)
     println(twice_first())
     xs: Array[int] = []
@@ -8651,13 +8651,13 @@ fn ember_test_reports_leaks_unless_turned_off() {
     let package = test_package("leaky", "lib", "\
 class Node:
     name: String
-    next: Option[Node]
+    next: Option[shares mut Node]
 
 @test
 fn builds_a_cycle():
-    a = Node(\"a\", None)
-    b = Node(\"b\", Some(a))
-    a.next = Some(b)
+    a = shares mut Node(\"a\", None)
+    b = shares mut Node(\"b\", Some(shares mut a))
+    a.next = Some(shares mut b)
 ");
     let default = ember(&["test"], &package);
     assert_eq!(default.exit, 0, "{}{}", default.stdout, default.stderr);
@@ -8703,7 +8703,7 @@ Prose.
 ```ember,fixed
 fn main():
     a = [1, 2, 3]
-    b = a.clone()
+    b = copy of a
     a.push(owns 4)
     println(b.len())
 ```
@@ -9246,7 +9246,7 @@ pub fn twice(x: i32) -> i32:
     ember_build::compile_cpp_object(&toolchain, &user, &[include], &object, Profile::Debug, "c++20", false).expect("the C++ header compiles");
 }
 
-/// `[BLD-FFI-5a]` (ODR-162) — an export may hand C++ an object of a `@sync` class: the C header
+/// `[BLD-FFI-5a]` (ODR-162) — an export may hand C++ a `thread_shared` object: the C header
 /// gives the class's handle its count, its end and each `pub` method, and the `--cpp` header a
 /// class of the same name whose copies share the object (retain) and whose last end frees it
 /// (release), with the class's `pub` methods; an export taking or giving one takes or gives the
@@ -9262,7 +9262,6 @@ kind = \"lib\"
     let source = dir.join(format!("lib.{SOURCE_EXT}"));
     std::fs::write(&source, "from std.sync import Atomic, MemoryOrder
 
-@sync
 pub class World:
     people: Atomic[i32] = Atomic(0)
     seed: i32 = 0
@@ -9284,12 +9283,12 @@ pub class World:
 
 # SAFETY: nothing else in the process defines this name
 @unsafe(export(\"make_world\"))
-pub fn make_world(seed: i32) -> World:
-    return World(seed)
+pub fn make_world(seed: i32) -> thread_shared World:
+    return thread_shared World(seed)
 
 # SAFETY: nothing else in the process defines this name
 @unsafe(export(\"population_of\"))
-pub fn population_of(world: World) -> i32:
+pub fn population_of(world: thread_shared World) -> i32:
     return world.population()
 ").unwrap();
     let out = dir.join("out");

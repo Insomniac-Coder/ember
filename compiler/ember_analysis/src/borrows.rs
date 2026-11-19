@@ -1691,12 +1691,16 @@ fn field_accesses(body: &Body, types: &TypeTable, regions: &Regions) -> Vec<Shar
                     point_access(&mut accesses, place, !inside_a_cell(body, types, place), created_at, stmt.span);
                     let Some(region) = regions.loan_region(created_at) else { continue };
                     let mutable = *mutable && !inside_a_cell(body, types, borrowed);
+                    // A loan made again while the one before it lives (a view walked down a chain of
+                    // objects in a loop) names another object each turn, so no one bracket holds it:
+                    // it is checked where it is made.
+                    let held = if regions.contains(region, created_at) { Vec::new() } else { vec![region] };
                     for owner in field_boundaries(body, types, borrowed, true) {
                         accesses.push(SharedAccess {
                             created_at,
                             owner,
                             mutable,
-                            regions: vec![region],
+                            regions: held.clone(),
                             span: stmt.span,
                             start: SharedAccessStart::Normal,
                             end: SharedAccessEnd::Normal,
