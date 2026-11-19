@@ -3122,6 +3122,10 @@ struct Checker<'a> {
     user_attributes_here: bool,
     /// How many closure bodies enclose the code being checked.
     lambda_depth: usize,
+    /// `[TYP-23]` — the expected result of the lambda being checked when it has open parameters
+    /// (`Result[U, String]`), and what an `Ok(…)`/`Err(…)`/`Some(…)` that is its whole body takes of it.
+    lambda_result_hint: Option<Ty>,
+    wrapper_hint: Option<Ty>,
     /// D-546 — each lambda's last value checked without an error, by its
     /// span (`synth_lambda`).
     lambda_values: HashMap<Span, Expr>,
@@ -4287,6 +4291,8 @@ impl<'a> Checker<'a> {
             pending_user_attributes: Vec::new(),
             user_attributes_here: false,
             lambda_depth: 0,
+            lambda_result_hint: None,
+            wrapper_hint: None,
             lambda_values: HashMap::new(),
             skipped_instances: 0,
             opaque_lambdas: HashSet::new(),
@@ -18752,6 +18758,26 @@ impl<'a> Checker<'a> {
             return Some(Expr { ty: self.common.error, kind: ExprKind::Error, span });
         }
 
+        // `[TYP-23]` — a lambda's whole body, given an expected result with open parts: the known
+        // parts are the expected's, the open ones the value's.
+        if expected.is_none()
+            && let Some(hint) = self.wrapper_hint.take()
+            && let Some((_, hinted)) = self.builtin_generic_origin(hint)
+        {
+            let value = self.synth_committed(&args[0].value);
+            let known = |checker: &Self, at: usize| hinted.get(at).copied().filter(|&ty| !checker.types.is_generic(ty)).unwrap_or(checker.common.void);
+            let ty = match which {
+                0 => self.option_of(value.ty),
+                1 => self.result_of(value.ty, known(self, 1)),
+                _ => self.result_of(known(self, 0), value.ty),
+            };
+            let TyKind::Enum(id) = *self.types.kind(ty) else {
+                return Some(Expr { ty: self.common.error, kind: ExprKind::Error, span });
+            };
+            let variant_name = ["Some", "Ok", "Err"][which];
+            let (index, _) = self.types.enum_def(id).variant(Symbol::intern(variant_name))?;
+            return Some(Expr { ty, kind: ExprKind::EnumLit { enum_id: id, variant: index, fields: vec![value] }, span });
+        }
         // An expected `Option`/`Result` fixes both parameters, which is what
         // makes `Err(e)` work without naming the success type.
         let payload_ty = expected.and_then(|e| match self.types.kind(e) {
@@ -44292,6 +44318,7 @@ impl<'a> Checker<'a> {
         let earlier = self.sink.take();
         let own_unsafe = entry.is_unsafe.then(|| UnsafeFnBody { name: entry.name, at: entry.span, first: None });
         let outer_unsafe_fn = std::mem::replace(&mut self.unsafe_fn, own_unsafe);
+        let outer_hint = self.lambda_result_hint.take();
         let (body, _, locals, _) = self.check_lambda_body(
             &entry.lambda,
             &params,
@@ -44299,6 +44326,7 @@ impl<'a> Checker<'a> {
             watch,
             Some((Symbol::intern("env"), entry.env_ty, entry.env_mode, entry.span)),
         );
+        self.lambda_result_hint = outer_hint;
         self.unsafe_fn = outer_unsafe_fn;
         let own = self.sink.take();
         for diagnostic in earlier {
@@ -53351,6 +53379,21 @@ impl<'a> Checker<'a> {
     }
 
     fn synth_lambda_fresh(&mut self, lambda: &ast::Lambda, expected: Option<Ty>, span: Span, reserved: Option<DefId>) -> Expr {
+        // `[TYP-23]` — an expected result that is an `Option` or a `Result` with open parts is no
+        // type to force on the body, but its known parts reach an `Ok(…)` that is the body.
+        let hint = expected
+            .and_then(|ty| match self.types.kind(self.types.item_shape(ty).unwrap_or(ty)) {
+                TyKind::Fn { ret, .. } => Some(*ret),
+                _ => None,
+            })
+            .filter(|&ret| lambda.ret.is_none() && self.types.is_generic(ret) && (self.is_option(ret) || self.is_result(ret)));
+        let saved = std::mem::replace(&mut self.lambda_result_hint, hint);
+        let made = self.synth_lambda_fresh_inner(lambda, expected, span, reserved);
+        self.lambda_result_hint = saved;
+        made
+    }
+
+    fn synth_lambda_fresh_inner(&mut self, lambda: &ast::Lambda, expected: Option<Ty>, span: Span, reserved: Option<DefId>) -> Expr {
         let made_unsafe = std::mem::take(&mut self.user_lambda_in_unsafe) && reserved.is_none();
         // `[UNS-7]` (verdict 126) — a lambda written in unsafe code says what its callers must make
         // true, just before it; one outside it is safe to call, and says nothing. Reported at the end.
@@ -53836,6 +53879,7 @@ impl<'a> Checker<'a> {
         let outer_callable_value_bindings =
             std::mem::take(&mut self.callable_value_bindings);
         let outer_ret = self.ret_ty;
+        let hint = self.lambda_result_hint;
         let outer_watch = self.captures.replace(watch);
         let outer_anchors = std::mem::take(&mut self.arena_anchors);
         self.ret_ty = ret.unwrap_or(self.common.void);
@@ -53899,7 +53943,16 @@ impl<'a> Checker<'a> {
                     // `fn(ref String) -> ref String`, as it is with the result type written. Read
                     // through, the `String` was moved out of the borrowed parameter (`E3013`).
                     None => {
+                        if let Some(hint) = hint
+                            && let ast::ExprKind::Call { callee, .. } = &expr.kind
+                            && let ast::ExprKind::Path { segments } = &callee.kind
+                            && let [only] = segments.as_slice()
+                            && matches!(only.name.as_str(), "Ok" | "Err" | "Some")
+                        {
+                            self.wrapper_hint = Some(hint);
+                        }
                         let value = self.synth_committed(expr);
+                        self.wrapper_hint = None;
                         match value.kind {
                             ExprKind::Deref(reference)
                                 if matches!(self.types.kind(reference.ty), TyKind::Ref { .. })
