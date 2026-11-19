@@ -510,6 +510,7 @@ pub(crate) fn terminator_reads(terminator: &Terminator, read: &mut [bool]) {
                     operand_reads(file, read);
                     operand_reads(line, read);
                 }
+                AssertKind::ShiftTooLarge { amount, .. } => operand_reads(amount, read),
                 AssertKind::Panic { message } => operand_reads(message, read),
                 _ => {}
             }

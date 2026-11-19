@@ -30,6 +30,7 @@ fn main():
     sq = Square(2.0)
     d: ref dyn Shape = ref sq
     println(d.area())  #$ warning[L4002]: this `Shape` call is dispatched dynamically, but its receiver is always a `Square`, a final type
-    c: Shape = Circle()
+    circle = Circle()
+    c: ref dyn Shape = ref circle
     println(c.area())  #$ warning[L4002]: this `Shape` call is dispatched dynamically, but its receiver is always a `Circle`, a final type
     println(area_of(ref sq) + 3.0)

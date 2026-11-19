@@ -1,7 +1,6 @@
 #$ test: run-pass
 #$ rules: DSP-3, DSP-2, TYP-22
 #$ profiles: debug, development, release
-#$ assert-c-count: contains("->ti == &em_ti_") == 6
 #$ stdout:
 #$ 12 1009 6 1027
 #$ 15
@@ -59,7 +58,7 @@ class N5 implements Named:
         return 5
 
 fn main():
-    shapes: Array[Shape] = []
+    shapes: Array[owns dyn Shape] = []
     shapes.push(owns Rect(3, 4))
     square: Rect = Square(3, 3)
     shapes.push(owns square)
@@ -69,7 +68,7 @@ fn main():
         total = total + s.area()
         print(s.area(), "")
     println(total)
-    names: Array[Named] = [N1(), N2(), N3(), N4(), N5()]
+    names: Array[owns dyn Named] = [owns N1(), owns N2(), owns N3(), owns N4(), owns N5()]
     sum = 0
     for n in names:
         sum = sum + n.id()

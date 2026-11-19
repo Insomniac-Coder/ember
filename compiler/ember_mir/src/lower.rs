@@ -6674,7 +6674,16 @@ impl<'a> Builder<'a> {
                 let width = bit_width(self.types, ty).unwrap_or(64);
                 let amount_ty = rhs.ty;
                 let mut refusals = Vec::new();
-                if is_signed(self.types, amount_ty) == Some(true) {
+                // The panic's text names the expression as written, the shifted type and the direction.
+                let text = if span.is_dummy() || self.map.get(span.file).is_none() {
+                    String::new()
+                } else {
+                    let written: String = self.map.snippet(span).split_whitespace().collect::<Vec<_>>().join(" ");
+                    if written.chars().count() > 60 { format!("{}…", written.chars().take(59).collect::<String>()) } else { written }
+                };
+                let shifted_name = self.types.display(ty);
+                let amount_signed = is_signed(self.types, amount_ty) == Some(true);
+                if amount_signed {
                     refusals.push((BinOp::Lt, 0u128));
                 }
                 if ember_types::int_max(self.types, amount_ty).is_some_and(|max| max >= width as u128) {
@@ -6694,7 +6703,13 @@ impl<'a> Builder<'a> {
                     self.terminate(Terminator::Assert {
                         cond: Operand::Copy(Place::local(refused)),
                         expected: false,
-                        msg: AssertKind::ShiftTooLarge,
+                        msg: AssertKind::ShiftTooLarge {
+                            amount: rhs_op.clone(),
+                            signed: amount_signed,
+                            left: op == BinOp::Shl,
+                            text: text.clone(),
+                            ty: shifted_name.clone(),
+                        },
                         next: after,
                         span,
                     });

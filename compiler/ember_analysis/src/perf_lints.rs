@@ -599,6 +599,7 @@ fn used_after(body: &Body, start: usize, locals: &HashSet<LocalId>) -> bool {
                 let extra: Vec<&Operand> = match msg {
                     ember_mir::AssertKind::Bounds { len, index } => vec![len, index],
                     ember_mir::AssertKind::RefCellBorrow { file, line } => vec![file, line],
+                    ember_mir::AssertKind::ShiftTooLarge { amount, .. } => vec![amount],
                     ember_mir::AssertKind::Panic { message } => vec![message],
                     _ => Vec::new(),
                 };

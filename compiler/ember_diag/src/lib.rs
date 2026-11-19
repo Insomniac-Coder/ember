@@ -116,6 +116,23 @@ pub struct Diagnostic {
     pub habit: Option<habits::Habit>,
 }
 
+/// `[DIA-16]` — a diagnostic that suggests a `shares` or `shares mut` owner (a line to write, a help) names its cost
+/// while the program runs.
+pub const SHARES_COST_NOTE: &str = "a `shares` or `shares mut` owner costs, while the program runs, one count per owner made or ended, and one compare with the count's maximum per owner made [DIA-16]";
+
+fn shares_cost_note(d: &mut Diagnostic) {
+    // A backticked line to write that holds the word.
+    let writes_shares = |text: &str| text.split('`').skip(1).step_by(2).any(|code| code.split(|c: char| !c.is_alphanumeric() && c != '_').any(|word| word == "shares"));
+    // A refusal whose message is itself the line to write (these four give it there).
+    let in_message = d.code.is_some_and(|code| matches!(code.number, 1010 | 2119 | 2173 | 3023));
+    if matches!(d.severity, Severity::Error)
+        && (d.helps.iter().any(|help| writes_shares(help)) || d.suggestions.iter().any(|s| writes_shares(&s.message)) || (in_message && writes_shares(&d.message)))
+        && !d.notes.iter().any(|note| note.contains("[DIA-16]"))
+    {
+        d.notes.push(SHARES_COST_NOTE.to_string());
+    }
+}
+
 /// `[DIA-2]` — "a `owns Player`" reads "an `owns Player`": the article before a quoted name is chosen
 /// from the word that follows it, for every message however it was built. Only a standalone `a` or
 /// `an` directly before a backtick is read; a name that does not begin with a letter (`[int; 3]`,
@@ -297,7 +314,8 @@ impl Sink {
         Sink::default()
     }
 
-    pub fn emit(&mut self, d: Diagnostic) {
+    pub fn emit(&mut self, mut d: Diagnostic) {
+        shares_cost_note(&mut d);
         match d.severity {
             Severity::Error => self.error_count += 1,
             Severity::Warning | Severity::Lint => self.warning_count += 1,

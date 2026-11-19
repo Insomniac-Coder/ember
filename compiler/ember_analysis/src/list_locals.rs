@@ -380,6 +380,7 @@ fn terminator_operands(terminator: &Terminator) -> Vec<&Operand> {
             match msg {
                 AssertKind::Bounds { len, index } => operands.extend([len, index]),
                 AssertKind::RefCellBorrow { file, line } => operands.extend([file, line]),
+                AssertKind::ShiftTooLarge { amount, .. } => operands.push(amount),
                 AssertKind::Panic { message } => operands.push(message),
                 _ => {}
             }

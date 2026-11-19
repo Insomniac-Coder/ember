@@ -213,17 +213,6 @@ impl Checker<'_> {
         }
     }
 
-    /// `[DIA-21]` P22 — the interfaces named as types before the implementations were known, asked
-    /// now: each one implemented by values only is reported where it was named.
-    pub(crate) fn report_early_interface_types(&mut self) {
-        for (interface, span, root, param) in std::mem::take(&mut self.early_interface_types) {
-            if let Some(diagnostic) = self.interface_of_values(interface, span, root, param) {
-                self.values_only_interfaces.insert(interface);
-                self.sink.emit(diagnostic);
-            }
-        }
-    }
-
     /// The generic type `ty` is an instance of, by its qualified name (`std.collections.Map`).
     fn origin_of(&self, ty: Ty) -> Option<Symbol> {
         match *self.types.kind(ty) {
@@ -595,17 +584,10 @@ impl Checker<'_> {
         diagnostic.help("build the text in a `String`: declare the place `String`")
     }
 
-    /// `[DIA-21]` P22 (ODR-182) — an interface's name in a type position is a class handle typed by
-    /// it (IV.1, `[OBJ-2]`); when the types implementing it are values (structs, enums) and none is a
-    /// class, a place of any of them is written another way, which the help names.
-    pub(crate) fn interface_of_values(&self, interface: Symbol, span: Span, root: Span, param: bool) -> Option<Diagnostic> {
-        let mut implementers = self.implemented.iter().filter(|(_, each, _)| *each == interface).map(|&(ty, ..)| ty).peekable();
-        implementers.peek()?;
-        let mut implementers = implementers;
-        if implementers.any(|ty| matches!(self.types.kind(ty), TyKind::Class(_))) {
-            return None;
-        }
-        Some(self.interface_of_values_diagnostic(interface, Diagnostic::error(codes::E2173, span, self.bare_interface_message(interface, span, root, param))))
+    /// `[OBJ-2]`, `[IFC-5]`, `[GRM-8b]` (`[DIA-21]` P22) — an interface's name in a type position does not
+    /// say who owns the value, whatever implements the interface: `E2173`, the help naming the words that do.
+    pub(crate) fn bare_interface_diagnostic(&self, interface: Symbol, span: Span, root: Span, param: bool) -> Diagnostic {
+        self.interface_of_values_diagnostic(interface, Diagnostic::error(codes::E2173, span, self.bare_interface_message(interface, span, root, param)))
     }
 
     /// `[OBJ-2]`, `[IFC-5]` — "`Shape` is an interface, so `Array[Shape]` does not say who owns the
@@ -635,7 +617,7 @@ impl Checker<'_> {
         diagnostic
             .habit(Habit::P22)
             .help(format!("`owns dyn {shown}` holds the value alone in a block of its own (`owns v` makes one); with `shares dyn {shown}` other names own it too, and each is made `shares`; `ref dyn {shown}` is a view; or take a type parameter, `[T: needs {shown}]`, and pass the value itself"))
-            .note(format!("an interface's name as a type is a class handle typed by it [OBJ-2]; a value of a type implementing `{shown}` has its own size, which `dyn {shown}` keeps behind a pointer (ODR-182)"))
+            .note(format!("an interface's name as a type does not say who owns its values [OBJ-2]; a value of a type implementing `{shown}` has its own size, which `dyn {shown}` keeps behind a pointer"))
     }
 
     /// `[DIA-21]` P21, P26, P27 and `[DIA-12]` N4 — what a value of `expr.ty` where `expected` is

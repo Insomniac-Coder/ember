@@ -729,7 +729,6 @@ fn check_round(
     // `K: Hash` needs `String`'s); it is offered each one again. One whose
     // hidden arguments those implementations answer is filled in then.
     checker.implementations_known = true;
-    checker.report_early_interface_types();
     checker.extend_early_instances();
     checker.complete_early_instances();
     checker.class_methods_recorded = true;
@@ -737,6 +736,10 @@ fn check_round(
     checker.resolve_derived_clones();
     checker.clones_resolved = true;
     checker.validate_class_methods(modules);
+    checker.validated_classes = true;
+    for (id, name, span) in std::mem::take(&mut checker.deferred_override_lines) {
+        checker.check_override_line(id, name, span);
+    }
     checker.assign_class_virtual_slots();
     let class_ids: Vec<ClassId> = checker.types.classes().map(|(id, _)| id).collect();
     for id in class_ids {
@@ -3126,6 +3129,9 @@ struct Checker<'a> {
     /// (`Result[U, String]`), and what an `Ok(…)`/`Err(…)`/`Some(…)` that is its whole body takes of it.
     lambda_result_hint: Option<Ty>,
     wrapper_hint: Option<Ty>,
+    /// `[TYP-23]` — the expected result of the lambda whose body is this conditional: each branch that is
+    /// `Ok(…)`, `Err(…)` or `Some(…)` takes its known parts, and the branches meet at what they fix together.
+    ternary_hint: Option<Ty>,
     /// D-546 — each lambda's last value checked without an error, by its
     /// span (`synth_lambda`).
     lambda_values: HashMap<Span, Expr>,
@@ -3552,10 +3558,8 @@ struct Checker<'a> {
     /// from a generic tuple extension over its elements' implementations) is named, and filled
     /// in once they can (`complete_early_instances`).
     implementations_known: bool,
-    /// `[DIA-21]` P22 — each interface named as a type before the implementations were known,
-    /// with where; and the interfaces reported as implemented by values only, whose uses then say
-    /// nothing more (`[DIA-14]`).
-    early_interface_types: Vec<(Symbol, Span, Span, bool)>,
+    /// `[DIA-21]` P22 — the interfaces named bare as a type (`E2173`), whose uses then say nothing more
+    /// (`[DIA-14]`); the field is `values_only_interfaces`.
     /// Inside a function's parameter types (`dyn I` is a view there, `[OBJ-2]`).
     in_param_type: u32,
     /// The written type being resolved, outermost first: where `Array[Shape]` begins, for a message that
@@ -3575,6 +3579,11 @@ struct Checker<'a> {
     /// `[CLS-4]` — an early generic class instance's `override`s: the instance, the method's
     /// name, its source and span.
     deferred_override_checks: Vec<(ClassId, Symbol, (usize, usize, usize), Span)>,
+    /// `[CLS-4]` — the `override`s of instances made before every class's methods were recorded, whose first line is
+    /// compared with what they replace (`E2113`) once they are; and the ones already compared.
+    deferred_override_lines: Vec<(ClassId, Symbol, Span)>,
+    override_lines_checked: HashSet<(ClassId, Symbol)>,
+    validated_classes: bool,
     /// `[CELL-1]` — every `Cell[T]` built so far, and the `T` it holds. A cell
     /// is an ordinary `StructId` everywhere else in the compiler, so this is
     /// what tells method dispatch that `set` on it is a builtin rather than a
@@ -4293,6 +4302,7 @@ impl<'a> Checker<'a> {
             lambda_depth: 0,
             lambda_result_hint: None,
             wrapper_hint: None,
+            ternary_hint: None,
             lambda_values: HashMap::new(),
             skipped_instances: 0,
             opaque_lambdas: HashSet::new(),
@@ -4368,7 +4378,6 @@ impl<'a> Checker<'a> {
             struct_hidden: HashMap::new(),
             concrete_instances: HashMap::new(),
             implementations_known: false,
-            early_interface_types: Vec::new(),
             type_root: None,
             in_param_type: 0,
             values_only_interfaces: HashSet::new(),
@@ -4377,6 +4386,9 @@ impl<'a> Checker<'a> {
             early_instances: Vec::new(),
             ecs_systems: HashMap::new(),
             deferred_override_checks: Vec::new(),
+            deferred_override_lines: Vec::new(),
+            override_lines_checked: HashSet::new(),
+            validated_classes: false,
             cells: HashMap::new(),
             boxes: HashMap::new(),
             assumed_cloneable: HashSet::new(),
@@ -7086,6 +7098,8 @@ impl<'a> Checker<'a> {
                                 method.name.span,
                                 "override of a method that is not virtual",
                             );
+                        } else {
+                            self.check_override_line(id, method.name.name, method.name.span);
                         }
                         continue;
                     }
@@ -7161,6 +7175,91 @@ impl<'a> Checker<'a> {
             }
         }
         self.current_module = saved_module;
+    }
+
+    /// `[CLS-4]` — an `override` has the first line of the method it replaces after its name: the same
+    /// parameter names, words and types (a generic base's parameters standing for the arguments the derived
+    /// class gives them: the base's instance's signature has them), the same words on `this` and the same
+    /// result (`E2113`).
+    fn check_override_line(&mut self, id: ClassId, name: Symbol, span: Span) {
+        if !self.override_lines_checked.insert((id, name)) || self.placeholder_bases.contains(&id) {
+            return;
+        }
+        let Some(&(_, derived, _)) = self.class_declared_methods.get(&id).and_then(|methods| methods.iter().find(|m| m.0 == name)) else { return };
+        let mut current = self.types.class_def(id).base;
+        let mut found = None;
+        for _ in 0..=self.types.classes().count() {
+            let Some(base) = current else { break };
+            if self.placeholder_bases.contains(&base) {
+                return;
+            }
+            if let Some(&(_, def, _)) = self.class_declared_methods.get(&base).and_then(|methods| methods.iter().find(|m| m.0 == name)) {
+                found = Some((base, def));
+                break;
+            }
+            current = self.types.class_def(base).base;
+        }
+        let Some((base, replaced)) = found else { return };
+        let (mine, theirs) = (self.signatures[derived.0 as usize].clone(), self.signatures[replaced.0 as usize].clone());
+        let word = |mode: Mode| match mode {
+            Mode::Mut => "ref mut ",
+            Mode::Owned => "owns ",
+            Mode::Borrow => "",
+        };
+        let this_words = |signature: &Signature| if signature.implicit_object { None } else { signature.params.first().map(|p| p.2) };
+        let (mine_this, theirs_this) = (this_words(&mine), this_words(&theirs));
+        let (own_params, base_params) = (&mine.params[mine.params.len().min(1)..], &theirs.params[theirs.params.len().min(1)..]);
+        let void = self.common.void;
+        let (owner, replaced_owner) = {
+            let (a, b) = (self.types.intern(TyKind::Class(id)), self.types.intern(TyKind::Class(base)));
+            (self.types.display(a), self.types.display(b))
+        };
+        let (here, there) = (format!("{owner}.{name}"), format!("the `{replaced_owner}.{name}` it overrides"));
+        let params: Vec<String> = base_params.iter().map(|&(n, ty, mode, _)| format!("{}{n}: {}", word(mode), self.types.display(ty))).collect();
+        let object = if theirs_this == Some(Mode::Owned) { " owns this" } else { "" };
+        let result = if theirs.ret == void { String::new() } else { format!(" -> {}", self.types.display(theirs.ret)) };
+        let line = format!("override fn {name}({}){object}{result}:", params.join(", "));
+        let mut kind_help = String::new();
+        let difference = if mine_this != theirs_this {
+            let this = |mode: Option<Mode>| match mode {
+                Some(Mode::Owned) => "`owns this`",
+                Some(Mode::Mut) => "`ref mut this`",
+                Some(Mode::Borrow) => "`this`",
+                None => "no word on `this`",
+            };
+            format!("`{here}` takes {}, and {there} takes {}", this(mine_this), this(theirs_this))
+        } else if own_params.len() != base_params.len() {
+            format!("`{here}` takes {} parameter{}, and {there} takes {}", own_params.len(), if own_params.len() == 1 { "" } else { "s" }, base_params.len())
+        } else if let Some(at) = (0..own_params.len()).find(|&i| own_params[i].0 != base_params[i].0 || own_params[i].2 != base_params[i].2 || own_params[i].1 != base_params[i].1) {
+            let (m, b) = (own_params[at], base_params[at]);
+            if m.0 != b.0 && m.2 == b.2 && m.1 == b.1 {
+                format!("`{here}` names its parameter `{}`, and {there} names it `{}`", m.0, b.0)
+            } else {
+                if m.1 != b.1 && self.is_class_derived_from(m.1, b.1) {
+                    let kind = self.types.display(m.1);
+                    kind_help = format!(" and test the kind inside: `if {} is {kind} as k:`", b.0);
+                }
+                format!("`{here}` takes `{}{}: {}`, and {there} takes `{}{}: {}`", word(m.2), m.0, self.types.display(m.1), word(b.2), b.0, self.types.display(b.1))
+            }
+        } else if mine.ret != theirs.ret {
+            format!("`{here}` returns `{}`, and {there} returns `{}`", self.types.display(mine.ret), self.types.display(theirs.ret))
+        } else {
+            return;
+        };
+        self.error(codes::E2113, span, format!("{difference}; write `{line}`{kind_help}"));
+    }
+
+    /// Whether `derived` is a class that has `base` among its base classes.
+    fn is_class_derived_from(&self, derived: Ty, base: Ty) -> bool {
+        let (TyKind::Class(mut current), TyKind::Class(wanted)) = (self.types.kind(derived).clone(), self.types.kind(base).clone()) else { return false };
+        for _ in 0..=self.types.classes().count() {
+            if current == wanted {
+                return true;
+            }
+            let Some(next) = self.types.class_def(current).base else { return false };
+            current = next;
+        }
+        false
     }
 
     /// Preserve class-method declaration order for `[DSP-2]`.  The ordinary
@@ -11796,20 +11895,24 @@ impl<'a> Checker<'a> {
                 }
                 ast::ItemKind::Class(decl) => {
                     let Some(&ty) = self.named_types.get(&self.qualified(decl.name.name)) else { continue };
-                    // `[CLS-4]` — virtual dispatch has no effect on a final
-                    // class.  Keep the declaration accepted, but surface the
-                    // existing warning so the author can either remove the
-                    // modifier or opt the class into inheritance explicitly.
+                    // `[CLS-4]` — `virtual` in a class that cannot be subclassed
+                    // (neither `open` nor `abstract`) is `E2112`.
                     if decl.openness == ast::Openness::Final {
                         for member in &decl.members {
                             if let ast::MemberKind::Fn(method) = &member.kind
                                 && method.dispatch == ast::Dispatch::Virtual
                             {
-                                self.sink.emit(Diagnostic::warning(
-                                    codes::W2111,
-                                    method.name.span,
-                                    "`virtual` has no effect in a final class",
-                                ));
+                                let class = decl.name.name.to_string();
+                                let name = method.name.name.to_string();
+                                self.sink.emit(
+                                    Diagnostic::error(
+                                        codes::E2112,
+                                        method.name.span,
+                                        format!(
+                                            "`{class}` cannot be subclassed, so `virtual` on `{name}` changes nothing; to let subclasses replace it write `open class {class}:`, or remove `virtual`"
+                                        ),
+                                    ),
+                                );
                             }
                         }
                     }
@@ -14394,21 +14497,13 @@ impl<'a> Checker<'a> {
     /// latter is unsized and needs a fat pointer, while this form is a counted
     /// class owner whose vtable is found through TypeInfo under `[DSP-3]`.
     fn class_interface_type(&mut self, interface: Symbol, span: Span) -> Ty {
-        // `[DIA-21]` P22 (ODR-182) — an interface whose implementations are values, not classes;
-        // asked once they are known.
+        // `[OBJ-2]`, `[IFC-5]`, `[GRM-8b]` — a bare interface name in a type position does not say who owns the value:
+        // `E2173`, a parameter's type and an instantiation's argument included.
         let root = self.type_root.unwrap_or(span);
-        if !self.implementations_known {
-            self.early_interface_types.push((interface, span, root, self.in_param_type > 0));
-        } else if let Some(diagnostic) = self.interface_of_values(interface, span, root, self.in_param_type > 0) {
-            self.values_only_interfaces.insert(interface);
-            self.sink.emit(diagnostic);
-            return self.common.error;
-        }
-        if let Some(reason) = self.dyn_incompatibility(interface) {
-            self.sink.emit(Diagnostic::error(codes::E2050, span, self.dyn_refusal(interface, &reason)));
-            return self.common.error;
-        }
-        self.types.intern(TyKind::ClassInterface(interface))
+        let diagnostic = self.bare_interface_diagnostic(interface, span, root, self.in_param_type > 0);
+        self.values_only_interfaces.insert(interface);
+        self.sink.emit(diagnostic);
+        self.common.error
     }
 
     /// Turn a type/interface member into a signature. `self_ty` is `None`
@@ -18771,7 +18866,8 @@ impl<'a> Checker<'a> {
             && let Some((_, hinted)) = self.builtin_generic_origin(hint)
         {
             let value = self.synth_committed(&args[0].value);
-            let known = |checker: &Self, at: usize| hinted.get(at).copied().filter(|&ty| !checker.types.is_generic(ty)).unwrap_or(checker.common.void);
+            let open = self.open_part();
+            let known = |checker: &Self, at: usize| hinted.get(at).copied().filter(|&ty| !checker.types.is_generic(ty)).unwrap_or(open);
             let ty = match which {
                 0 => self.option_of(value.ty),
                 1 => self.result_of(value.ty, known(self, 1)),
@@ -20690,6 +20786,7 @@ impl<'a> Checker<'a> {
             );
             matching_extensions.push((index, extension, bindings));
         }
+        let mut method_spans: Vec<(Symbol, ast::Dispatch, Span)> = Vec::new();
         let mut inherited_layouts = HashMap::new();
         let inherited_virtuals = base
             .map(|base| self.class_virtual_layout(base, &mut inherited_layouts))
@@ -20717,12 +20814,25 @@ impl<'a> Checker<'a> {
                 self.extension_method_origin.insert(def, (name, index, owner_bindings.clone()));
             }
             if method.receiver.is_some() && method.dispatch != ast::Dispatch::Static {
+                method_spans.push((method.name, method.dispatch, method.span));
                 declared_methods.push((method.name, def, method.dispatch));
             }
         }
+        let overrides: Vec<(Symbol, Span)> = method_spans
+            .into_iter()
+            .filter(|(_, dispatch, _)| *dispatch == ast::Dispatch::Override)
+            .map(|(name, _, span)| (name, span))
+            .collect();
         self.class_declared_methods.insert(id, declared_methods);
         let mut layouts = HashMap::new();
         let _ = self.class_virtual_layout(id, &mut layouts);
+        for (name, span) in overrides {
+            if self.validated_classes {
+                self.check_override_line(id, name, span);
+            } else {
+                self.deferred_override_lines.push((id, name, span));
+            }
+        }
         if !args.iter().any(|&arg| self.types.is_generic(arg)) {
             self.validate_concrete_class_abstract_methods(id, span);
         }
@@ -31595,6 +31705,7 @@ impl<'a> Checker<'a> {
     ) -> Expr {
         let bool_ty = self.common.bool_;
         let never = self.common.never;
+        let result_hint = self.ternary_hint.take();
         // `[GRM-16]` — a jump may be the whole of a branch
         // (`v = x if ok else return 7`): that arm is the jump, as a `match`
         // arm's is, and the other gives the value.
@@ -31654,8 +31765,15 @@ impl<'a> Checker<'a> {
                 (then_v, else_v)
             }
             None => {
-                let mut then_v = self.synth(then_expr);
-                let mut else_v = self.synth(else_expr);
+                let (mut then_v, mut else_v) = match result_hint {
+                    // `[TYP-23]` — each branch takes the expected result's known parts, and one that leaves a part open
+                    // (`Ok(v)` has no error type of its own) takes it from the other.
+                    Some(hint) => {
+                        let (then_v, else_v) = (self.synth_result_position(then_expr, hint), self.synth_result_position(else_expr, hint));
+                        self.meet_branches(then_v, else_v)
+                    }
+                    None => (self.synth(then_expr), self.synth(else_expr)),
+                };
                 let then_lit = self.types.is_untyped_literal(then_v.ty);
                 let else_lit = self.types.is_untyped_literal(else_v.ty);
                 if then_lit && else_lit && (self.types.is_float(then_v.ty) || self.types.is_float(else_v.ty)) {
@@ -43231,7 +43349,8 @@ impl<'a> Checker<'a> {
         // `[TYP-18]` — a parameter no argument mentions must be written out.
         let mut substitution = Vec::new();
         for (index, param) in generics.iter().enumerate() {
-            match solved[index] {
+            // `[TYP-23]` — a part neither the expected result nor the body fixed is still open.
+            match solved[index].filter(|&ty| !self.mentions_open_part(ty)) {
                 Some(ty) => substitution.push(ty),
                 None => {
                     self.error(
@@ -43711,7 +43830,8 @@ impl<'a> Checker<'a> {
         }
         let mut substitution = Vec::new();
         for (index, param) in generics.iter().enumerate() {
-            match solved[index] {
+            // `[TYP-23]` — a part neither the expected result nor the body fixed is still open.
+            match solved[index].filter(|&ty| !self.mentions_open_part(ty)) {
                 Some(ty) => substitution.push(ty),
                 None => {
                     self.error(
@@ -53402,6 +53522,86 @@ impl<'a> Checker<'a> {
         symbol.strip_prefix(ember_branding::mangle_prefix().as_str()).map(str::to_string).unwrap_or(symbol)
     }
 
+    /// `[TYP-23]` — a type no part of a program wrote and nothing has yet fixed: the part of an `Ok(…)`, `Err(…)` or
+    /// `Some(…)` that its value does not give and the expected result does not know. A conditional's other branch may
+    /// fix it; one still open at the end of a lambda's result is `E2060`.
+    fn open_part(&mut self) -> Ty {
+        self.types.intern(TyKind::Param { index: u32::MAX, name: Symbol::intern("_") })
+    }
+
+    fn is_open_part(&self, ty: Ty) -> bool {
+        matches!(self.types.kind(ty), TyKind::Param { index: u32::MAX, .. })
+    }
+
+
+    /// `[TYP-23]` — what two branches' types fix together: equal parts stay, an open part takes the other's.
+    fn meet_open(&mut self, a: Ty, b: Ty) -> Option<Ty> {
+        if a == b || self.is_open_part(b) {
+            return Some(a);
+        }
+        if self.is_open_part(a) {
+            return Some(b);
+        }
+        let ((origin, x), (other, y)) = (self.builtin_generic_origin(a)?, self.builtin_generic_origin(b)?);
+        if origin != other || x.len() != y.len() {
+            return None;
+        }
+        match (origin.as_str(), x.as_slice(), y.as_slice()) {
+            ("Option", [x], [y]) => {
+                let inner = self.meet_open(*x, *y)?;
+                Some(self.option_of(inner))
+            }
+            ("Result", [xo, xe], [yo, ye]) => {
+                let ok = self.meet_open(*xo, *yo)?;
+                let err = self.meet_open(*xe, *ye)?;
+                Some(self.result_of(ok, err))
+            }
+            _ => None,
+        }
+    }
+
+    /// `[TYP-23]` — a branch that is `Ok(…)`, `Err(…)` or `Some(…)`, made again at the type its sibling's parts fix.
+    fn retype_wrapper(&self, expr: Expr, ty: Ty) -> Expr {
+        if expr.ty == ty {
+            return expr;
+        }
+        match (expr.kind, self.types.kind(ty)) {
+            (ExprKind::EnumLit { variant, fields, .. }, &TyKind::Enum(enum_id)) => Expr { ty, kind: ExprKind::EnumLit { enum_id, variant, fields }, span: expr.span },
+            (kind, _) => Expr { kind, ..expr },
+        }
+    }
+
+    fn meet_branches(&mut self, then_v: Expr, else_v: Expr) -> (Expr, Expr) {
+        match self.meet_open(then_v.ty, else_v.ty) {
+            Some(joined) => (self.retype_wrapper(then_v, joined), self.retype_wrapper(else_v, joined)),
+            None => (then_v, else_v),
+        }
+    }
+
+    /// `[TYP-23]` — an expression in the result position of a lambda given an expected result with open parts
+    /// (`Result[U, E]`): an `Ok(…)`, `Err(…)` or `Some(…)` takes the known parts of it, and a conditional's branches
+    /// are each in the result position.
+    fn synth_result_position(&mut self, expr: &ast::Expr, hint: Ty) -> Expr {
+        match &expr.kind {
+            ast::ExprKind::Call { callee, .. }
+                if matches!(&callee.kind, ast::ExprKind::Path { segments } if segments.len() == 1 && matches!(segments[0].name.as_str(), "Ok" | "Err" | "Some")) =>
+            {
+                self.wrapper_hint = Some(hint);
+            }
+            ast::ExprKind::Ternary { .. } => self.ternary_hint = Some(hint),
+            _ => {}
+        }
+        let value = self.synth(expr);
+        self.wrapper_hint = None;
+        self.ternary_hint = None;
+        value
+    }
+
+    /// Whether an `Option` or `Result` still has an open part (`open_part`).
+    fn mentions_open_part(&self, ty: Ty) -> bool {
+        self.is_open_part(ty) || self.builtin_generic_origin(ty).is_some_and(|(origin, args)| matches!(origin.as_str(), "Option" | "Result") && args.iter().any(|&arg| self.mentions_open_part(arg)))
+    }
+
     fn synth_lambda_fresh(&mut self, lambda: &ast::Lambda, expected: Option<Ty>, span: Span, reserved: Option<DefId>) -> Expr {
         // `[TYP-23]` — an expected result that is an `Option` or a `Result` with open parts is no
         // type to force on the body, but its known parts reach an `Ok(…)` that is the body.
@@ -53967,16 +54167,17 @@ impl<'a> Checker<'a> {
                     // `fn(ref String) -> ref String`, as it is with the result type written. Read
                     // through, the `String` was moved out of the borrowed parameter (`E3013`).
                     None => {
-                        if let Some(hint) = hint
-                            && let ast::ExprKind::Call { callee, .. } = &expr.kind
-                            && let ast::ExprKind::Path { segments } = &callee.kind
-                            && let [only] = segments.as_slice()
-                            && matches!(only.name.as_str(), "Ok" | "Err" | "Some")
-                        {
-                            self.wrapper_hint = Some(hint);
-                        }
-                        let value = self.synth_committed(expr);
+                        let value = match hint {
+                            Some(hint) => {
+                                let value = self.synth_result_position(expr, hint);
+                                let value = self.commit(value);
+                                self.warn_if_literal_loses_precision(expr, value.ty);
+                                value
+                            }
+                            None => self.synth_committed(expr),
+                        };
                         self.wrapper_hint = None;
+                        self.ternary_hint = None;
                         match value.kind {
                             ExprKind::Deref(reference)
                                 if matches!(self.types.kind(reference.ty), TyKind::Ref { .. })

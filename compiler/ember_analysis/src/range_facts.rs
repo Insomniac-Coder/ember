@@ -3233,7 +3233,7 @@ fn remove_proven_checks(
                         let kind = match msg {
                             AssertKind::Bounds { .. } => Some(CheckKind::Bounds),
                             AssertKind::DivisionByZero => Some(CheckKind::DivisionByZero),
-                            AssertKind::ShiftTooLarge => Some(CheckKind::ShiftRange),
+                            AssertKind::ShiftTooLarge { .. } => Some(CheckKind::ShiftRange),
                             AssertKind::Overflow(_) | AssertKind::SignedDivisionOverflow if checked.is_some() => {
                                 Some(CheckKind::Overflow)
                             }
@@ -3278,7 +3278,7 @@ fn remove_proven_checks(
                 AssertKind::Bounds { .. } => CheckKind::Bounds,
                 AssertKind::Overflow(_) | AssertKind::SignedDivisionOverflow => CheckKind::Overflow,
                 AssertKind::DivisionByZero => CheckKind::DivisionByZero,
-                AssertKind::ShiftTooLarge => CheckKind::ShiftRange,
+                AssertKind::ShiftTooLarge { .. } => CheckKind::ShiftRange,
                 // Explicit panics and dynamic borrow checks are not range
                 // checks; they stay.
                 _ => continue,

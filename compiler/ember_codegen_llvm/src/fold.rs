@@ -79,6 +79,7 @@ fn terminator_locals(terminator: &Terminator, out: &mut Vec<LocalId>) {
                     operand_locals(file, out);
                     operand_locals(line, out);
                 }
+                AssertKind::ShiftTooLarge { amount, .. } => operand_locals(amount, out),
                 AssertKind::Panic { message } => operand_locals(message, out),
                 _ => {}
             }

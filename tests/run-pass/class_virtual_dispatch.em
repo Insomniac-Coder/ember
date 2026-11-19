@@ -19,7 +19,7 @@ class Child(Base):
     override fn tick() -> i32:
         return 2
 
-    virtual fn extra() -> i32:    #$ warning[W2111]: has no effect in a final class
+    fn extra() -> i32:
         return 4
 
     fn init():

@@ -1629,6 +1629,7 @@ pub(crate) fn rewrite_places(block: &mut BasicBlock, f: &impl Fn(&mut Place)) {
                     operand(file);
                     operand(line);
                 }
+                AssertKind::ShiftTooLarge { amount, .. } => operand(amount),
                 AssertKind::Panic { message } => operand(message),
                 _ => {}
             }

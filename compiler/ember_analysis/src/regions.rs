@@ -1864,6 +1864,9 @@ impl Regions {
                     if let ember_mir::AssertKind::Panic { message } = msg {
                         self.operand_access_event(point, message, &mut events);
                     }
+                    if let ember_mir::AssertKind::ShiftTooLarge { amount, .. } = msg {
+                        self.operand_access_event(point, amount, &mut events);
+                    }
                 }
                 Terminator::Return => {
                     for slot in &self.local_regions[ember_mir::RETURN_LOCAL.0 as usize] {
@@ -2249,6 +2252,9 @@ impl Regions {
                 }
                 if let ember_mir::AssertKind::Panic { message } = msg {
                     self.operand_liveness(message, live);
+                }
+                if let ember_mir::AssertKind::ShiftTooLarge { amount, .. } = msg {
+                    self.operand_liveness(amount, live);
                 }
             }
             Terminator::Return => {

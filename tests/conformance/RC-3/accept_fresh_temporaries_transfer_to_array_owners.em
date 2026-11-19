@@ -25,7 +25,7 @@ class Token implements Value:
         println("drop", this.id)
 
 fn main():
-    tokens: Array[Value] = Array[Value]()
+    tokens: Array[owns dyn Value] = Array[owns dyn Value]()
     for i in 0_i32..4_i32:
         tokens.push(owns Token(i))
     total = 0_i32

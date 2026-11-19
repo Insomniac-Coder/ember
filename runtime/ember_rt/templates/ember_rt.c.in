@@ -9098,6 +9098,23 @@ void ember_panic_overflow(const char* op, ember_loc loc) {
     panic_with(buffer, written > 0 ? (size_t)written : 0, loc);
 }
 
+/* [TYP-10]: "`shift out of range`: `1 << n` on line 9 shifts an `int` by 70; use `wrapping_shl`". The amount
+ * arrives as 64 bits in its own signedness. */
+void ember_panic_shift(const char* text, const char* ty, bool left, int64_t amount, bool amount_signed, ember_loc loc) {
+    char buffer[256];
+    char number[32];
+    if (amount_signed) {
+        snprintf(number, sizeof number, "%lld", (long long)amount);
+    } else {
+        snprintf(number, sizeof number, "%llu", (unsigned long long)(uint64_t)amount);
+    }
+    int written = snprintf(buffer, sizeof buffer,
+                           "`shift out of range`: %s%s%s on line %u shifts %s `%s` by %s; use `%s`",
+                           text[0] ? "`" : "the shift", text, text[0] ? "`" : "", (unsigned)loc.line,
+                           ty[0] == 'i' ? "an" : "a", ty, number, left ? "wrapping_shl" : "wrapping_shr");
+    panic_with(buffer, written > 0 ? (size_t)(written < (int)sizeof buffer ? written : (int)sizeof buffer - 1) : 0, loc);
+}
+
 void ember_panic_div_zero(ember_loc loc) { panic_with("division by zero", 16, loc); }
 
 void ember_panic_exclusivity(const char* what, ember_loc loc) {

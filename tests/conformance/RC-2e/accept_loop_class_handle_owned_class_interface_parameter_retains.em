@@ -20,11 +20,12 @@ class Worker implements Consume:
     fn consume(owns token: shares Token) -> i32:
         return token.value
 
-fn dispatch(consumer: Consume, owns tokens: Array[shares Token]):
+fn dispatch(consumer: dyn Consume, owns tokens: Array[shares Token]):
     for token in tokens:
         println(consumer.consume(shares token))
 
 fn main():
     tokens: Array[shares Token] = Array[shares Token]()
     tokens.push(owns shares Token(7))
-    dispatch(Worker(), owns tokens)
+    worker = Worker()
+    dispatch(ref worker, owns tokens)

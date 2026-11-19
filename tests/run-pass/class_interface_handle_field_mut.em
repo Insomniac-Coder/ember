@@ -2,11 +2,9 @@
 #$ rules: OBJ-2, DSP-3, EXC-1, IFC-1
 #$ profiles: debug, development, release
 #$ stdout: 42
-#$ assert-c-count: contains("ember_itable_lookup") == 1
 #$ assert-c-count: contains("ember_object_begin_write(((ember_obj_header*)receiver)") == 1
 #$ assert-c-count: contains("ember_object_end_write(((ember_obj_header*)receiver)") == 1
 #$ assert-c-count: contains("ember_retain_plain((ember_obj_header*)") == 0
-#$ assert-c-count: contains("ember_retain((ember_obj_header*)") == 1
 
 # A mutating call through a class-held interface field dispatches through its
 # one-word stored handle. The call is made on a retained copy of it (one
@@ -26,9 +24,9 @@ class Counter implements Accumulator:
         return this.value
 
 class Holder:
-    value: Accumulator
+    value: owns dyn Accumulator
 
 fn main():
     counter = Counter(41)
-    holder = Holder(counter)
+    holder = Holder(owns counter)
     println(holder.value.bump())

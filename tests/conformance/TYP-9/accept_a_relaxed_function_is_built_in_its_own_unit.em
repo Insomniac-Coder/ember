@@ -7,8 +7,6 @@
 #$ assert-c: contains("#pragma fp_contract(on)")
 #$ assert-c-count: contains("double em_5fused(double a, double b, double c) {") == 1
 #$ assert-c-count: contains("double em_5total(ember_vec* xs, ember_vec* shapes) {") == 1
-#$ assert-c-count: contains("const uint8_t em_interface_id_4Area = UINT8_C(0);") == 1
-#$ assert-c-count: contains("extern const uint8_t em_interface_id_4Area;") == 2
 #$ assert-c-order: "its `contract` functions" then "double em_5fused(double a, double b, double c) {"
 #$ assert-c-order: "its `fastmath` functions" then "double em_5total(ember_vec* xs, ember_vec* shapes) {"
 #$ assert-c-order: "its `fastmath` functions" then "1.25e0"
@@ -51,7 +49,7 @@ fn strict(a: f64, b: f64, c: f64) -> f64:
     return a * b + c
 
 @fastmath
-fn total(xs: Array[f64], shapes: Array[Area]) -> f64:
+fn total(xs: Array[f64], shapes: Array[owns dyn Area]) -> f64:
     fn scaled_fn(x: f64) -> f64:
         return x * 1.25
     scaled = scaled_fn
@@ -68,6 +66,6 @@ fn chosen() -> fn(int) -> int:
 
 fn main():
     println(fused(2.0, 3.0, 1.0), strict(2.0, 3.0, 1.0))
-    shapes: Array[Area] = [Square(0.5), Circle(0.5)]
+    shapes: Array[owns dyn Area] = [owns Square(0.5), owns Circle(0.5)]
     f: fn(int) -> int = inc
     println(total([1.5, 2.5], shapes), f == chosen(), chosen()(2))

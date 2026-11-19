@@ -771,7 +771,7 @@ pub fn safety_json(bodies: &[Body], map: &SourceMap) -> String {
                 AssertKind::Bounds { .. } => ("Bounds", "index test", "not_proven_by_analysis"),
                 AssertKind::Overflow(_) | AssertKind::SignedDivisionOverflow => ("Overflow", "overflow test", "not_proven_by_analysis"),
                 AssertKind::DivisionByZero => ("DivisionByZero", "zero divisor test", "not_proven_by_analysis"),
-                AssertKind::ShiftTooLarge => ("ShiftRange", "shift amount test", "not_proven_by_analysis"),
+                AssertKind::ShiftTooLarge { .. } => ("ShiftRange", "shift amount test", "not_proven_by_analysis"),
                 AssertKind::RefCellBorrow { .. } => ("Borrow", "borrow flag test", "requested_by_type"),
                 AssertKind::Downcast => ("Downcast", "class chain test", "not_proven_by_analysis"),
                 AssertKind::Panic { .. } => continue,
@@ -8733,8 +8733,23 @@ impl Emitter<'_> {
                     AssertKind::SignedDivisionOverflow => {
                         format!("{RT}panic_overflow(\"/\", {location})")
                     }
-                    AssertKind::ShiftTooLarge => {
-                        format!("{RT}panic_overflow(\"shift\", {location})")
+                    AssertKind::ShiftTooLarge { amount, signed, left, text, ty } => {
+                        // `[TYP-10]` — the amount as a 64-bit value in its own signedness, the expression as written.
+                        let low_bits = self.operand_type(amount, body).map(|ty| self.through_range(ty)).and_then(|ty| self.wide_int(ty));
+                        let amount = self.operand(amount, body);
+                        // ponytail: an amount of 128 or 256 bits is shown by its low 64.
+                        let amount = match low_bits {
+                            Some(suffix) => format!("{RT}{suffix}_to_u64({amount})"),
+                            None => amount,
+                        };
+                        let wide = if *signed { "(int64_t)" } else { "(uint64_t)" };
+                        format!(
+                            "{RT}panic_shift({}, {}, {}, {wide}({amount}), {}, {location})",
+                            c_string_literal(text),
+                            c_string_literal(ty),
+                            left,
+                            signed
+                        )
                     }
                     AssertKind::DivisionByZero => format!("{RT}panic_div_zero({location})"),
                     AssertKind::Panic { message } => {
@@ -13565,6 +13580,7 @@ fn terminator_c_reads(terminator: &Terminator, read: &mut [bool], void_place: &d
                     c_read_operand(file, read, void_place);
                     c_read_operand(line, read, void_place);
                 }
+                AssertKind::ShiftTooLarge { amount, .. } => c_read_operand(amount, read, void_place),
                 AssertKind::Panic { message } => c_read_operand(message, read, void_place),
                 _ => {}
             }
@@ -14293,6 +14309,7 @@ fn terminator_places<'b>(terminator: &'b Terminator, out: &mut Vec<&'b Place>) {
                     operand_places(file, out);
                     operand_places(line, out);
                 }
+                AssertKind::ShiftTooLarge { amount, .. } => operand_places(amount, out),
                 AssertKind::Panic { message } => operand_places(message, out),
                 _ => {}
             }

@@ -1277,18 +1277,31 @@ impl<'a, 'io> Interp<'a, 'io> {
                 if (value != 0) == *expected {
                     return self.goto(*next);
                 }
-                let message = self.assert_message(msg)?;
+                let message = self.assert_message(msg, *span)?;
                 self.panic(&message, *span)
             }
             Terminator::Call { func, args, dest, next } => self.call(func, args, dest, *next, span),
         }
     }
 
-    fn assert_message(&mut self, msg: &AssertKind) -> R<String> {
+    fn assert_message(&mut self, msg: &AssertKind, span: Span) -> R<String> {
         Ok(match msg {
+            AssertKind::ShiftTooLarge { amount, signed, left, text, ty } => {
+                // `[TYP-10]` — as the runtime's `ember_panic_shift` words it.
+                let value = self.operand(amount, None)?;
+                let wide = memory::uint(&value);
+                let number = if *signed {
+                    let bits = (value.len() * 8) as u32;
+                    let negative = bits > 0 && (wide >> (bits - 1)) & 1 == 1;
+                    if negative { format!("-{}", (1u128 << bits) - wide) } else { wide.to_string() }
+                } else {
+                    wide.to_string()
+                };
+                let line = self.location(span).map_or(0, |(_, line, _)| line);
+                return Ok(ember_mir::shift_message(text, ty, *left, &number, line));
+            }
             AssertKind::Overflow(op) => format!("integer overflow in `{}`", op.spelling()),
             AssertKind::SignedDivisionOverflow => "integer overflow in `/`".to_string(),
-            AssertKind::ShiftTooLarge => "integer overflow in `shift`".to_string(),
             AssertKind::DivisionByZero => "division by zero".to_string(),
             AssertKind::Panic { message } => {
                 let value = self.operand(message, Some(self.common.str_))?;

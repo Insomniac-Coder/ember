@@ -2,7 +2,7 @@
 #$ rules: RNG-4, TYP-10
 #$ profiles: debug, development, release
 #$ stdout: 8
-#$ panics: integer overflow in `shift`
+#$ panics: `shift out of range`: `(1 as i32) << (s as i32)` on line 11 shifts an `i32` by 40; use `wrapping_shl`
 # `[RNG-4]` — `k % 64` is below 64, but the shifted value is an `i32`: an
 # amount of 40 is past its width and still panics.
 

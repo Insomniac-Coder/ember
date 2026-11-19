@@ -149,6 +149,7 @@ pub const FNS: &[RtFn] = &[
     panic_fn("panic", &["const char*", "size_t", "$loc"]),
     panic_fn("panic_bounds", &["size_t", "size_t", "$loc"]),
     panic_fn("panic_overflow", &["const char*", "$loc"]),
+    panic_fn("panic_shift", &["const char*", "const char*", "bool", "int64_t", "bool", "$loc"]),
     panic_fn("panic_lane_bounds", &["size_t", "size_t", "size_t", "$loc"]),
     panic_fn("panic_div_zero", &["$loc"]),
     panic_fn("panic_refcell", &["const char*", "uint32_t", "$loc"]),

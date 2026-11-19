@@ -225,3 +225,46 @@ Read first by every job in this lane; updated last by each.
   still E0900, not E0104 (M14, ECS). DIA-2, 3, 7, 9, 10, 11, 16, 18, 21, 22, 23, 25: not started; DIA-21's table was probed: P1-P9, P11-P21, P23, P24, P26-P30 answer (P3's help names `to_string()` only), P10
   untestable with `Option[int]` (has `Eq`), P22 (`Array[Shape]`) compiles with no E2173, P25's `len(it)` is E0900. DIA-6a: the three codes are registered; reject cases for the
   111 pairs are not added.
+
+## W9 (job 7): class rules, inference and the diagnostics W8 did not reach
+- **Credited (built_for_0915):** TYP-10, TYP-23, DIA-16.
+- **Where things are:**
+  - `[CLS-4]` `E2112`: `collect_methods` (`ember_typeck/src/lib.rs`, the `Class` arm) refuses `virtual` in a class whose `openness` is `Final`
+    in the spec's words; `W2111` is a retired code (registry row, its page says so, `l3013_ignores_virtual_calls_in_a_final_class` and
+    `tests/compile-pass/class_final_virtual_warning.em` deleted). `E2113`: `check_override_line` compares an `override`'s signature
+    (`Signature`, from `class_declared_methods`) with the nearest base's method of that name: the same names, words, types, words on `this`
+    (`implicit_object` = no word), result; for a generic base the instance's signature already has the arguments in it. Called from
+    `validate_class_methods` and, for a generic derived class's instance, from the instantiation (`deferred_override_lines` until
+    `validated_classes`).
+  - `[OBJ-2]` `E2173`: `class_interface_type` now always refuses (`bare_interface_diagnostic`, `habits.rs`): `TyKind::ClassInterface` is no longer
+    made from a type written in source, so the thin class handle (itable lookup, `em_itables_*`, `[DSP-3]`'s `->ti ==` tests) has no spelling
+    until `dyn I` of a class object is one word (M11); 19 tests now say `dyn` / `owns dyn` and lost their C assertions on the itable path
+    (list in the commit message of `ca55b949`), and `a_devirtualised_interface_call_searches_out_of_line` (milestones.rs) is `#[ignore]`d with that reason.
+  - `[TYP-23]`: the result position of a lambda given an expected result with open parts: `synth_result_position` (an `Ok`/`Err`/`Some` call or a
+    conditional, recursively), `open_part` (a placeholder `Param` that is no type of the program), `meet_open`/`meet_branches`/`retype_wrapper`
+    (`check_ternary`'s `result_hint` path: a branch that leaves a part open takes it from the other). A part still open flows on as the placeholder,
+    and the generic call sites that read `solved[index]` treat one that `mentions_open_part` as unsolved, so it is the call's `E2060`.
+    A `match` body and a block body are not in the result position (a block lambda in brackets is `E0106` anyway).
+  - `[TYP-10]`: `AssertKind::ShiftTooLarge { amount, signed, left, text, ty }` (`ember_mir`), `shift_message` (the interpreter's text), `ember_panic_shift` in the
+    runtime (template, then `python tools/generate_runtime.py`), the C backend (`panic_shift(...)`, 128/256-bit amounts by their low 64 bits), the LLVM
+    backend (`runtime.rs`'s table and `func.rs`), and every analysis that reads or rewrites a terminator's operands handles it next to `Panic { message }`.
+  - `[DIA-16]`: `ember_diag::shares_cost_note`, called from `Sink::emit`: any error whose help or suggestion has a backticked line holding the word `shares`
+    (and `E1010`/`E2119`/`E2173`/`E3023` whose message is the line) gets the cost note.
+- **Traps:** `annotations.py` over the whole conformance tree takes 40+ minutes when another worktree's `cargo test` holds `%TEMP%\ember-suite.lock`;
+  run the folders you changed. A Python script that adds a match arm next to `Panic { message }` found every operand-rewriting site of `AssertKind` (45) quickly,
+  but check each one that builds a *new* `AssertKind` (`coroutines.rs`, `kernels.rs`): a copy of the arm made `Panic`, not `ShiftTooLarge`.
+  `ember check` of a `ref` argument that is a temporary (`ref String("x")`) is `E0111`.
+- **Not credited, and why:**
+  - CLS-4: the header promise of a `pub open` class (`[THR-8]`: `implements Send` ..., the `E7015` messages for a derived class and for a held value of a header
+    that promises nothing) is not built; "fields cannot be overridden" has no code in the spec, and a derived class that declares the base's field name is accepted
+    (spec question below). Every other clause is built and tested (E2110, E2111, E2112, E2113, `init`/`drop`/`static fn` each class's own, an `override` is virtual).
+  - OBJ-2: `dyn I` of a class object is one pointer wide (M11); the E2173 clause is built and tested.
+  - TYP-17, IFC-6: not started. Design: the checker reports a missing bound where the operation is met (`E2040` "`T`'s bounds do not provide ...", one per use); the rule wants one
+    `E2040` on the first line that needs one, with every bound the body needs, so the body must be checked again with each found bound added to `T`'s
+    (`signatures[def].generics[i].bounds`) until nothing new is found (as `check_body` repeats for open locals), and for a function that is not `pub` and writes none, the
+    result becomes its bounds, which every caller needs before the bodies are checked (a pre-pass over such functions, in call order); `E2072` is the method no interface in scope declares.
+  - IFC-3: the line that compiles for a missing parent (`E2040` names the parent now; the line's spelling for several interfaces is a spec question) and the marker parents
+    (`THR-8`, not built). IFC-4: associated constants, not started (parser `const` in an interface body, `extend`, `T.N`, `A.N`, const evaluation).
+  - DIA-2, 3, 7, 9, 10, 11, 18, 21, 22, 23, 25: not started beyond probes. DIA-18 is the importer (lane b). DIA-21: P22's `Array[Shape]` is `E2173` now (W8's probe). DIA-22: the
+    signature-caused diagnostics have the callee's declaration as a secondary span (tests exist); a fact worked out from a body was not probed. DIA-23: the panics of a class
+    method, a lambda and a generic function name them (`Grid.at`, `a lambda`, `pick`) in the interpreter, C and LLVM; tests exist (RT-4, EXC-6) but none names a variable, so not credited.

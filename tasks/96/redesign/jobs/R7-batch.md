@@ -220,3 +220,37 @@ M4 is merged: a class object has one owner (not `Copy`); `shares`, `shares mut`,
 
 - **Not this job:** `E3063` against `E3060`; anything in `std/src/sync.em`; rules of Parts on ownership, classes and threads other than those named (the lead is going through them).
 - Every test and message follows the spec's words; a rule is credited only when each clause is built and tested.
+
+
+## W9 (Sonnet), lane c, job 7: class rules, inference and the diagnostics W8 did not reach (22 tasks) (rolling slot)
+
+W8's work is merged (`lanes/c.md`, and the end of `tasks/96/redesign/jobs/review.md` for the rulings on its
+questions). W8's FN-9 (a plain class parameter only reads its object) is reverted until M6a: std.ecs needs
+`ref mut this` given to calls first (review.md). Do not build it again, and keep `E3023` for class parameters as it is. `tasks/96/redesign/compiler-0.9.15/credit-pass.md` lists what each rule below lacks. In this order, each a task:
+
+1. **`[CLS-4]` `E2112`:** `virtual` in a class that cannot be subclassed is refused with the spec's message; today it
+   is the warning `W2111`, which the spec's table of retired codes retires ("`virtual` in a class that cannot be
+   subclassed is refused (`E2112`)"). Retire `W2111` as the table says (registry, its page, its tests,
+   `l3013_ignores_virtual_calls_in_a_final_class` in `milestones.rs`).
+2. **`[CLS-4]` `E2113`:** an `override` whose first line differs from the method it replaces: parameter names, words,
+   types (a generic base's type parameters standing for the derived class's arguments), the words on `this`, and the
+   result. Registered, never emitted today: a differing `override` is accepted. The spec's message.
+3. **`[CLS-4]`, the rest:** check every other clause and credit `CLS-4` if each is built (the header promise of a
+   `pub open` class, `[THR-8]`, is a clause: say whether it is built).
+4. **`[OBJ-2]` `E2173`:** a bare interface name in a type position, a parameter's type included (`fn f(s: Shape)`
+   compiles today; `Array[Shape]` too, W8's P22). Tests that write `value: Accumulator` follow the spec (`dyn`).
+5. **`[TYP-23]`:** a lambda given to a generic helper whose result is a conditional of `Ok(…)` and `Err(…)`
+   (`fn(owns v) => Ok(v) if v > 0 else Err(String("no"))`), and one whose first arm is the `Err`, take the expected
+   result's known parts; a part neither the expected type nor the body fixes stays open (`E2060` where it is still
+   open), not `void` (W8's `known` in the `wrapper_hint` code uses `void`). Make it the general mechanism, not one
+   more shape.
+6. **`[TYP-10]`:** the shift panic's operands, every `AssertKind` match site (W7's list in `lanes/c.md`).
+7. **`[TYP-17]`, `[IFC-6]`:** bound inference for a generic that is not `pub`; the missing-bounds `E2040` for a `pub` one.
+8. **`[IFC-3]`** (marker parents), **`[IFC-4]`** (associated constants, end to end).
+9. **Diagnostics:** `[DIA-2]` (with the lead's earlier ruling), `[DIA-3]`, `[DIA-7]`, `[DIA-9]`, `[DIA-10]`,
+   `[DIA-11]`, `[DIA-16]`, `[DIA-18]`, `[DIA-21]` (W8's probes P1 to P30: P3's help, P25's `len(it)`), `[DIA-22]`,
+   `[DIA-23]`, `[DIA-25]`: each checked clause by clause, built where it is short, credited only when whole.
+
+- **Not this job:** M5's views (the lead builds them: `borrows.rs`, `regions.rs`, `check_point`, loops, spans,
+  `sharedref mut`); `std/src/sync.em`; `E3063` against `E3060`; kind tests and casts (`[DSP-4]`, `[DSP-6]`).
+- Every test and message follows the spec's words; a rule is credited only when each clause is built and tested.

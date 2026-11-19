@@ -697,3 +697,22 @@ storage it fetches, so the world is changed through `this`, and every `ref mut t
 `[CLS-7]`'s own example gives one (`this.handlers[this.current](ref mut this)`). Allowing it is sound only with
 `[BRW-21]`'s E3031 from the callees' summaries (M6a), so FN-9 lands again there; CLS-7 and FN-9 are not credited
 (credit-pass.md). W8's quick check did not run the ECS tests; the error-page check (E4030, E7020) found it.
+
+## W9 (lane c, job 7), collected 2026-11-19
+
+Merged as it stands: TYP-10, TYP-23 and DIA-16 credited; E2112 (W2111 retired), E2113 and E2173 built. The full quick
+check, the error pages, the ui snapshots and the repository checks pass on the merge.
+
+Rulings on W9's questions:
+1. CLS-4, "Fields cannot be overridden": the spec names no code. A question for Hardened_15 (CLS-4 stays uncredited).
+2. IFC-3, the line that compiles for a missing parent (`extend A implements Sized2, Big:` or a separate block): a
+   question for Hardened_15.
+3. E2173 against ODR-226's older note: the rule's text (`[OBJ-2]`, `[IFC-5]`) is the target and ODR-226's note is
+   history; E2173 always, as built. Its cost: no source program makes a `ClassInterface` handle until M11 makes
+   `dyn I` of a class object one word, so `a_devirtualised_interface_call_searches_out_of_line` is ignored with that
+   reason and DSP-3's itable assertions wait for M11 (credit-pass.md, OBJ-2).
+4. `i64` where the spec writes `int`: the type table has one type for both; DIA-2's earlier ruling stands.
+5. E2060's help writes `.and_then[T](...)`, which the spec allows (`"4".parse[int]()` compiles), but explicit type
+   arguments on a method of a built-in generic (`Result.and_then`) are E2072 today: a defect for the next job, the
+   help stays.
+6. E2113's message keeps the spec's `if e is KeyEvent as k:` text, which compiles once M11 builds kind tests.

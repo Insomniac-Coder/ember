@@ -274,6 +274,9 @@ fn propagate(body: &mut Body, copies: &[(LocalId, Vec<(usize, usize)>)]) -> usiz
                     swap(len, &set, &mut replaced);
                     swap(index, &set, &mut replaced);
                 }
+                if let ember_mir::AssertKind::ShiftTooLarge { amount, .. } = msg {
+                    swap(amount, &set, &mut replaced);
+                }
             }
             Terminator::Goto(_) | Terminator::Return | Terminator::Unreachable => {}
         }

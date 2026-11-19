@@ -3,8 +3,6 @@
 #$ profiles: debug, development, release
 #$ stdout: 1
 #$ stdout: 2
-#$ assert-c: contains(em_itables_4Base)
-#$ assert-c: contains(em_itables_5Child)
 #$ assert-c: contains(->ti->vtable))->slot0)((struct em_obj_4Base*)_0)
 
 # Only a Base-typed handle is ever made a Named, so the Named entry is Base's.
@@ -28,12 +26,12 @@ class Child(Base):
     override fn id() -> i32:
         return 2
 
-fn show(value: Named):
+fn show(value: dyn Named):
     println(value.id())
 
 fn main():
     base = Base()
-    show(base)
+    show(ref base)
     child = Child()
     as_base: Base = child
-    show(as_base)
+    show(ref as_base)

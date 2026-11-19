@@ -2611,6 +2611,9 @@ fn capture_temporary_uses(
                 if let ember_mir::AssertKind::Panic { message } = msg {
                     capture_operand_use(message, local, || CaptureTemporaryUse::Other, &mut uses);
                 }
+                if let ember_mir::AssertKind::ShiftTooLarge { amount, .. } = msg {
+                    capture_operand_use(amount, local, || CaptureTemporaryUse::Other, &mut uses);
+                }
             }
             Terminator::Goto(_) | Terminator::Return | Terminator::Unreachable => {}
         }
@@ -3928,6 +3931,9 @@ fn check_body(
                 }
                 if let ember_mir::AssertKind::Panic { message } = msg {
                     operand_read(message, &mut accesses);
+                }
+                if let ember_mir::AssertKind::ShiftTooLarge { amount, .. } = msg {
+                    operand_read(amount, &mut accesses);
                 }
             }
             Terminator::Goto(_) | Terminator::Return | Terminator::Unreachable => {}
@@ -5497,6 +5503,9 @@ fn collect_reads(body: &Body) -> HashMap<LocalId, Vec<Span>> {
                 }
                 if let ember_mir::AssertKind::Panic { message } = msg {
                     operand_read(message, &mut accesses);
+                }
+                if let ember_mir::AssertKind::ShiftTooLarge { amount, .. } = msg {
+                    operand_read(amount, &mut accesses);
                 }
             }
             _ => {}

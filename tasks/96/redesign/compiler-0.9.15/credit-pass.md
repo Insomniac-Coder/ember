@@ -10,7 +10,7 @@ not credited, with the clause that is missing and the milestone that builds it.
 |---|---|---|
 | CLS-1 | `Enemy(hp=5) using current`: `using` does not exist yet | M10 |
 | CLS-2 | `init` may call a method once the fields its body reads are set: today every call of a method before all fields are set is `E2100`. The check reads each override's body; in a class that is not `pub` an override that reads nothing unset is accepted | M11 |
-| CLS-4 | `E2112` is still the warning `W2111`; `E2113` (an `override` whose first line differs) is registered and never emitted, so a differing `override` is accepted; the header promise of `[THR-8]` for `pub open` classes | M11, M9 |
+| CLS-4 | the header promise of `[THR-8]` for `pub open` classes; "fields cannot be overridden" has no code (a Hardened_15 question). E2112 and E2113 are built (W9) | M9 |
 | CLS-6 | the kept results of `@cached` methods end with the fields: `@cached` does not exist yet | M11 |
 | CLS-7, FN-9 | a plain class parameter only reads its object (`E3023` for a change through it). W8 built it, and it is taken out again: std.ecs then needs `ref mut this` given to a call (`Q.Ops.fetch(ref mut this)`, `change.apply(ref mut this)`), which `[CLS-7]`'s own example allows (`this.handlers[this.current](ref mut this)`) but which is sound only with `[BRW-21]`'s `E3031` for a call that may end the object, from the callees' summaries; today every `ref mut this` argument is `E2103`. W8's commits `edf40eb4` and `5faca934` land again with that | M6a |
 | CLS-9a | a view field `from` a `let` field is read in `drop`: view fields with `from` are not parsed yet | M5 |
@@ -21,7 +21,7 @@ not credited, with the clause that is missing and the milestone that builds it.
 | Rule | What is missing | Milestone |
 |---|---|---|
 | OBJ-1 | the 8 and 12-byte headers, and the 32-byte `thread_shared` header | M6b |
-| OBJ-2 | `s: Shape`, a bare interface name as a parameter's type, is accepted; it is `E2173` | M11 |
+| OBJ-2 | `dyn I` of a class object is one pointer wide (today a fat pointer). E2173 is built (W9); with it no program makes a `ClassInterface` handle, so the itable path, DSP-3's assertions and `a_devirtualised_interface_call_searches_out_of_line` (ignored) wait for this | M11 |
 | OBJ-4, OPT-1 | `using`; a `thread_shared` value's block from the runtime's chunks | M10, M6b |
 | OBJ-5 | a method `drop` calls that makes an owner of `this` is not refused (`E3016`): it stops the program instead; needs the call summaries | M6a |
 | DSP-2, DSP-3 | the fact `[LT-22]` records, kept beside each table entry | M6a |

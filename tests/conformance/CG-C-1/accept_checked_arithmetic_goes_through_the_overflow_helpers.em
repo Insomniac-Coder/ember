@@ -5,7 +5,7 @@
 #$ assert-c: contains("ember_ck_add_i64(")
 #$ assert-c: contains("ember_ck_floordiv_i64(")
 #$ assert-c: contains("ember_panic_div_zero(")
-#$ assert-c: contains("ember_panic_overflow("shift"")
+#$ assert-c: contains("ember_panic_shift(")
 # `[CG-C-1]` — the emitted C has no undefined behaviour: checked signed arithmetic calls the checked
 # helpers of `ember_rt.h` (the compiler's `__builtin_add_overflow` and friends on Clang and GCC, exact
 # checks of their own on MSVC), a
