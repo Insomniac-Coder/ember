@@ -442,10 +442,11 @@ fn check_round(
     let status_errors = errors::desugar_status_errors(modules);
     let modules: &[LoadedModule] = status_errors.as_deref().unwrap_or(modules);
     // `[ERR-3]` — `@derive(Error)` is the `extend` blocks it stands for.
-    let derived = errors::desugar_error_derives(modules, sink);
+    let (derived, mut derive_requests) = errors::desugar_error_derives(modules, sink);
     let modules: &[LoadedModule] = derived.as_deref().unwrap_or(modules);
     // `[DRV-1]` — `@derive(Ord)`, `Default` and `Display` too.
-    let (written, derive_requests) = derives::desugar_derives(modules, sink);
+    let (written, written_requests) = derives::desugar_derives(modules, sink);
+    derive_requests.extend(written_requests);
     let modules: &[LoadedModule] = written.as_deref().unwrap_or(modules);
     // `[RFL-2]` — `@reflect` is the implementation of `std.ser.Reflect` it stands for.
     let reflected = derives::desugar_reflect(modules);
@@ -3121,6 +3122,13 @@ struct Checker<'a> {
     user_attributes_here: bool,
     /// How many closure bodies enclose the code being checked.
     lambda_depth: usize,
+    /// `[TYP-23]` — the expected result of the lambda being checked when it has open parameters
+    /// (`Result[U, String]`), and what an `Ok(…)`/`Err(…)`/`Some(…)` that is its whole body takes of it.
+    lambda_result_hint: Option<Ty>,
+    wrapper_hint: Option<Ty>,
+    /// `[FN-9]` — the place being written is a class handle a method changes the object of, not a
+    /// name being given a new value.
+    writing_through_handle: bool,
     /// D-546 — each lambda's last value checked without an error, by its
     /// span (`synth_lambda`).
     lambda_values: HashMap<Span, Expr>,
@@ -4286,6 +4294,9 @@ impl<'a> Checker<'a> {
             pending_user_attributes: Vec::new(),
             user_attributes_here: false,
             lambda_depth: 0,
+            lambda_result_hint: None,
+            wrapper_hint: None,
+            writing_through_handle: false,
             lambda_values: HashMap::new(),
             skipped_instances: 0,
             opaque_lambdas: HashSet::new(),
@@ -6393,7 +6404,7 @@ impl<'a> Checker<'a> {
             (
                 "std.core",
                 &[
-                    "Eq", "Ord", "Ordering", "Default", "Clone", "Copy", "Send", "Sync", "Sized", "Display", "Debug", "Printable", "From",
+                    "Eq", "Ord", "Ordering", "Default", "Clone", "Copy", "Send", "Sync", "ThreadShared", "Sized", "Display", "Debug", "Printable", "From",
                     // `[STD-9]` (verdict 117) — the console's output functions are the library's.
                     "print", "println", "eprint", "eprintln", "Error", "AnyError", "Iterator", "IntoIterator", "Range", "RangeInclusive", "RangeFrom",
                     "RangeTo", "Add", "Sub", "Mul", "Div", "FloorDiv", "Rem", "Pow", "Neg", "Not", "BitAnd", "BitOr",
@@ -10643,7 +10654,9 @@ impl<'a> Checker<'a> {
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         };
         let Some((_, variant)) = self.types.enum_def(opaque_id).variant(name.name) else {
-            self.error(codes::E1010, name.span, format!("`{shown}` has no variant `{}`", name.name));
+            let diagnostic = Diagnostic::error(codes::E1010, name.span, format!("`{shown}` has no variant `{}`", name.name));
+            let names: Vec<(String, String)> = self.variant_name_suggestions(opaque_id, name.name, name.span).into_iter().map(|variant| (variant.clone(), variant)).collect();
+            self.sink.emit(name_suggestions::nearest_help(diagnostic, &names, name.span));
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         };
         let fields: Vec<Ty> = variant.fields.iter().map(|field| field.ty).collect();
@@ -15008,6 +15021,7 @@ impl<'a> Checker<'a> {
                     "std.core.Copy" => "Copy",
                     "std.core.Send" => "Send",
                     "std.core.Sync" => "Sync",
+                    "std.core.ThreadShared" => "ThreadShared",
                     "std.core.Sized" => "Sized",
                     _ => return None,
                 };
@@ -15062,18 +15076,18 @@ impl<'a> Checker<'a> {
                 _ => {
                     let Some((name, args)) = self.types.marker_key(target) else { continue };
                     let send_bound = Symbol::intern("std.core.Send");
-                    let sync_bound = Symbol::intern("std.core.Sync");
+                    let sync_bounds = [Symbol::intern("std.core.Sync"), Symbol::intern("std.core.ThreadShared")];
                     let args = args
                         .iter()
                         .map(|&arg| match *self.types.kind(arg) {
                             TyKind::Param { index, .. } => {
                                 let bounds = generics.get(index as usize).map(|param| param.bounds.clone()).unwrap_or_default();
-                                ember_types::MarkerArg::Any { send: bounds.contains(&send_bound), sync: bounds.contains(&sync_bound) }
+                                ember_types::MarkerArg::Any { send: bounds.contains(&send_bound), sync: sync_bounds.iter().any(|bound| bounds.contains(bound)) }
                             }
                             _ => ember_types::MarkerArg::Exact(arg),
                         })
                         .collect();
-                    self.types.add_manual_marker(ember_types::ManualMarker { name, send: word == "Send", sync: word == "Sync", args });
+                    self.types.add_manual_marker(ember_types::ManualMarker { name, send: word == "Send", sync: word != "Send", args });
                 }
             }
         }
@@ -18754,6 +18768,26 @@ impl<'a> Checker<'a> {
             return Some(Expr { ty: self.common.error, kind: ExprKind::Error, span });
         }
 
+        // `[TYP-23]` — a lambda's whole body, given an expected result with open parts: the known
+        // parts are the expected's, the open ones the value's.
+        if expected.is_none()
+            && let Some(hint) = self.wrapper_hint.take()
+            && let Some((_, hinted)) = self.builtin_generic_origin(hint)
+        {
+            let value = self.synth_committed(&args[0].value);
+            let known = |checker: &Self, at: usize| hinted.get(at).copied().filter(|&ty| !checker.types.is_generic(ty)).unwrap_or(checker.common.void);
+            let ty = match which {
+                0 => self.option_of(value.ty),
+                1 => self.result_of(value.ty, known(self, 1)),
+                _ => self.result_of(known(self, 0), value.ty),
+            };
+            let TyKind::Enum(id) = *self.types.kind(ty) else {
+                return Some(Expr { ty: self.common.error, kind: ExprKind::Error, span });
+            };
+            let variant_name = ["Some", "Ok", "Err"][which];
+            let (index, _) = self.types.enum_def(id).variant(Symbol::intern(variant_name))?;
+            return Some(Expr { ty, kind: ExprKind::EnumLit { enum_id: id, variant: index, fields: vec![value] }, span });
+        }
         // An expected `Option`/`Result` fixes both parameters, which is what
         // makes `Err(e)` work without naming the success type.
         let payload_ty = expected.and_then(|e| match self.types.kind(e) {
@@ -27769,7 +27803,14 @@ impl<'a> Checker<'a> {
     /// ranking handles same-file proximity and cross-file canonical identity.
     /// Names like `written` that are in scope; for a value (`values`), not
     /// an interface, which is never one.
-    fn name_suggestions(&self, written: Symbol, use_span: Span, values: bool) -> Vec<String> {
+    /// Whether the source text goes on with a `.` right after `span` (`Color` in `Color.Red`).
+    fn followed_by_dot(&self, span: Span) -> bool {
+        self.sources.get(&span.file).and_then(|source| source.text.get(span.end as usize..)).is_some_and(|rest| rest.starts_with('.'))
+    }
+
+    /// `before_dot`: the name is written where a type may stand as the start of a path
+    /// (`Color` in `Color.Red`, or a call that builds one); a type is no value anywhere else.
+    fn name_suggestions(&self, written: Symbol, use_span: Span, values: bool, before_dot: bool) -> Vec<String> {
         let mut seen = HashSet::new();
         let local_candidates = self
             .scopes
@@ -27795,13 +27836,14 @@ impl<'a> Checker<'a> {
                     if values && self.interfaces.contains_key(qualified) {
                         return None;
                     }
-                    // `[DIA-24]` — where a type is expected, only types.
+                    // `[DIA-24]` — where a type is expected, only types; where a value is, a type only
+                    // before a `.`.
                     let is_type = self.named_types.contains_key(qualified)
                         || self.generic_structs.contains_key(qualified)
                         || self.generic_enums.contains_key(qualified)
                         || self.generic_classes.contains_key(qualified)
                         || self.interfaces.contains_key(qualified);
-                    if !values && !is_type {
+                    if (!values && !is_type) || (values && !before_dot && is_type) {
                         return None;
                     }
                     let declaration = self.item_spans.get(qualified)?;
@@ -28384,7 +28426,7 @@ impl<'a> Checker<'a> {
         written: Symbol,
         use_span: Span,
     ) -> Diagnostic {
-        let names: Vec<(String, String)> = self.name_suggestions(written, use_span, false).into_iter().map(|name| (name.clone(), name)).collect();
+        let names: Vec<(String, String)> = self.name_suggestions(written, use_span, false, false).into_iter().map(|name| (name.clone(), name)).collect();
         diagnostic = name_suggestions::nearest_help(diagnostic, &names, use_span);
         self.add_import_suggestions(diagnostic, written, false)
     }
@@ -28505,6 +28547,17 @@ impl<'a> Checker<'a> {
                 declaration,
                 canonical_name: format!("{}.{method}", self.types.display(owner)),
             })
+        });
+        name_suggestions::rank(written.as_str(), use_span, candidates)
+    }
+
+    /// `[DIA-24]` — the nearest variants of an enum to a name it has no variant for (`Color.Rd`).
+    fn variant_name_suggestions(&self, id: EnumId, written: Symbol, use_span: Span) -> Vec<String> {
+        let definition = self.types.enum_def(id);
+        let candidates = definition.variants.iter().map(|variant| name_suggestions::Candidate {
+            name: variant.name.as_str().to_owned(),
+            declaration: variant.span,
+            canonical_name: format!("{}.{}", definition.name, variant.name),
         });
         name_suggestions::rank(written.as_str(), use_span, candidates)
     }
@@ -40400,7 +40453,7 @@ impl<'a> Checker<'a> {
                         .help(format!("`{name}` is a local of the script's implicit `main`, which no function reads: take it as a parameter, make it a `const` if it never changes, a `static`, or a `static mut` for a module variable that functions change"))
                         .note("the statements at file scope form the body of an implicit `fn main()`, so the names they bind are its locals, not module variables [FN-8], [STA-1]");
                 }
-                let names: Vec<(String, String)> = self.name_suggestions(name, segments[0].span, true).into_iter().map(|name| (name.clone(), name)).collect();
+                let names: Vec<(String, String)> = self.name_suggestions(name, segments[0].span, true, segments.len() > 1 || self.followed_by_dot(segments[0].span)).into_iter().map(|name| (name.clone(), name)).collect();
                 diagnostic = name_suggestions::nearest_help(diagnostic, &names, segments[0].span);
                 let diagnostic = self.add_import_suggestions(diagnostic, name, true);
                 self.sink.emit(diagnostic);
@@ -42465,7 +42518,7 @@ impl<'a> Checker<'a> {
                 format!("cannot find `{name}` in this scope"),
             );
             if segments.len() == 1 {
-                let names: Vec<(String, String)> = self.name_suggestions(name, name_span, true).into_iter().map(|name| (name.clone(), name)).collect();
+                let names: Vec<(String, String)> = self.name_suggestions(name, name_span, true, true).into_iter().map(|name| (name.clone(), name)).collect();
                 diagnostic = name_suggestions::nearest_help(diagnostic, &names, name_span);
                 diagnostic = self.add_import_suggestions(diagnostic, name, true);
             } else {
@@ -44294,6 +44347,7 @@ impl<'a> Checker<'a> {
         let earlier = self.sink.take();
         let own_unsafe = entry.is_unsafe.then(|| UnsafeFnBody { name: entry.name, at: entry.span, first: None });
         let outer_unsafe_fn = std::mem::replace(&mut self.unsafe_fn, own_unsafe);
+        let outer_hint = self.lambda_result_hint.take();
         let (body, _, locals, _) = self.check_lambda_body(
             &entry.lambda,
             &params,
@@ -44301,6 +44355,7 @@ impl<'a> Checker<'a> {
             watch,
             Some((Symbol::intern("env"), entry.env_ty, entry.env_mode, entry.span)),
         );
+        self.lambda_result_hint = outer_hint;
         self.unsafe_fn = outer_unsafe_fn;
         let own = self.sink.take();
         for diagnostic in earlier {
@@ -45920,7 +45975,7 @@ impl<'a> Checker<'a> {
         match interface.as_str() {
             "std.core.Copy" => return self.types.is_copy(ty),
             "std.core.Send" => return self.is_send(ty),
-            "std.core.Sync" => return self.is_sync(ty),
+            "std.core.Sync" | "std.core.ThreadShared" => return self.is_sync(ty),
             "std.core.Sized" => return !matches!(self.types.kind(ty), TyKind::Dyn { .. } | TyKind::Opaque(_)),
             _ => {}
         }
@@ -46051,11 +46106,14 @@ impl<'a> Checker<'a> {
     }
 
     fn standard_associated_capability(
-        &self,
+        &mut self,
         ty: Ty,
         interface: &str,
         member: &str,
     ) -> Option<DefId> {
+        // A built-in generic (`Option[int]`) takes its `extend[T] ... implements` only when
+        // asked for: ask now, as `implements` does (`builtin_extension_implements`).
+        self.extend_instance_at_use(ty);
         let interface = Symbol::intern(interface);
         self.implemented
             .iter()
@@ -48892,20 +48950,12 @@ impl<'a> Checker<'a> {
         if !self.borrowed_params.contains(&local) {
             return false;
         }
-        // A class receiver is borrowed as a handle, while its object's
-        // fields use their own runtime access words. Writing one field does
-        // not re-point the borrowed handle (`[CLS-7]`, `[EXC-19]`). `[FN-9]`:
-        // the same for every borrowed handle parameter, whose mode governs
-        // the handle, not the object: a write through it is the object's,
-        // under Part VIII's exclusivity rules.
+        // `[FN-9]` — a class object has one owner, so `p: Player` reads the object: a write through
+        // `p` is `E3023`, as it is through a struct. Only the object of a method (`this.hp += 1`,
+        // `[CLS-7]`) is its own to change.
         let mut current = place;
         loop {
             if self.class_method_field_index(current).is_some() { return false; }
-            if let ExprKind::Field { base, .. } = &current.kind
-                && matches!(self.types.kind(base.ty), TyKind::Class(_))
-            {
-                return false;
-            }
             current = match &current.kind {
                 ExprKind::Field { base, .. } | ExprKind::Index { base, .. } | ExprKind::Deref(base) => base,
                 _ => break,
@@ -48961,7 +49011,7 @@ impl<'a> Checker<'a> {
         // D-823 (B2) — the whole parameter given a new value is Python's rebinding of a name: the
         // value it means is a new local's, and the caller's stays as it was.
         let rebinding = match &place.kind {
-            ExprKind::Local(_) => true,
+            ExprKind::Local(_) => !self.writing_through_handle,
             ExprKind::Deref(inner) => assigns && matches!(inner.kind, ExprKind::Local(_)),
             _ => false,
         } && !self.callable_parameter_locals.contains(&local);
@@ -49031,7 +49081,8 @@ impl<'a> Checker<'a> {
             diagnostic = diagnostic.note(format!("Python rebinds a parameter's name; an Ember parameter is the caller's `{shown}`, borrowed [FN-1]"));
         }
 
-        if offer_interior_mutability && !rebinding {
+        // A class already has identity: `Cell`, `RefCell` and "make it a class" are no advice for its object.
+        if offer_interior_mutability && !rebinding && !matches!(self.types.kind(ty), TyKind::Class(_)) {
             diagnostic = if self.types.is_copy(ty) {
                 diagnostic.help(
                     "if the value is genuinely shared, use `Cell[T]` for the `Copy` payload or \
@@ -49358,11 +49409,10 @@ impl<'a> Checker<'a> {
         let ty = self.types.intern(TyKind::Enum(id));
         let Some((index, variant)) = self.types.enum_def(id).variant(name.name) else {
             let enum_name = self.types.enum_def(id).name;
-            self.error(
-                codes::E1010,
-                name.span,
-                format!("`{enum_name}` has no variant `{}`", name.name),
-            );
+            let diagnostic = Diagnostic::error(codes::E1010, name.span, format!("`{enum_name}` has no variant `{}`", name.name));
+            let nearest = self.variant_name_suggestions(id, name.name, name.span);
+            let names: Vec<(String, String)> = nearest.into_iter().map(|variant| (variant.clone(), variant)).collect();
+            self.sink.emit(name_suggestions::nearest_help(diagnostic, &names, name.span));
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         };
         let field_names: Vec<Symbol> = variant.fields.iter().map(|f| f.name).collect();
@@ -53350,6 +53400,21 @@ impl<'a> Checker<'a> {
     }
 
     fn synth_lambda_fresh(&mut self, lambda: &ast::Lambda, expected: Option<Ty>, span: Span, reserved: Option<DefId>) -> Expr {
+        // `[TYP-23]` — an expected result that is an `Option` or a `Result` with open parts is no
+        // type to force on the body, but its known parts reach an `Ok(…)` that is the body.
+        let hint = expected
+            .and_then(|ty| match self.types.kind(self.types.item_shape(ty).unwrap_or(ty)) {
+                TyKind::Fn { ret, .. } => Some(*ret),
+                _ => None,
+            })
+            .filter(|&ret| lambda.ret.is_none() && self.types.is_generic(ret) && (self.is_option(ret) || self.is_result(ret)));
+        let saved = std::mem::replace(&mut self.lambda_result_hint, hint);
+        let made = self.synth_lambda_fresh_inner(lambda, expected, span, reserved);
+        self.lambda_result_hint = saved;
+        made
+    }
+
+    fn synth_lambda_fresh_inner(&mut self, lambda: &ast::Lambda, expected: Option<Ty>, span: Span, reserved: Option<DefId>) -> Expr {
         let made_unsafe = std::mem::take(&mut self.user_lambda_in_unsafe) && reserved.is_none();
         // `[UNS-7]` (verdict 126) — a lambda written in unsafe code says what its callers must make
         // true, just before it; one outside it is safe to call, and says nothing. Reported at the end.
@@ -53835,6 +53900,7 @@ impl<'a> Checker<'a> {
         let outer_callable_value_bindings =
             std::mem::take(&mut self.callable_value_bindings);
         let outer_ret = self.ret_ty;
+        let hint = self.lambda_result_hint;
         let outer_watch = self.captures.replace(watch);
         let outer_anchors = std::mem::take(&mut self.arena_anchors);
         self.ret_ty = ret.unwrap_or(self.common.void);
@@ -53898,7 +53964,16 @@ impl<'a> Checker<'a> {
                     // `fn(ref String) -> ref String`, as it is with the result type written. Read
                     // through, the `String` was moved out of the borrowed parameter (`E3013`).
                     None => {
+                        if let Some(hint) = hint
+                            && let ast::ExprKind::Call { callee, .. } = &expr.kind
+                            && let ast::ExprKind::Path { segments } = &callee.kind
+                            && let [only] = segments.as_slice()
+                            && matches!(only.name.as_str(), "Ok" | "Err" | "Some")
+                        {
+                            self.wrapper_hint = Some(hint);
+                        }
                         let value = self.synth_committed(expr);
+                        self.wrapper_hint = None;
                         match value.kind {
                             ExprKind::Deref(reference)
                                 if matches!(self.types.kind(reference.ty), TyKind::Ref { .. })
@@ -58693,7 +58768,7 @@ impl<'a> Checker<'a> {
                 match *self.types.kind(ty) {
                     TyKind::Struct(id) => fields.extend(self.types.struct_def(id).fields.iter().map(|f| (f.ty, f.span, f.name, "field"))),
                     TyKind::Enum(id) => {
-                        let payload = self.types.enum_def(id).variants.iter().flat_map(|v| v.fields.iter());
+                        let payload = self.types.enum_def(id).variants.iter().filter(|v| request.variant.is_none_or(|only| v.name == only)).flat_map(|v| v.fields.iter());
                         fields.extend(payload.map(|f| (f.ty, f.span, f.name, "payload")));
                     }
                     _ => {}
@@ -58701,7 +58776,7 @@ impl<'a> Checker<'a> {
             } else if let Some(decl) = self.generic_structs.get(&name) {
                 fields.extend(decl.fields.iter().map(|f| (f.ty, f.span, f.name, "field")));
             } else if let Some(decl) = self.generic_enums.get(&name) {
-                let payload = decl.variants.iter().flat_map(|v| v.fields.iter());
+                let payload = decl.variants.iter().filter(|v| request.variant.is_none_or(|only| v.name == only)).flat_map(|v| v.fields.iter());
                 fields.extend(payload.map(|f| (f.ty, f.span, f.name, "payload")));
             }
             let interface = Symbol::intern(request.requires);
@@ -58711,9 +58786,12 @@ impl<'a> Checker<'a> {
                     continue;
                 }
                 let shown = self.types.display(ty);
+                let note = match request.variant {
+                    Some(_) => "a variant marked `@from` gets `From[E]` for its field's type `E: needs Error` [ERR-3]".to_string(),
+                    None => format!("`@derive({})` needs every field to be {shown_interface} [DRV-1]", request.derive),
+                };
                 self.sink.emit(
-                    Diagnostic::error(codes::E2080, span, format!("{what} `{field}` has type `{shown}`, which is not {shown_interface}"))
-                        .note(format!("`@derive({})` needs every field to be {shown_interface} [DRV-1]", request.derive)),
+                    Diagnostic::error(codes::E2080, span, format!("{what} `{field}` has type `{shown}`, which is not {shown_interface}")).note(note),
                 );
                 self.refused_derives.insert(request.span);
             }
@@ -61545,15 +61623,17 @@ impl<'a> Checker<'a> {
         // borrowed.
         self.reject_readonly_write_in_mut_argument(&receiver, span);
         let through_shared_ref = self.reject_write_through_shared_ref(&receiver, span);
-        // `[FN-9]` — a class method's `mut self` is a write access to the
-        // object, never a re-pointing of the handle (ODR-072), so a borrowed
-        // handle parameter may call one, under Part VIII's exclusivity rules.
+        // `[FN-9]` — a class object has one owner: a method that may change its object is not
+        // called through a `p` that only reads it (`E3023`, `[EXC-15]`).
         let class_handle = matches!(self.types.kind(receiver.ty), TyKind::Class(_));
-        if !through_shared_ref && !class_handle {
-            self.reject_borrowed_parameter_write(&receiver, span, false);
+        let mut refused = false;
+        if !through_shared_ref {
+            self.writing_through_handle = class_handle;
+            refused = self.reject_borrowed_parameter_write(&receiver, span, false);
+            self.writing_through_handle = false;
         }
         // `[RC-7]`, `[THR-1]` — but an owner that only reads does not change its object.
-        if class_handle {
+        if class_handle && !refused {
             self.reject_change_through_reader(&receiver, span);
         }
         if !is_place(&receiver.kind) {

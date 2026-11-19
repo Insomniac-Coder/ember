@@ -676,3 +676,18 @@ after each work batch" is the owner's rule from this round.
 - **W7 (Sonnet), lane c job 5.** Merged with M4. **Credited 2:** ERR-4, DIA-8. Built, not yet whole: FN-1's `E0117`, IFC-3, IFC-5's E2173, TYP-23's message, DIA-24, DIA-2's "you".
   - **The lead's review:** `ref x: T` had become a plain parameter, so a `Copy` value went as a copy: a view of it could not be returned, a borrow was not live for the call, and generic `std.ecs` broke under M4. `ref x: T` is now the view `x: ref T` was (the parser wraps the type): the word moved, nothing else. `through_a_class_parameter` is gone with it.
   - **The lead on its questions:** 1. `fn(w: ref String)` is `E0117` too, and `fn(ref w: String)` fits `fn(ref String)`. 2. `[BRW-8]`: passing by copy "cannot be observed"; with `ref x` the borrow is live for the call, so E3021 stays. A plain `x: int` given `v[0]` beside `ref mut v` is the same question, for the next job. 3. `int` is the prelude's alias of `i64`, and DIA-2 says nothing of it: DIA-2 waits on its other clauses only. 4. `[DIA-6a]`: "every code this document names is registered": E1040, E9012 and L3019 are registered as retired or reserved. 5. E2060: as built.
+
+## W8 (lane c, job 6), collected 2026-11-19
+
+Merged with three fixes of the lead's: the E3023 help for a `ref n: Node` parameter wrote `ref mut ref n`; a changing
+method through a `shares` owner was reported twice; the call in the help was written for a value made in the call
+(`r(ref mut D())`). CLS-7 is credited on W8's FN-9 change (`CLS-7/reject_a_changing_method_through_a_name_that_only_reads.em`).
+TYP-23's credit is withdrawn: a lambda whose body is `Ok(v) if c else Err(e)` still takes no known parts of the
+expected result (credit-pass.md).
+
+Rulings on W8's questions:
+1. BRW-8 against BRW-3: `[BRW-3]` says it in so many words: for `fn f(ref mut v: Array[int], x: int)` the call
+   `f(ref mut v, v[0])` is accepted, because `v[0]` is copied in before the call. The spec stands as written
+   (reading A); the job's line for the `x: int` case was the lead's mistake. Nothing to build.
+2. `AnyError` and `Send`: reading B, wait for M11's `dyn (A, B)`. No `unsafe extend` in std to stand in for it.
+3. DIA-2: unchanged.

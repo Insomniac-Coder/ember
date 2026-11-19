@@ -19,7 +19,7 @@ class Store:
 struct Pos:
     x: int
 
-fn bump(h: Holder[Pos]):
+fn bump(ref mut h: Holder[Pos]):
     h.store.items[h.at].x += 2
 
 fn main():
@@ -27,5 +27,5 @@ fn main():
     s.items.push(owns Pos(x=3))
     h = Holder[Pos](store=shares mut s, at=0)
     println(s.items[0].x)
-    bump(h)
+    bump(ref mut h)
     println(s.items[0].x)

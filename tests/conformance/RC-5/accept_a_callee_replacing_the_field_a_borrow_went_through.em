@@ -30,7 +30,7 @@ class Parent:
 
 ## The callee replaces the only field holding the object its parameter points into: the caller's
 ## borrow goes through a retained copy of the handle (`[RC-5]`), so the object outlives the call.
-fn read_then_replace(ref x: int, p: Parent) -> int:
+fn read_then_replace(ref x: int, ref mut p: Parent) -> int:
     println("before", x)
     p.child = Child(6, "six".to_string())
     println("replaced")
@@ -39,6 +39,6 @@ fn read_then_replace(ref x: int, p: Parent) -> int:
 
 fn main():
     p = Parent(Child(5, "five".to_string()))
-    r = read_then_replace(ref p.child.v, p)
+    r = read_then_replace(ref p.child.v, ref mut p)
     println("after", r)
     println("end")

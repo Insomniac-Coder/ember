@@ -12,7 +12,6 @@ not credited, with the clause that is missing and the milestone that builds it.
 | CLS-2 | `init` may call a method once the fields its body reads are set: today every call of a method before all fields are set is `E2100`. The check reads each override's body; in a class that is not `pub` an override that reads nothing unset is accepted | M11 |
 | CLS-4 | `E2112` is still the warning `W2111`; `E2113` (an `override` whose first line differs) is registered and never emitted, so a differing `override` is accepted; the header promise of `[THR-8]` for `pub open` classes | M11, M9 |
 | CLS-6 | the kept results of `@cached` methods end with the fields: `@cached` does not exist yet | M11 |
-| CLS-7 | a method that changes `this` is not called through a name that only reads it (`E3023`). `fn f(n: Node): n.set()`, `n.v = 1` and the same through `ref n: Node` are accepted: the object is still guarded by the run-time access words | M6a, M6b |
 | CLS-9a | a view field `from` a `let` field is read in `drop`: view fields with `from` are not parsed yet | M5 |
 | CLS-12 | `@cached` | M11 |
 
@@ -28,6 +27,12 @@ not credited, with the clause that is missing and the milestone that builds it.
 | DSP-4 | kind tests: `if s is Circle as c:` is `E0900`, `E2036`, `E2037` and `E2106` follow it | M11 |
 | DSP-5 | what a virtual call may change, worked out from every override (the change half of `[CLS-7]`) | M6a |
 | DSP-6 | the stop's text (`` `cast s as Circle` on line 9: ... ``), a cast as a place, `E3027` | M11 |
+
+## Inference
+
+| Rule | What is missing | Milestone |
+|---|---|---|
+| TYP-23 | a lambda given to a generic helper whose result is a `Conditional` of `Ok(…)` and `Err(…)` (`fn(owns v) => Ok(v) if v > 0 else Err(String("no"))`) does not take the expected result's known parts: only a body that is one `Ok(…)`, `Err(…)` or `Some(…)`, or returns one, does (W8's `wrapper_hint`, a narrow form of the rule's "expected types flow into `Ok(…)`") | the inference rework |
 
 ## Ownership
 

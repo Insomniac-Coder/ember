@@ -199,6 +199,7 @@ codes! {
     // ODR-201 — every item has one path (`[MNG-1]`).
     E1032 = (Error, 1032, Resolve, "[MOD-1]", "an item has the path of a module or the name of a built-in type");
     E1041 = (Error, 1041, Resolve, "[MOD-4]", "import cycle between packages");
+    E1040 = (Error, 1040, Resolve, "[MOD-8]", "retired: glob imports are allowed from any module");
     E1042 = (Error, 1042, Resolve, "[STD-6]", "a use of a name of a layer of `std` the package does not declare");
     E1050 = (Error, 1050, Resolve, "[MOD-7]", "field is read-only outside its module");
     E1051 = (Error, 1051, Resolve, "[MOD-7]", "`read` visibility is valid on fields only");
@@ -450,6 +451,7 @@ codes! {
     // `[TYP-9c]` and `[MAN-3]` both name `E9010`. Both are followed.
     E9010 = (Error, 9010, Build, "[MAN-3]", "`[lints]` names a lint the compiler does not define");
     E9011 = (Error, 9011, Build, "[CG-C-11]", "the toolchain cannot disable floating-point contraction");
+    E9012 = (Error, 9012, Build, "[DIA-6a]", "reserved");
     E9020 = (Error, 9020, Build, "[BLD-FFI-1a]", "translation units of one target disagree on an inherited flag");
     E9021 = (Error, 9021, Build, "[BLD-FFI-1b]", "C++ standard library and CRT heap could not be determined");
     E9001 = (Error, 9001, Build, "[MAN-1], [PRF-3], [MAN-10], [BLD-FFI-3], [FFI-51]", "invalid manifest, including an unknown key; a dependency's manifest section or flag honoured only when the root names it in `[build] native`, and a dependency's C that reads a file outside its own root and the toolchain's headers, or holds assembly, without it; a library the link would add, because a header or a named library asks for it, that `[link] unsafe_libs` does not name; a library named there of which no import and no `unsafe extern` block declares a name, and which nothing asks for");
@@ -520,6 +522,7 @@ codes! {
     L3017 = (Lint, 3017, Ownership, "[WK-4]", "a loop of owners found leaked at exit (made through `unsafe` or foreign code)");
     L3020 = (Lint, 3020, Ownership, "[UNS-12]", "a `safe:` block outside unsafe code, which changes nothing");
     L3018 = (Lint, 3018, Ownership, "[UNS-9]", "`unsafe` block with no reason category");
+    L3019 = (Lint, 3019, Ownership, "[RC-3]", "retired: an object is never deinitialised before its last owner ends (ODR-063)");
 }
 
 /// Look a code up by its rendered form, e.g. `"E3040"`. Used by `ember explain`.

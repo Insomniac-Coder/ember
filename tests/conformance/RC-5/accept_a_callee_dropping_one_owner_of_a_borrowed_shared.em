@@ -12,7 +12,7 @@ class Holder:
 
 ## The callee drops the field holding one owner of the `shares` value its parameter points into; the
 ## caller's local is another owner, so the value lives (`[RC-5]`).
-fn read_then_drop(ref x: int, h: Holder) -> int:
+fn read_then_drop(ref x: int, ref mut h: Holder) -> int:
     h.shared = None
     return x
 
@@ -20,6 +20,7 @@ fn main():
     s = shares mut 3
     h = Holder()
     h.shared = Some(shares mut s)
-    println(read_then_drop(s, h), s)
+    println(read_then_drop(s, ref mut h), s)
     s2 = shares mut 4
-    println(read_then_drop(s2, Holder()))
+    h2 = Holder()
+    println(read_then_drop(s2, ref mut h2))

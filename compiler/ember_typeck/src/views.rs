@@ -628,11 +628,15 @@ impl Checker<'_> {
     /// are known. `None` where the source cannot be read so.
     pub(crate) fn parameter_change(&self, name: &str, ty: Ty, declaration: Span, place: &Expr, write: Span) -> Option<ParameterChange> {
         let written = self.written_line(declaration)?;
+        // `ref n: Node` reads as `n: Node` does: the word that changes it replaces `ref`.
+        let written = written.strip_prefix("ref ").unwrap_or(&written);
         let first_line = self.line_with(declaration, &format!("ref mut {written}"))?;
-        if !first_line.starts_with("fn ") {
+        // A method says its modifiers first (`virtual fn act(…)`, `pub fn`, `static fn`).
+        let declared = first_line.find("fn ")?;
+        if !first_line[..declared].split_whitespace().all(|word| matches!(word, "pub" | "virtual" | "override" | "static" | "unsafe" | "gen" | "abstract")) {
             return None;
         }
-        let function: String = first_line[3..].chars().take_while(|c| *c == '_' || c.is_alphanumeric()).collect();
+        let function: String = first_line[declared + 3..].chars().take_while(|c| *c == '_' || c.is_alphanumeric()).collect();
         if function.is_empty() {
             return None;
         }
@@ -692,6 +696,10 @@ impl Checker<'_> {
         let src = &self.sources.get(&arg.file)?.text;
         let bytes = src.as_bytes();
         let (start, end) = (arg.start as usize, arg.end as usize);
+        // A value made in the call is no place `ref mut` could name.
+        if src.get(start..end)?.contains('(') {
+            return None;
+        }
         // Back to the bracket that opens the call's arguments, and on to the one that closes them.
         let mut depth = 0i32;
         let mut open = None;

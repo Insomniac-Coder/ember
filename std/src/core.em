@@ -51,6 +51,10 @@ pub interface Send:
 pub interface Sync:
     pass
 
+## `[THR-8]` — what a bound writes for "several threads may read it at once"; `Sync` is its older name.
+pub interface ThreadShared: needs Sync:
+    pass
+
 pub interface Sized:
     pass
 
@@ -103,7 +107,7 @@ pub struct AnyError:
     identity: u128
     context: Array[String]
 
-extend[E: needs Error] AnyError implements From[E]:
+extend[E: needs (Error, Send, ThreadShared)] AnyError implements From[E]:
     static fn from(owns value: E) -> AnyError:
         return AnyError(owns value, type_id[E](), [])
 

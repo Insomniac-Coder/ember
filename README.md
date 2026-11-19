@@ -41,7 +41,7 @@ the tool computes. Work planned for after 1.0 has its own row, outside the overa
 |---|---|---:|
 | 1 | Core language (Parts II–VI) | 34% |
 | 2 | Ownership, borrowing, regions | 16% |
-| 3 | Classes, reference counting, exclusivity | 6% |
+| 3 | Classes, reference counting, exclusivity | 8% |
 | 4 | Effects, compile time, reflection, derives | 13% |
 | 5 | C interoperability | 17% |
 | 6 | Concurrency and data-oriented design | 8% |

@@ -8,6 +8,7 @@
 //! `fmt` over the text being built.
 
 use super::*;
+use crate::derives::DeriveRequest;
 
 impl<'a> Checker<'a> {
     /// ADR-186 — whether a struct, an enum or a class implements `Display`
@@ -538,6 +539,39 @@ impl<'a> Checker<'a> {
         let (shown_from, shown_to) = (self.types.display(from), self.types.display(to));
         if !instance.is_some_and(|instance| self.implements_or_blanket(to, instance)) {
             let (carried, returning) = (self.types.display(value_ty), self.types.display(ret_ty));
+            // `[ERR-3]`, `[ERR-8]` — an `Error` that stays on one thread does not become an `AnyError`,
+            // which any thread may hold: the field, and the lines that compile.
+            let any = self.named_types.get(&Symbol::intern("std.core.AnyError")).copied();
+            if Some(to) == any
+                && self.implements_or_blanket(from, Symbol::intern("std.core.Error"))
+                && !(self.is_send(from) && self.is_sync(from))
+            {
+                let part = self.unshareable_part(from, &mut HashSet::new());
+                let why = match &part {
+                    Some((owner, field, held)) => {
+                        let named = self.types.display(*held);
+                        let reason = match *self.types.kind(*held) {
+                            TyKind::Link { kind: ember_types::LinkKind::Weakref | ember_types::LinkKind::WeakrefThreadShared, .. } => format!("a `{named}` link, which stays on one thread"),
+                            TyKind::Link { .. } => format!("a `{named}` owner, which stays on one thread"),
+                            _ if self.is_send(*held) => format!("a `{named}`, which several threads may not read at once"),
+                            _ => format!("a `{named}`, which stays on one thread"),
+                        };
+                        format!(": `{owner}.{field}` is {reason}, so it may hold what one thread alone may use")
+                    }
+                    None => format!(": a `{shown_from}` stays on one thread, or several threads may not read it at once"),
+                };
+                self.sink.emit(
+                    Diagnostic::error(
+                        codes::E2040,
+                        span,
+                        format!("`{shown_from}` cannot become an `AnyError`, which any thread may hold{why}"),
+                    )
+                    .primary_label(format!("`AnyError` does not implement `From[{shown_from}]`: its `From[E]` needs `E: needs (Error, Send, ThreadShared)`"))
+                    .help(format!("return `{carried}` from this function, or keep what the error reports as a copy (a number or a `String`) instead of the one-thread value"))
+                    .note("`?` gives a failure to the function's error type's `from`, decided from the error's declaration [ERR-3], [ERR-8]"),
+                );
+                return None;
+            }
             self.sink.emit(
                 Diagnostic::error(
                     codes::E2040,
@@ -1021,7 +1055,8 @@ pub(crate) fn desugar_status_errors(modules: &[LoadedModule]) -> Option<Vec<Load
     Some(out)
 }
 
-pub(crate) fn desugar_error_derives(modules: &[LoadedModule], sink: &mut Sink) -> Option<Vec<LoadedModule>> {
+pub(crate) fn desugar_error_derives(modules: &[LoadedModule], sink: &mut Sink) -> (Option<Vec<LoadedModule>>, Vec<DeriveRequest>) {
+    let mut requests = Vec::new();
     let marked = |attrs: &[ast::Attribute]| {
         has_derive(attrs, "Error") || attrs.iter().any(|attr| error_attribute(attr).is_some())
     };
@@ -1032,10 +1067,10 @@ pub(crate) fn desugar_error_derives(modules: &[LoadedModule], sink: &mut Sink) -
         })
     };
     if !modules.iter().any(|loaded| wanted(&loaded.module)) {
-        return None;
+        return (None, requests);
     }
     let mut out = modules.to_vec();
-    for loaded in out.iter_mut().filter(|loaded| wanted(&loaded.module)) {
+    for (loaded_at, loaded) in out.iter_mut().enumerate().filter(|(_, loaded)| wanted(&loaded.module)) {
         let module = std::sync::Arc::make_mut(&mut loaded.module);
         let mut generated = Vec::new();
         for item in &mut module.items {
@@ -1048,7 +1083,7 @@ pub(crate) fn desugar_error_derives(modules: &[LoadedModule], sink: &mut Sink) -
             match kind {
                 ast::ItemKind::Enum(decl) if derives => {
                     refuse_error_attributes(attrs, "an enum: `@error` is written on each variant", sink);
-                    generated.extend(derive_enum_error(decl, *span, sink));
+                    generated.extend(derive_enum_error(decl, *span, loaded_at, &mut requests, sink));
                 }
                 ast::ItemKind::Struct(decl) if derives => {
                     let texts = take_error_attributes(attrs, "error");
@@ -1075,7 +1110,7 @@ pub(crate) fn desugar_error_derives(modules: &[LoadedModule], sink: &mut Sink) -
         }
         module.items.extend(generated);
     }
-    Some(out)
+    (Some(out), requests)
 }
 
 /// `@error` or `@from`, by name.
@@ -1232,7 +1267,7 @@ fn error_text(texts: &[ast::Attribute], fields: &[NamedField], missing: (Span, &
 }
 
 /// `[ERR-3]` — the blocks `@derive(Error)` on an enum stands for.
-fn derive_enum_error(decl: &mut ast::EnumDecl, span: Span, sink: &mut Sink) -> Vec<ast::Item> {
+fn derive_enum_error(decl: &mut ast::EnumDecl, span: Span, module_index: usize, requests: &mut Vec<DeriveRequest>, sink: &mut Sink) -> Vec<ast::Item> {
     let enum_name = decl.name;
     let mut fmt_arms = Vec::new();
     let mut source_arms = Vec::new();
@@ -1267,9 +1302,16 @@ fn derive_enum_error(decl: &mut ast::EnumDecl, span: Span, sink: &mut Sink) -> V
                 misplaced(extra.span, "one `@from` marks a variant; this is a second", sink);
             }
             let [field] = variant.fields.as_slice() else {
-                misplaced(attr.span, "`@from` marks a variant with one field, the error it converts from", sink);
+                // `[ERR-3]` — `@from` on a variant with no field or two or more is `E2080`.
+                let count = if variant.fields.is_empty() { "no field".to_string() } else { format!("{} fields", variant.fields.len()) };
+                sink.emit(
+                    Diagnostic::error(codes::E2080, attr.span, format!("`@from` marks a variant with one field, and {what} has {count}"))
+                        .help("`@from` goes on a variant whose one field is the error it converts from")
+                        .note("a variant marked `@from` gets `From[E]` for its field's type `E: needs Error` [ERR-3]"),
+                );
                 continue;
             };
+            requests.push(DeriveRequest { module: module_index, name: enum_name.name, derive: "from", requires: "std.core.Error", exempt: Vec::new(), span, variant: Some(variant.name.name) });
             let some = call(path(&[Symbol::intern("Some")], attr.span), vec![path(&[bindings[0]], attr.span)], attr.span);
             let pattern = variant_pattern(enum_name, variant, &bindings, &HashSet::from([0]), attr.span);
             source_arms.push(arm(pattern, ret(Some(some), attr.span), attr.span));

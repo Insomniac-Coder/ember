@@ -205,3 +205,23 @@ Read first by every job in this lane; updated last by each.
   - DIA-2: `int` is shown as `i64` everywhere (`types.display`), where the rule says `int` unless the program writes `i64`: the table has one type for both.
     DIA-3, 7, 8, 9, 10, 11, 16, 18, 21, 22, 23, 25: not started (no time); DIA-6a: 123 rows of the registry have a rule after the first with no reject case for the code
     (script in the report), and three codes the document names are not registered (E1040, E9012, L3019).
+
+## W8 (job 6): what M4 allows, and the diagnostics
+- **Where things are:** `mem.take` of a built-in generic: `standard_associated_capability` now calls `extend_instance_at_use` first (an `Option[int]` takes
+  its `extend[T] ... implements Default` only when asked). `ThreadShared` is an interface in `std/src/core.em` (`needs Sync`, the older name still works; the
+  lead's THR-8 owns the rename). `AnyError`'s `From[E]` needs `(Error, Send, ThreadShared)`; the E2040 for a one-thread error is in `errors.rs::convert_failure`.
+  `@from` on a bad variant is E2080 (`DeriveRequest.variant`, checked in `check_derived_requirements`). TYP-23: `lambda_result_hint`/`wrapper_hint`
+  (`synth_lambda_fresh`, `synth_wrapper`): only a lambda whose whole body is `Ok(..)`/`Err(..)`/`Some(..)`. FN-9: a plain class parameter only reads
+  (`reject_borrowed_parameter_write_as` lost its class exemption; `pass_receiver` too; `writing_through_handle`). DIA-24: `variant_name_suggestions`,
+  `name_suggestions(.., before_dot)`. `tools/..` DIA-6a script: `target/w8/dia6a.py` (not kept): 111 (row, later rule) pairs in 49 rows lack a reject case.
+- **Traps:** `ember check` run inside `tests/firstweek/helped/` leaves a `target/` there (the corpus test then fails). `annotations.py` over 300 files waits for
+  the suite lock: run folders in chunks. First-week marks (`marks.json`) and `helped/` follow a diagnostic change: 01, 26, 30 now need `ref mut`.
+- **Credited:** TYP-23, FN-9, DIA-24.
+- **Not credited, and why:** BRW-8's ruling (task 3): BRW-3 says `f(ref mut v, v[0])` with `x: int` is accepted (`tests/conformance/BRW-3/accept_an_argument_copied_before_activation.em`);
+  the job says E3021: a spec question, not built. ERR-1/ERR-3/ERR-8: built and tested except `AnyError` being `Send`/`ThreadShared` by its parts (`owns dyn (Error, Send,
+  ThreadShared)` needs M11's `dyn (A, B)`) and the open/abstract class header promise (THR-8); `.into()` does not exist. TYP-10: not started (the amount operand: about 40 sites in 25
+  files; `Bounds` shows the shape). TYP-17, IFC-6: not started (needs a missing-bounds collector; `E2040` for pub, inference for non-pub, `E2072`). IFC-3 (marker parents,
+  generic implementation line), IFC-4 (associated constants): not started. FN-1: `fn() shares mut game` needs capture words (E0900). FN-2a: CLO-18. ATT-1: `@component` is
+  still E0900, not E0104 (M14, ECS). DIA-2, 3, 7, 9, 10, 11, 16, 18, 21, 22, 23, 25: not started; DIA-21's table was probed: P1-P9, P11-P21, P23, P24, P26-P30 answer (P3's help names `to_string()` only), P10
+  untestable with `Option[int]` (has `Eq`), P22 (`Array[Shape]`) compiles with no E2173, P25's `len(it)` is E0900. DIA-6a: the three codes are registered; reject cases for the
+  111 pairs are not added.
