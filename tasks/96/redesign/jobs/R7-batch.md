@@ -205,3 +205,18 @@ In this order, each a task:
   that `ember fmt` crashed on a script.
 - `tasks/96/redesign/jobs/review.md`, round 7, holds the rulings, W6's last.
 
+
+## W8 (Sonnet), lane c, job 6: what M4 now allows, and the diagnostics (26 tasks) (rolling slot)
+
+M4 is merged: a class object has one owner (not `Copy`); `shares`, `shares mut`, `thread_shared` and `weakref` are built (`M4-plan.md`). `ref x: T` is the view `x: ref T` was: the parser keeps the word in `Param.view` and wraps the type. The rulings on W7's questions are at the end of `tasks/96/redesign/jobs/review.md`. In this order, each a task:
+
+1. **`mem.take` on an `Option`.** `b = mem.take(ref mut a)` with `a: Option[int]` is E2040 ("`Option[i64]` does not implement `Default`"), though `std/src/core.em` has `extend[T] Option[T] implements Default` and E3013's own help recommends it. Find why `implements` says no (`builtin_extension_implements`), fix it for every built-in generic, and test it.
+2. **`[DIA-6a]`:** every code the document names is registered: register E1040, E9012 and L3019 in `ember_diag/src/codes.rs` as retired or reserved (never emitted), and go through the 123 registry rows whose later rules have no reject case: add the cases that are built, list the others.
+3. **`[BRW-8]` ruling:** passing by copy "cannot be observed": `fn f(ref mut v: Array[int], x: int)` called `f(ref mut v, v[0])` keeps the borrow of `v[0]` live for the call (E3021), as it is for a `ref x`.
+4. **ERR-1, ERR-3, ERR-8:** `thread_shared` is built, so `From[E]` for `AnyError` can need `Send` and `ThreadShared`; a one-thread error through `?` into `AnyError` is E2040; `@from` on a bad variant is E2080.
+5. **TYP-23** (the `Ok(v)` gap W7 names), **TYP-10** (the shift panic's operands: every `AssertKind` match site, W7's list is in `lanes/c.md`), **TYP-17** and **IFC-6** (bound inference for a generic that is not `pub`), **IFC-3** (marker parents), **IFC-4** (associated constants).
+6. **FN-1, FN-2a, FN-9, ATT-1**: what M4 unblocked (W6's and W7's notes say what each lacked): `@sync` is E0104 now.
+7. **Diagnostics:** DIA-2, DIA-24 (check each clause, then credit), DIA-3, DIA-7, DIA-9, DIA-10, DIA-11, DIA-16, DIA-18, DIA-21, DIA-22, DIA-23, DIA-25.
+
+- **Not this job:** `E3063` against `E3060`; anything in `std/src/sync.em`; rules of Parts on ownership, classes and threads other than those named (the lead is going through them).
+- Every test and message follows the spec's words; a rule is credited only when each clause is built and tested.
