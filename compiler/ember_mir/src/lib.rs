@@ -1467,8 +1467,10 @@ pub enum AssertKind {
     /// `[TYP-8]` — `T.MIN / -1`, whose true result is not representable.
     /// Always checked.
     SignedDivisionOverflow,
-    /// `[TYP-10]` — a shift amount at or past the type's width.
-    ShiftTooLarge,
+    /// `[TYP-10]` — a shift amount negative or at or past the type's width. The amount, whether its type is signed,
+    /// the direction, the expression as written and the shifted type's name travel here for the panic's text
+    /// ("`shift out of range`: `1 << n` on line 9 shifts an `int` by 70; use `wrapping_shl`").
+    ShiftTooLarge { amount: Operand, signed: bool, left: bool, text: String, ty: String },
     /// Bounds. Phase 2 emits these; the shape is here so the backend needs no
     /// change then.
     Bounds { len: Operand, index: Operand },
@@ -1486,6 +1488,15 @@ pub enum AssertKind {
     Panic { message: Operand },
 }
 
+/// `[TYP-10]` — the text of the shift panic, as the runtime's `ember_panic_shift` words it: "`shift out of range`:
+/// `1 << n` on line 9 shifts an `int` by 70; use `wrapping_shl`".
+pub fn shift_message(text: &str, ty: &str, left: bool, amount: &str, line: u32) -> String {
+    let expression = if text.is_empty() { "the shift".to_string() } else { format!("`{text}`") };
+    let article = if ty.starts_with('i') { "an" } else { "a" };
+    let method = if left { "wrapping_shl" } else { "wrapping_shr" };
+    format!("`shift out of range`: {expression} on line {line} shifts {article} `{ty}` by {amount}; use `{method}`")
+}
+
 impl AssertKind {
     /// The runtime function a failure calls. `[RT-5]` — the prefix comes
     /// from `ember_branding`, so it is spelled once in the workspace.
@@ -1494,7 +1505,7 @@ impl AssertKind {
             AssertKind::Overflow(_) => "panic_overflow",
             AssertKind::DivisionByZero => "panic_div_zero",
             AssertKind::SignedDivisionOverflow => "panic_overflow",
-            AssertKind::ShiftTooLarge => "panic_overflow",
+            AssertKind::ShiftTooLarge { .. } => "panic_shift",
             AssertKind::Bounds { .. } => "panic_bounds",
             AssertKind::RefCellBorrow { .. } => "panic_refcell",
             AssertKind::Downcast | AssertKind::Panic { .. } => "panic",

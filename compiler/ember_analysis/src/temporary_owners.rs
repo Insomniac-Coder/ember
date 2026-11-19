@@ -198,6 +198,7 @@ fn uses(body: &Body) -> Vec<Uses> {
                     ember_mir::AssertKind::RefCellBorrow { file, line } => {
                         operand(&mut result, file, point); operand(&mut result, line, point);
                     }
+                    ember_mir::AssertKind::ShiftTooLarge { amount, .. } => operand(&mut result, amount, point),
                     ember_mir::AssertKind::Panic { message } => operand(&mut result, message, point),
                     _ => {}
                 }

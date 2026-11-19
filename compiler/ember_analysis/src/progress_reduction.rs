@@ -380,6 +380,7 @@ fn term_moves(t: &Terminator, l: LocalId) -> bool {
                     AssertKind::RefCellBorrow { file, line } => {
                         operand_moves(file, l) || operand_moves(line, l)
                     }
+                    AssertKind::ShiftTooLarge { amount, .. } => operand_moves(amount, l),
                     AssertKind::Panic { message } => operand_moves(message, l),
                     _ => false,
                 }
@@ -418,6 +419,7 @@ fn term_mentions(t: &Terminator, l: LocalId) -> bool {
                     AssertKind::RefCellBorrow { file, line } => {
                         operand_mentions(file, l) || operand_mentions(line, l)
                     }
+                    AssertKind::ShiftTooLarge { amount, .. } => operand_mentions(amount, l),
                     AssertKind::Panic { message } => operand_mentions(message, l),
                     _ => false,
                 }
@@ -1541,7 +1543,6 @@ fn same_assert(a: &AssertKind, b: &AssertKind) -> bool {
         (AssertKind::Overflow(a), AssertKind::Overflow(b)) => a == b,
         (AssertKind::DivisionByZero, AssertKind::DivisionByZero)
         | (AssertKind::SignedDivisionOverflow, AssertKind::SignedDivisionOverflow)
-        | (AssertKind::ShiftTooLarge, AssertKind::ShiftTooLarge)
         | (AssertKind::Downcast, AssertKind::Downcast) => true,
         (AssertKind::Bounds { len: a, index: ai }, AssertKind::Bounds { len: b, index: bi }) => {
             same_operand(a, b) && same_operand(ai, bi)
@@ -1550,6 +1551,10 @@ fn same_assert(a: &AssertKind, b: &AssertKind) -> bool {
             AssertKind::RefCellBorrow { file: a, line: al },
             AssertKind::RefCellBorrow { file: b, line: bl },
         ) => same_operand(a, b) && same_operand(al, bl),
+        (
+            AssertKind::ShiftTooLarge { amount: a, signed: asg, left: al, text: at, ty: aty },
+            AssertKind::ShiftTooLarge { amount: b, signed: bsg, left: bl, text: bt, ty: bty },
+        ) => same_operand(a, b) && asg == bsg && al == bl && at == bt && aty == bty,
         (AssertKind::Panic { message: a }, AssertKind::Panic { message: b }) => same_operand(a, b),
         _ => false,
     }

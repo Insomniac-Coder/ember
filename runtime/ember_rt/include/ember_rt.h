@@ -2637,6 +2637,8 @@ EMBER_PANIC_FN void ember_panic_bounds(size_t index, size_t len, ember_loc loc);
 /* [SIMD-9] — a vector load, store, gather or scatter: names the lane. */
 EMBER_PANIC_FN void ember_panic_lane_bounds(size_t lane, size_t index, size_t len, ember_loc loc);
 EMBER_PANIC_FN void ember_panic_overflow(const char* op, ember_loc loc);
+/* [TYP-10]: a shift amount negative or not less than the width. */
+EMBER_PANIC_FN void ember_panic_shift(const char* text, const char* ty, bool left, int64_t amount, bool amount_signed, ember_loc loc);
 EMBER_PANIC_FN void ember_panic_div_zero(ember_loc loc);
 EMBER_PANIC_FN void ember_panic_exclusivity(const char* what, ember_loc loc);
 /* `[EXC-6]` — names the offending access and the kind of the active one. */

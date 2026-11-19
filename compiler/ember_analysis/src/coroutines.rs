@@ -207,6 +207,7 @@ fn assert_operands(msg: &AssertKind) -> Vec<&Operand> {
     match msg {
         AssertKind::Bounds { len, index } => vec![len, index],
         AssertKind::RefCellBorrow { file, line } => vec![file, line],
+        AssertKind::ShiftTooLarge { amount, .. } => vec![amount],
         AssertKind::Panic { message } => vec![message],
         _ => Vec::new(),
     }
@@ -1148,6 +1149,7 @@ impl<'a> Builder<'a> {
                     AssertKind::RefCellBorrow { file, line } => {
                         AssertKind::RefCellBorrow { file: self.operand(file, span, pre), line: self.operand(line, span, pre) }
                     }
+                    AssertKind::ShiftTooLarge { amount, signed, left, text, ty } => AssertKind::ShiftTooLarge { amount: self.operand(amount, span, pre), signed: *signed, left: *left, text: text.clone(), ty: ty.clone() },
                     AssertKind::Panic { message } => AssertKind::Panic { message: self.operand(message, span, pre) },
                     other => other.clone(),
                 };
@@ -1443,6 +1445,7 @@ fn visit_locals(body: &mut Body, f: &mut dyn FnMut(&mut LocalId, bool)) {
                         operand(file, f);
                         operand(line, f);
                     }
+                    AssertKind::ShiftTooLarge { amount, .. } => operand(amount, f),
                     AssertKind::Panic { message } => operand(message, f),
                     _ => {}
                 }

@@ -125,6 +125,9 @@ fn reads(body: &Body, types: &ember_types::TypeTable) -> HashSet<LocalId> {
                 if let ember_mir::AssertKind::Panic { message } = msg {
                     mark_operand(message, &mut read);
                 }
+                if let ember_mir::AssertKind::ShiftTooLarge { amount, .. } = msg {
+                    mark_operand(amount, &mut read);
+                }
             }
             Terminator::Goto(_) | Terminator::Return | Terminator::Unreachable => {}
         }

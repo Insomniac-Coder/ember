@@ -1222,7 +1222,7 @@ impl SiteBuilder<'_> {
                     AssertKind::Overflow(_)
                     | AssertKind::DivisionByZero
                     | AssertKind::SignedDivisionOverflow
-                    | AssertKind::ShiftTooLarge => (Effects::CHECK_ARITHMETIC, "an arithmetic check"),
+                    | AssertKind::ShiftTooLarge { .. } => (Effects::CHECK_ARITHMETIC, "an arithmetic check"),
                     AssertKind::Bounds { .. } => (Effects::CHECK_BOUNDS, "a bounds check"),
                     AssertKind::RefCellBorrow { .. } => (Effects::CHECK_ALIASING, "a `RefCell` borrow check"),
                     AssertKind::Downcast => (Effects::PANIC, "`cast … as`"),

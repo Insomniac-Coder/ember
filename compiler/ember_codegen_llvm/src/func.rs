@@ -2949,9 +2949,27 @@ impl<'m, 'a> FnCx<'m, 'a> {
                 let text = self.m.bytes(b"/");
                 self.call_rt("panic_overflow", vec![Val::Imm(Sc::Ptr, text), loc], None);
             }
-            AssertKind::ShiftTooLarge => {
-                let text = self.m.bytes(b"shift");
-                self.call_rt("panic_overflow", vec![Val::Imm(Sc::Ptr, text), loc], None);
+            AssertKind::ShiftTooLarge { amount, signed, left, text, ty } => {
+                // `[TYP-10]` — the amount as 64 bits in its own signedness, the expression and the type as text.
+                let (amount, amount_sc) = self.scalar(amount)?;
+                let amount = match amount_sc {
+                    Sc::I(bits) => self.int_convert(&amount, bits, 64, *signed),
+                    _ => return unsupported("a shift amount that is not an integer"),
+                };
+                let text = self.m.bytes(text.as_bytes());
+                let ty = self.m.bytes(ty.as_bytes());
+                self.call_rt(
+                    "panic_shift",
+                    vec![
+                        Val::Imm(Sc::Ptr, text),
+                        Val::Imm(Sc::Ptr, ty),
+                        Val::Imm(Sc::Bool, left.to_string()),
+                        Val::Imm(Sc::I(64), amount),
+                        Val::Imm(Sc::Bool, signed.to_string()),
+                        loc,
+                    ],
+                    None,
+                );
             }
             AssertKind::DivisionByZero => self.call_rt("panic_div_zero", vec![loc], None),
             AssertKind::Bounds { len, index } => {

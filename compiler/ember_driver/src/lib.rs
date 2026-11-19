@@ -395,8 +395,10 @@ fn collect_body_function_symbols(
                     ember_mir::AssertKind::Overflow(_)
                     | ember_mir::AssertKind::DivisionByZero
                     | ember_mir::AssertKind::SignedDivisionOverflow
-                    | ember_mir::AssertKind::ShiftTooLarge
                     | ember_mir::AssertKind::Downcast => {}
+                    ember_mir::AssertKind::ShiftTooLarge { amount, .. } => {
+                        collect_operand_function_symbols(amount, out);
+                    }
                     ember_mir::AssertKind::Panic { message } => {
                         collect_operand_function_symbols(message, out);
                     }

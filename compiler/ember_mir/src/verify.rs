@@ -557,6 +557,9 @@ pub fn verify(body: &Body) -> Vec<Violation> {
                     v.operand(file, &at);
                     v.operand(line, &at);
                 }
+                if let crate::AssertKind::ShiftTooLarge { amount, .. } = msg {
+                    v.operand(amount, &at);
+                }
                 if let crate::AssertKind::Panic { message } = msg {
                     v.operand(message, &at);
                 }

@@ -939,6 +939,9 @@ fn renumber_terminator(
             if let ember_mir::AssertKind::Panic { message } = msg {
                 renumber_operand(message, local);
             }
+            if let ember_mir::AssertKind::ShiftTooLarge { amount, .. } = msg {
+                renumber_operand(amount, local);
+            }
             *next = target(*next);
         }
         Terminator::Return | Terminator::Unreachable => {}

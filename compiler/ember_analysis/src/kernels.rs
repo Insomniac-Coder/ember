@@ -1148,6 +1148,7 @@ fn for_each_terminator_operand(terminator: &Terminator, f: &mut dyn FnMut(&Opera
                     f(file);
                     f(line);
                 }
+                AssertKind::ShiftTooLarge { amount, .. } => f(amount),
                 AssertKind::Panic { message } => f(message),
                 _ => {}
             }
@@ -1428,6 +1429,7 @@ impl Rewrite<'_> {
                     AssertKind::RefCellBorrow { file, line } => {
                         AssertKind::RefCellBorrow { file: self.operand(file), line: self.operand(line) }
                     }
+                    AssertKind::ShiftTooLarge { amount, signed, left, text, ty } => AssertKind::ShiftTooLarge { amount: self.operand(amount), signed: *signed, left: *left, text: text.clone(), ty: ty.clone() },
                     AssertKind::Panic { message } => AssertKind::Panic { message: self.operand(message) },
                     other => other.clone(),
                 };
