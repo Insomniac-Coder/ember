@@ -629,10 +629,12 @@ impl Checker<'_> {
     pub(crate) fn parameter_change(&self, name: &str, ty: Ty, declaration: Span, place: &Expr, write: Span) -> Option<ParameterChange> {
         let written = self.written_line(declaration)?;
         let first_line = self.line_with(declaration, &format!("ref mut {written}"))?;
-        if !first_line.starts_with("fn ") {
+        // A method says its modifiers first (`virtual fn act(…)`, `pub fn`, `static fn`).
+        let declared = first_line.find("fn ")?;
+        if !first_line[..declared].split_whitespace().all(|word| matches!(word, "pub" | "virtual" | "override" | "static" | "unsafe" | "gen" | "abstract")) {
             return None;
         }
-        let function: String = first_line[3..].chars().take_while(|c| *c == '_' || c.is_alphanumeric()).collect();
+        let function: String = first_line[declared + 3..].chars().take_while(|c| *c == '_' || c.is_alphanumeric()).collect();
         if function.is_empty() {
             return None;
         }

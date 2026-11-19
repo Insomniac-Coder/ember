@@ -77,7 +77,7 @@ fn parse_direction(word: StrView) -> Option[Direction]:
         "west" | "w" => Some(Direction.West)
         _ => None
 
-fn run_command(game: Game, line: StrView):
+fn run_command(ref mut game: Game, line: StrView):
     words = line.trim().to_lower().split(" ").map(owns fn(w) => w.to_string()).collect[Array[String]]()
     if words.len() == 0:
         return
@@ -103,6 +103,6 @@ fn main():
                 "take key", "inventory", "dance", "go west", "go north", "go east"]
     for command in commands:
         println(f"> {command}")
-        run_command(game, command)
+        run_command(ref mut game, command)
         if game.finished:
             break
