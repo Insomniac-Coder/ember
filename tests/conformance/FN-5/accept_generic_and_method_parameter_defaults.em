@@ -16,7 +16,7 @@ struct Meter:
     total: int
 
 extend Meter:
-    fn add(rhs: int = this.total, twice: int = rhs * 2):
+    fn add(delta: int = this.total, twice: int = delta * 2):
         this.total += twice
 
 fn main():

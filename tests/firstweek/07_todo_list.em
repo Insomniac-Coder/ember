@@ -32,10 +32,10 @@ class TodoList:
     tasks: Array[Task] = []
     next_id: int = 1
 
-    fn add(rhs: StrView, priority: Priority, tags: Array[String] = []) -> int:
+    fn add(title: StrView, priority: Priority, tags: Array[String] = []) -> int:
         id = this.next_id
         this.next_id += 1
-        this.tasks.push(owns Task(id=id, rhs=rhs, priority=priority, tags=tags))
+        this.tasks.push(owns Task(id=id, title=title, priority=priority, tags=tags))
         return id
 
     fn complete(id: int) -> bool:

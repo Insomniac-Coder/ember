@@ -17,17 +17,17 @@ fn main():
     xs = [1, 2, 3]
     seen: Array[int] = []
     total = 6
-    k = xs.iter().inspect(owns fn(ref v: int) => seen.push(owns v)).count()
-    m = xs.iter().filter(owns fn(ref v: int) => v < total).map(owns fn(ref v: int) => v * 1).sum()
+    k = xs.iter().inspect(owns fn(v: ref int) => seen.push(owns v)).count()
+    m = xs.iter().filter(owns fn(v: ref int) => v < total).map(owns fn(v: ref int) => v * 1).sum()
     println(k, seen, m + 3)
     ys: Array[int] = []
-    for y in xs.iter().map(owns fn(ref v: int) => v + seen.len()):
+    for y in xs.iter().map(owns fn(v: ref int) => v + seen.len()):
         ys.push(owns y)
     println(ys)
     s = "abcdefg".to_string()
-    n = xs.iter().map(owns owned fn(ref v: int) => v + s.len()).count()
+    n = xs.iter().map(owns owned fn(v: ref int) => v + s.len()).count()
     t = "abcdefg".to_string()
-    for z in xs.iter().map(owns owned fn(ref v: int) => v + t.len()).take(1):
+    for z in xs.iter().map(owns owned fn(v: ref int) => v + t.len()).take(1):
         println(n, z - 1)
     left = ["a".to_string(), "b".to_string()]
     right = ["c".to_string(), "d".to_string()]

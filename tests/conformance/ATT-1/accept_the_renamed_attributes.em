@@ -7,8 +7,8 @@
 ## `@fp(contract)`), which lets a multiply and an add fuse (`[TYP-9]`).
 
 @no_alias_checks
-fn add(rhs: int, b: int) -> int:
-    return rhs + b
+fn add(a: int, b: int) -> int:
+    return a + b
 
 @fp(allow_fma)
 fn mul_add(a: f64, b: f64, c: f64) -> f64:

@@ -29,8 +29,8 @@ struct Meter:
     k: f64
     total: f64 = 0.0
 
-    fn add(rhs: f64 = this.k * 0.40625 + 1.0):
-        this.total += rhs
+    fn add(x: f64 = this.k * 0.40625 + 1.0):
+        this.total += x
 
 @fastmath
 fn fast(h: Holder) -> f64:

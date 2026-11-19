@@ -12,8 +12,8 @@ struct Money:
     fn plus(other: Money) -> Money:
         return Money(this.cents + other.cents)
 
-fn add(rhs: Money, b: Money) -> Money:
-    return Money(rhs.cents + b.cents)
+fn add(a: Money, b: Money) -> Money:
+    return Money(a.cents + b.cents)
 
 fn main():
     m = Money(1)

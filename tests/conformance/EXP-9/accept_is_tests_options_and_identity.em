@@ -28,12 +28,6 @@ fn find(xs: Span[int], wanted: int) -> Option[int]:
 fn empty(ref o: Option[int]) -> bool:
     return o is None
 
-fn same(ref a: int, ref b: int) -> bool:
-    return a is b
-
-fn same_node(ref a: Node, ref b: Node) -> bool:
-    return a is b
-
 fn main():
     nothing: Option[int] = None
     three: Option[int] = Some(3)
@@ -45,8 +39,16 @@ fn main():
     m = 1
     p = Pair(1, 1)
     r: ref int = ref n
-    println(same(ref n, ref n), same(ref n, ref m), same(ref p.a, ref p.b), r is ref n, r is not ref m)
+    r1: ref int = ref n
+    r2: ref int = ref n
+    r3: ref int = ref m
+    r4: ref int = ref p.a
+    r5: ref int = ref p.b
+    println(r1 is r2, r1 is r3, r4 is r5, r is ref n, r is not ref m)
     first = Node(1)
     alias = first
     other = Node(1)
-    println(same_node(ref first, ref alias), same_node(ref first, ref other), first is alias)
+    f1: ref Node = ref first
+    f2: ref Node = ref alias
+    f3: ref Node = ref other
+    println(f1 is f2, f1 is f3, first is alias)

@@ -343,7 +343,11 @@ impl Parser<'_> {
         }
 
         let id = self.next_id();
-        let kind = self.parse_item_kind()?;
+        // `[FFI-11]` — a function with an `@ffi` contract is a foreign declaration: its `ref T` is the pointer C takes.
+        let outer_foreign = std::mem::replace(&mut self.in_ffi_contract, self.generated || attrs.iter().any(|attr| attr.path.last().is_some_and(|name| name.name.is("ffi"))));
+        let kind = self.parse_item_kind();
+        self.in_ffi_contract = outer_foreign;
+        let kind = kind?;
         self.check_fn_bodies(&kind);
         Some(Item { id, attrs, vis, doc, kind, span: start.to(self.prev_span()) })
     }
@@ -1234,7 +1238,7 @@ impl Parser<'_> {
 
         let name = self.expect_ident();
         self.expect_punct(Punct::Colon);
-        let mode = if worded { mode } else { self.refuse_mode_in_type(name).unwrap_or(mode) };
+        let mode = if worded { mode } else { self.refuse_mode_in_type(name, true).unwrap_or(mode) };
         // `[LEX-15]`, `[LT-48]` — `runtime` is a keyword only after the `:` and directly before `dyn`.
         if self.at_contextual("runtime") && self.at_kw_at(1, Kw::Dyn) {
             self.bump();
@@ -1267,11 +1271,15 @@ impl Parser<'_> {
     /// Refused, the words are taken and the parameter is read as the line written right is (`ref mut
     /// c: Counter`), so what is checked after is what was meant: whether it was.
     /// Called for a name with no word before it: `ref mut x: ref mut T` is a parameter of a view type.
-    pub(crate) fn refuse_mode_in_type(&mut self, name: Ident) -> Option<Mode> {
-        if !self.at_kw(Kw::Ref) || self.in_extern_block {
+    pub(crate) fn refuse_mode_in_type(&mut self, name: Ident, plain_too: bool) -> Option<Mode> {
+        if !self.at_kw(Kw::Ref) || self.in_extern_block || self.in_ffi_contract {
             return None;
         }
         let mutable = self.at_kw_at(1, Kw::Mut);
+        // A lambda's `fn(w: ref String)` is the callable type `fn(ref String)`: only `ref mut` is refused there.
+        if !mutable && !plain_too {
+            return None;
+        }
         let n = if mutable { 2 } else { 1 };
         let words = if mutable { self.span().to(self.tokens[self.pos + 1].span) } else { self.span() };
         let written = ember_span::Span::new(name.span.file, name.span.start, self.tokens[self.pos + n].span.start);

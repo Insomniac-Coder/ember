@@ -421,7 +421,7 @@ pub fn twice(f: F, x: int) -> int:
     return f(f(x))
 
 pub fn doubled(xs: Span[int]) -> int:
-    return xs.iter().map(owns fn(ref x: int) -> int => x * 2).sum()
+    return xs.iter().map(owns fn(x: ref int) -> int => x * 2).sum()
 
 pub fn shifted(x: int) -> int:
     f = offset
@@ -435,7 +435,7 @@ fn main():
     xs = [1, 2, 3]
     f = lib.offset
     k = fn(x: int) -> int => x * 3
-    total = xs.iter().map(owns fn(ref x: int) -> int => lib.offset(x)).sum()
+    total = xs.iter().map(owns fn(x: ref int) -> int => lib.offset(x)).sum()
     println(f(1), lib.twice(f, 2), lib.shifted(1), lib.twice(k, 1), total, lib.doubled(xs.as_span()))
 "#;
 
@@ -454,7 +454,7 @@ fn function_items_are_kept_across_builds_as_a_clean_build_makes_them() {
     let edits = [
         ("a body the items name", ITEMS_LIB.replace("return x + 1", "return x + 10"), source("lib")),
         ("the importer's body", ITEMS_MAIN.replace("x * 3", "x * 4"), source("main")),
-        ("a lambda added before the others", ITEMS_LIB.replace("pub fn doubled", "pub fn tripled(xs: Span[int]) -> int:\n    return xs.iter().map(owns fn(ref x: int) -> int => x * 3).sum()\n\npub fn doubled"), source("lib")),
+        ("a lambda added before the others", ITEMS_LIB.replace("pub fn doubled", "pub fn tripled(xs: Span[int]) -> int:\n    return xs.iter().map(owns fn(x: ref int) -> int => x * 3).sum()\n\npub fn doubled"), source("lib")),
     ];
     for (step, text, file) in edits {
         write(&dir, &file, &text);

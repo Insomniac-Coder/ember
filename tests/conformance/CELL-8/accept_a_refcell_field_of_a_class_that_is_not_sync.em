@@ -10,9 +10,9 @@ class Log:
     fn init():
         this.lines = RefCell(Array[StrView]())
 
-    fn add(rhs: StrView):
+    fn add(line: StrView):
         with lines = this.lines.borrow_mut():
-            lines.push(owns rhs)
+            lines.push(owns line)
 
 fn main():
     log = Log()

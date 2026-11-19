@@ -25,8 +25,8 @@ struct Loud:
 class Registry:
     names: SyncShared[Mutex[Array[String]]]
 
-fn add(rhs: SyncShared[Mutex[Array[String]]], name: StrView):
-    with g = rhs.get().lock():
+fn add(r: SyncShared[Mutex[Array[String]]], name: StrView):
+    with g = r.get().lock():
         g.push(owns name.to_string())
 
 fn main():

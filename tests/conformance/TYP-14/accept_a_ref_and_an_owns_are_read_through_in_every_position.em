@@ -16,7 +16,9 @@ struct Mesh:
         return this.n
 
 fn plain(m: Mesh) -> int:
-    returrrref ef fn via_ref(m: ref Mesh) -> int:
+    return m.n
+
+fn via_ref(ref m: Mesh) -> int:
     return m.n + m.count() + plain(m)
 
 fn main():

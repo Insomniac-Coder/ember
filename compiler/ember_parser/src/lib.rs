@@ -29,6 +29,14 @@ pub fn parse(file: FileId, src: &str, tokens: Vec<Token>, sink: &mut Sink) -> Mo
     parser.parse_module()
 }
 
+/// [`parse`] for the source the importer wrote from a header (`import c`, `import cpp`): its `ref T` parameters are the
+/// pointers C takes (`[FFI-11]`), never the mode written in a type (`[FN-1]`).
+pub fn parse_import(file: FileId, src: &str, tokens: Vec<Token>, sink: &mut Sink) -> Module {
+    let mut parser = Parser::new(file, src, tokens, sink);
+    parser.generated = true;
+    parser.parse_module()
+}
+
 pub(crate) struct Parser<'a> {
     tokens: Vec<Token>,
     pos: usize,
@@ -52,6 +60,10 @@ pub(crate) struct Parser<'a> {
     in_ffi_attribute: bool,
     /// The `extern_item` grammar admits an uninitialized `static` only here.
     in_extern_block: bool,
+    /// The item being parsed has an `@ffi` contract (`[FFI-11]`).
+    in_ffi_contract: bool,
+    /// The file is the importer's (`parse_import`).
+    generated: bool,
     /// `[GRM-33]` — the name spans of functions whose signature holds a token
     /// the lexer already reported: a missing body there is that error's.
     damaged_signatures: Vec<Span>,
@@ -113,6 +125,8 @@ impl<'a> Parser<'a> {
             too_deep: false,
             in_ffi_attribute: false,
             in_extern_block: false,
+            in_ffi_contract: false,
+            generated: false,
             damaged_signatures: Vec::new(),
             unsafe_sites: Vec::new(),
             safety_attribute: false,

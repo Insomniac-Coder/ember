@@ -152,7 +152,7 @@ Read first by every job in this lane; updated last by each.
 
 ## W7, job 5 (`ref` in a parameter's type, what W6 left, diagnostics), 2026-11-19
 
-- **Credited (built_for_0915):** ERR-4 (the new test covers every method that takes a function as a `once fn`).
+- **Credited (built_for_0915):** ERR-4 (the new test covers every method that takes a function as a `once fn`), DIA-8 (`explain_view_names_each_view_in_use_and_the_use_that_keeps_it`, `milestones.rs`: built before, exact outputs for a shared view, a changing one, a line with none).
 - **Where things are:** `[FN-1]`'s `ref`/`ref mut` in a parameter's type is `E0117` in `refuse_mode_in_type` (`ember_parser/src/decls.rs`, also
   lambda parameters in `body.rs`); the diagnostic's migration moves the word to the name, so `a_migrate_views.py`'s way of applying it works
   (scratchpad `mig.py`: the same script with the suggestion's message); `ember fmt --migrate` does it too (`migrate.rs::parameter`). Generated
@@ -172,6 +172,20 @@ Read first by every job in this lane; updated last by each.
   child with WMI. `cargo test -p ember_driver` runs the `milestones` suite of `tests/compile-fail`, `compile-pass`, `run-pass` and `milestones`, which
   the quick check does not see (it reported 0 failing while 8 files were wrong): run `cargo test -p ember_driver --test milestones -- compile_fail_programs_are_rejected compile_pass_programs_compile run_pass_programs_pass milestones_pass` after a change of the parser or a diagnostic.
 - **Not credited, and why:**
+  - **`E0117` for `ref` is for `fn` declarations only; the exemptions and the fallout** (the lead decides the open ones): a lambda's `fn(w: ref String)`
+    stays (it is the callable type `fn(ref String)`; `fn(ref w: String)` is a different callable and breaks `iter().filter(...)`), `ref mut` in a lambda is E0117 as
+    before; the importer's source (`ember_parser::parse_import`) and an item with an `@ffi` contract keep `x: ref T` (the pointer C takes, `[FFI-11]`), so the
+    contract checks that read `ty == Ref` work. `ref a: T` is NOT the old `a: ref T`: (1) a `Copy` T (a scalar, a view struct) is passed as a copy, so a
+    view of it cannot be returned (E2031/E3060) and a borrow of the caller's place is not live for the call (E3021 and the run-time exclusivity checks are not
+    there): 13 tests were rewritten to `String` or a non-`Copy` struct (a_returned_view_elision_cannot_tie, a_view_struct_carries_its_region,
+    borrows_travel_with_the_reference, borrows_attribute_accepted, m2_the_borrow_checker_catches_escapes, references_that_travel, returned_views, view_structs, BRW-3 x2,
+    EXC-2 x2, HEAP-5, FN-5 x2, EXP-9 x2, DIA-11, TYP-5, TYP-18, LT-1, CTL-1); (2) a class handle is `Copy` until A1-9, so `ref fetch: AosStorage[T]` returned a view
+    of its fields as E3060: `through_a_class_parameter` in `ember_analysis/src/borrows.rs::check_escapes` (a file outside this lane's list) lets a view through a
+    borrowed class parameter's field escape; (3) a function item `fn two_fn(ref w: String)` is `fn(String)`, which `find` (`fn(ref String)`) refuses: CTL-1 now
+    uses a lambda. **Still failing after this (std/ecs.em's 30 migrated lines): `ECS-4/run_fail_a_system_writes_a_storage_its_query_holds` and
+    `ECS-5/run_fail_destroying_through_the_world_while_a_query_iterates` expect the run-time `exclusivity violation: write access to std.ecs.AosStorage[Hp]`,
+    which is no longer raised once the view-making functions take `ref fetch: AosStorage[T]`; the lead is changing ecs.em (M4 slice E).**
+  - The name rule of IFC-3 is not applied to the importer's source (`generated_files`), whose operator wrappers keep the header's parameter names.
   - TYP-10: the panic text needs the amount: `AssertKind::ShiftTooLarge` must carry `amount: Operand` (+ the expression text, the type name and
     `wrapping_shl`/`wrapping_shr`), which touches about 26 sites that list `RefCellBorrow`/`Bounds` (borrows.rs x4, coroutines.rs x4, kernels.rs x3,
     progress_reduction.rs x4, loop_version.rs x3, regions.rs x2, inline.rs, list_locals.rs, loop_access.rs, perf_lints.rs, static_safe.rs,

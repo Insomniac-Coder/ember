@@ -11173,7 +11173,7 @@ impl<'a> Checker<'a> {
                                 let ty = self.callable_param_ty(ty, p.mode, &mut generics, 0);
                                 // A foreign declaration's parameters are C's, passed as C passes them.
                                 let (ty, mode) = if decl.is_foreign_decl { (ty, mode_of(p.mode)) } else { self.passed_by_address(ty, mode_of(p.mode)) };
-                                let ty = self.reject_unsized_by_value(ty, p.span, "a parameter");
+                                let ty = if mode != Mode::Owned && self.types.has_unsized_by_value(ty) && self.flexible_in(ty).is_some() { ty } else { self.reject_unsized_by_value(ty, p.span, "a parameter") };
                                 Some((name.name, ty, mode, p.span))
                             }
                             // A receiver outside a type body is meaningless;
@@ -12995,7 +12995,8 @@ impl<'a> Checker<'a> {
         }
         // `[IFC-3]` — the same parameter names.
         let written_from = usize::from(required_receiver.is_some());
-        let names_agree = self.signatures[declaration.0 as usize]
+        let names_agree = self.generated_files.contains(&self.signatures[implementation.0 as usize].decl.file)
+            || self.signatures[declaration.0 as usize]
             .params
             .iter()
             .zip(self.signatures[implementation.0 as usize].params.iter().skip(written_from))
@@ -14567,7 +14568,7 @@ impl<'a> Checker<'a> {
                         generic_index_base,
                     );
                     let (ty, mode) = if decl.is_foreign_decl { (ty, mode_of(param.mode)) } else { self.passed_by_address(ty, mode_of(param.mode)) };
-                    let ty = self.reject_unsized_by_value(ty, param.span, "a parameter");
+                    let ty = if mode != Mode::Owned && self.types.has_unsized_by_value(ty) && self.flexible_in(ty).is_some() { ty } else { self.reject_unsized_by_value(ty, param.span, "a parameter") };
                     params.push((name.name, ty, mode, param.span))
                 }
             }

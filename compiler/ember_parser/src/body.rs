@@ -2171,7 +2171,7 @@ impl Parser<'_> {
             // A lambda parameter's type is optional; it is inferred from the
             // expected function type (`[TYP-23]` rule 4).
             let ty = if self.eat_punct(Punct::Colon) {
-                if !worded && let Some(m) = self.refuse_mode_in_type(name) {
+                if !worded && let Some(m) = self.refuse_mode_in_type(name, false) {
                     mode = m;
                 }
                 self.parse_type()

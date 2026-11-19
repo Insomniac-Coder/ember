@@ -1683,7 +1683,7 @@ impl<'a> Planner<'a> {
 
     /// `[HR-16]` — the adapter between the runtime and a type's `migrate_from`: the runtime builds
     /// the old value as `Old<Name>` from the old instance, field by name, and passes its address;
-    /// the driver's wrapper (`fn(ref old: Old<Name>, report: mut String) -> Option[<Name>]`) calls
+    /// the driver's wrapper (`fn(old: ref Old<Name>, report: mut String) -> Option[<Name>]`) calls
     /// `migrate_from` and gives the new value, or `None` with the `ReloadError` written into the
     /// report. `None` for a type without `migrate_from`.
     fn migrate_adapter(&mut self, name: &str, mangled: &str, w: &mut dyn Writer) -> Option<String> {

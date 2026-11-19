@@ -13,9 +13,9 @@ fn scale(ref mut xs: MutSpan[int], k: int):
     for i in 0..xs.len():
         xs[i] *= k
 
-fn add(rhs: Span[int], ys: Span[int]):
+fn add(xs: Span[int], ys: Span[int]):
     total = 0
-    for x in rhs:
+    for x in xs:
         total += x
     for y in ys:
         total += y

@@ -4,10 +4,10 @@
 ## `[LEX-6]` — inside `(`, `[` and `{` a newline does not end the line and
 ## indentation means nothing.
 
-fn add(rhs: int,
+fn add(a: int,
           b: int,
   c: int) -> int:
-    return rhs + b + c
+    return a + b + c
 
 fn main():
     values = [1,

@@ -19,8 +19,8 @@ class Node:
     id: i64
     children: Array[Node]    #$ warning[L3001]: potential reference cycle
 
-    fn add(rhs: Node):
-        this.children.push(owns rhs)
+    fn add(child: Node):
+        this.children.push(owns child)
 
 # `program` holds the test, so its values die before `main`'s last
 # statement: at the end of `main` a release build leaves what only frees

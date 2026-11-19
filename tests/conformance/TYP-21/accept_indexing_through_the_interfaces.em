@@ -16,11 +16,11 @@ struct Grid:
 extend Grid implements Index[(int, int)], IndexMut[(int, int)]:
     type Output = f32
 
-    fn index(at: (int, int)) -> ref f32:
-        return ref this.cells[at.0 * this.w + at.1]
+    fn index(i: (int, int)) -> ref f32:
+        return ref this.cells[i.0 * this.w + i.1]
 
-    fn index_mut(at: (int, int)) -> ref mut f32:
-        return ref mut this.cells[at.0 * this.w + at.1]
+    fn index_mut(i: (int, int)) -> ref mut f32:
+        return ref mut this.cells[i.0 * this.w + i.1]
 
 struct Log:
     lines: Array[String]

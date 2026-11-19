@@ -21,9 +21,9 @@ class Bag:
     fn total() -> int:
         return this.count + this.items.len()
 
-    fn add(rhs: int):
-        if not this.has(rhs):
-            this.items.push(owns rhs)
+    fn add(x: int):
+        if not this.has(x):
+            this.items.push(owns x)
             this.count += size(this) - this.items.len() + 1
 
 fn size(b: Bag) -> int:

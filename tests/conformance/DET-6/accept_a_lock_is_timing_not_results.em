@@ -9,9 +9,9 @@ from std.sync import Mutex
 static TOTAL: Mutex[int] = Mutex(0)
 
 @deterministic
-fn add(rhs: Span[int]) -> int:
+fn add(xs: Span[int]) -> int:
     with total = TOTAL.lock():
-        for x in rhs:
+        for x in xs:
             total += x
         return total
 

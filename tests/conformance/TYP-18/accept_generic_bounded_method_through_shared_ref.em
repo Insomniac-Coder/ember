@@ -3,8 +3,8 @@
 #$ profiles: debug, development, release
 #$ stdout: 47
 
-# A bound supplies the method, while the caller supplies a shared reference.
-# Method resolution must read through `ref T` before consulting T's bounds.
+# A bound supplies the method, while the function reads a borrowed value (`ref value: T`).
+# Method resolution must read through the borrow before consulting T's bounds.
 interface Scored:
     fn score() -> i32
 
@@ -21,4 +21,4 @@ fn read_score(ref value: T) -> i32:
 
 fn main():
     good = Good(47)
-    println(read_score(ref good))
+    println(read_score(good))

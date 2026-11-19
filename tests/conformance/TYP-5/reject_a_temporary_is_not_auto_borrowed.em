@@ -7,8 +7,6 @@
 struct Counter:
     n: int
 
-fn peek(ref c: Counter) -> int:
-    return c.n
-
 fn main():
-    println(peek(Counter(n=7)))    #$ error[E2020]: expected `ref Counter`, found `Counter`
+    r: ref Counter = Counter(n=7)    #$ error[E2020]: expected `ref Counter`, found `Counter`
+    println(r.n)

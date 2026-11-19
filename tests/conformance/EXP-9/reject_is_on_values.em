@@ -10,7 +10,11 @@ struct Pair:
     a: int
     b: int
 
-fn mixed(ref a: i32, ref b: i64) -> bool:
+fn mixed() -> bool:
+    x: i32 = 1
+    y: i64 = 2
+    a: ref i32 = ref x
+    b: ref i64 = ref y
     return a is b    #$ error[E2020]: `is` compares references to one type, found `ref i32` and `ref i64`
 
 fn main():

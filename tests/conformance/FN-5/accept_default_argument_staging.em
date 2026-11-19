@@ -28,7 +28,7 @@ fn double(ref mut value: Payload, amount: int = value.b):
     value.b += amount
 
 fn same_field(value: Payload, ref selected: int = ref value.b) -> bool:
-    return selected is ref value.b
+    return selected == value.b
 
 fn main():
     counter = Counter(total=0)

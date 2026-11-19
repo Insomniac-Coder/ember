@@ -12,8 +12,8 @@ fn main():
     h(2)
     h(3)
     println(total)
-    fn add(rhs: int):
-        y = rhs * 2
+    fn add(x: int):
+        y = x * 2
         total += y
     g = add
     g(1)

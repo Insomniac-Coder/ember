@@ -10,9 +10,9 @@
 # modes" a proof); `first_of_each` sets `xs` in its loop. Nothing in the emitted C is `restrict`.
 
 @noinline
-fn add(rhs: Span[f64], ref mut out: MutSpan[f64]):
+fn add(xs: Span[f64], ref mut out: MutSpan[f64]):
     for i in 0..xs.len():
-        out[i] = out[i] + rhs[i]
+        out[i] = out[i] + xs[i]
 
 @noinline
 fn first_of_each(a: Array[f64], b: Array[f64]) -> f64:

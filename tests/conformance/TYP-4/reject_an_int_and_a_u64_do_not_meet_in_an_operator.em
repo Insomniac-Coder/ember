@@ -4,8 +4,8 @@
 # may be negative and the `u64` may pass `int`'s top. No value converts implicitly between scalar
 # types in an operator but the one whose every value the other holds.
 
-fn add(rhs: int, b: u64) -> u64:
-    return rhs + b                    #$ error[E2020]: `+` cannot be applied to `i64` and `u64`
+fn add(a: int, b: u64) -> u64:
+    return a + b                    #$ error[E2020]: `+` cannot be applied to `i64` and `u64`
 
 fn main():
     println(add(1, 2))

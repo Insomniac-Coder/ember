@@ -39,10 +39,10 @@ fn from_rows(rows: Array[Array[float]]) -> Matrix:
             m.set(r, c, v)
     return m
 
-fn add(rhs: Matrix, b: Matrix) -> Result[Matrix, String]:
-    if rhs.rows != b.rows or rhs.cols != b.cols:
-        return Err(f"cannot add {rhs.rows}x{rhs.cols} and {b.rows}x{b.cols}")
-    return Ok(Matrix(rows=rhs.rows, cols=rhs.cols, data=[x + y for x, y in zip(rhs.data, b.data)]))
+fn add(a: Matrix, b: Matrix) -> Result[Matrix, String]:
+    if a.rows != b.rows or a.cols != b.cols:
+        return Err(f"cannot add {a.rows}x{a.cols} and {b.rows}x{b.cols}")
+    return Ok(Matrix(rows=a.rows, cols=a.cols, data=[x + y for x, y in zip(a.data, b.data)]))
 
 fn multiply(a: Matrix, b: Matrix) -> Result[Matrix, String]:
     if a.cols != b.rows:
