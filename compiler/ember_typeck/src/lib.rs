@@ -46047,11 +46047,14 @@ impl<'a> Checker<'a> {
     }
 
     fn standard_associated_capability(
-        &self,
+        &mut self,
         ty: Ty,
         interface: &str,
         member: &str,
     ) -> Option<DefId> {
+        // A built-in generic (`Option[int]`) takes its `extend[T] ... implements` only when
+        // asked for: ask now, as `implements` does (`builtin_extension_implements`).
+        self.extend_instance_at_use(ty);
         let interface = Symbol::intern(interface);
         self.implemented
             .iter()
