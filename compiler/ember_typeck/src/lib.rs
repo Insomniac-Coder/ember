@@ -38873,7 +38873,7 @@ impl<'a> Checker<'a> {
             && let Some(target) = self.box_inner(expected)
             && found.ty != expected
             && found.ty != self.common.error
-            && self.fits_block(found.ty, target)
+            && (self.fits_block(found.ty, target) || self.literal_fits(&found, target))
         {
             self.missing_owns_block(expr, target);
             let dyn_target = matches!(self.types.kind(target), TyKind::Dyn { .. });

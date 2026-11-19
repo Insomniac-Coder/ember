@@ -16,11 +16,30 @@ not credited, with the clause that is missing and the milestone that builds it.
 | CLS-9a | a view field `from` a `let` field is read in `drop`: view fields with `from` are not parsed yet | M5 |
 | CLS-12 | `@cached` | M11 |
 
+## Objects and dispatch
+
+| Rule | What is missing | Milestone |
+|---|---|---|
+| OBJ-1 | the 8 and 12-byte headers, and the 32-byte `thread_shared` header | M6b |
+| OBJ-2 | `s: Shape`, a bare interface name as a parameter's type, is accepted; it is `E2173` | M11 |
+| OBJ-4, OPT-1 | `using`; a `thread_shared` value's block from the runtime's chunks | M10, M6b |
+| OBJ-5 | a method `drop` calls that makes an owner of `this` is not refused (`E3016`): it stops the program instead; needs the call summaries | M6a |
+| DSP-2, DSP-3 | the fact `[LT-22]` records, kept beside each table entry | M6a |
+| DSP-4 | kind tests: `if s is Circle as c:` is `E0900`, `E2036`, `E2037` and `E2106` follow it | M11 |
+| DSP-5 | what a virtual call may change, worked out from every override (the change half of `[CLS-7]`) | M6a |
+| DSP-6 | the stop's text (`` `cast s as Circle` on line 9: ... ``), a cast as a place, `E3027` | M11 |
+
 ## Ownership
 
 | Rule | What is missing | Milestone |
 |---|---|---|
-| OWN-6 | `mem.take` on an `Option` is `E2040` (W8's first task) | W8 |
+| OWN-6, DRP-5 | `mem.take` on an `Option` is `E2040` (W8's first task) | W8 |
+| DRP-1 | a view field `from` a `let` field is read in `drop` | M5 |
+| DRP-6 | a `sharedref mut` link | M5 |
+| DRP-8 | ending a value counts as a call of its `drop`, for every rule that needs it | M6a |
+| HEAP-1 | `using` | M10 |
+| HEAP-9 | `copy of` an `owns dyn I` whose interface needs `Clone` is `E2116` | M11 |
+| HEAP-10 | a `thread_shared` value's two counts | M6b |
 | OWN-7, OWN-8 | `sharedref mut` links, and `E2116` for a value whose views point into its own `let` field | M5 |
 | OWN-11 | a name opened with `exists as` over a call's result is a view: `done.push(owns job)` in `while jobs.pop() exists as job:` should be `E3013` with the help `match owns jobs.pop():`, and is accepted | M5 |
 
@@ -30,5 +49,13 @@ not credited, with the clause that is missing and the milestone that builds it.
 |---|---|---|
 | RC-2 | its item (b): opening a `weakref` still counts (`RC-2b`) | M5 |
 | RC-7 | `sharedref mut`, and the access words | M5, M6b |
+| RC-1 | `thread_shared this` as the word that pins every object of a class (`[OWN-13]`) | M9 |
+| RC-3 | `with h:` as the statement that keeps `h` alive: today it hands `h` over (`E3040` at the next use) | see below |
+| RC-5 | the checks that no line or call in a view's life may end an object of that family | M5, M6a |
 | WK-1 | `E3032` | M7 |
+| WK-5, WK-6, WK-7 | the graph of owners as `E3032` reads it, the refusal and its proofs | M7 |
+| WK-11 | a scoped task touches a link only through `weakref thread_shared T` (Part XI) | M9 |
+| WK-12 | opening a `weakref thread_shared T` with the home and away counts | M6b |
+| WK-15 | "nothing leaks through a loop of owners" rests on `E3032` | M7 |
+| WK-16 | `weakref` of a `shares dyn I` (`shares dyn` is not built) and of a `some I` | M11 |
 | WK-3 | a link opened in `drop` already finds the object ended; what is missing is a `thread_shared` value ended at its making thread's next check point (`[RC-4]` points 4 and 5), which needs biased counting | M6b |
