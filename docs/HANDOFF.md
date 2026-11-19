@@ -1,15 +1,17 @@
 # Ember — handoff
 
-> **2026-11-19 — working, autonomous, one helper beside the lead (the owner: "resume the work autonomously and at most
-> you can use one more agent to help you out").** START HERE. The block below it, "PAUSED", is history.
+> **2026-11-19 (afternoon) — working, autonomous, one helper beside the lead (the owner: "resume the work autonomously
+> and at most you can use one more agent to help you out").** START HERE. The blocks below are history.
 >
-> - **origin/main = `1ca19633`;** local `main` has W6 merged on top (overall 19%, phase 1 33). W7 (lane c, Sonnet, 28 tasks) is
->   running on `lane-c`, brief in `R7-batch.md`.
-> - **M4 slice E is on branch `m4-slice-c-probe` (worktree `lead`):** `@sync` and `SyncShared` are gone, `thread_shared`
->   and `weakref thread_shared` are built (E7014, E7015, E7017), owners act as their value (`[TYP-36]`). `M4-plan.md` says
->   what is left. Next: the suite, the gate, the bench, merge to `main`.
-> - **The heat rule:** `tools/heat_guard.ps1` runs with all work. **The testing rule:** `docs/AUTOPILOT.md` §3, "Test what a
->   change can affect, once".
+> - **Pushed: origin/main = `cbd9a017`** (gate three ways green, bench 25 of 25 on both backends). Overall 21% (phase 1
+>   34, 2 17, 3 6). M4 is merged; the credit pass (`tasks/96/redesign/compiler-0.9.15/credit-pass.md`) credited what
+>   is built and lists every rule looked at and not credited, with the clause it lacks and its milestone.
+> - **W8 collected** (review.md): its FN-9 is reverted until M6a (std.ecs gives `ref mut this` to calls, sound only
+>   with `[BRW-21]`'s E3031 from summaries). **W9** (Sonnet, lane c job 7, section in `R7-batch.md`) is running.
+> - **M5 started:** A2-2 (a returned view outliving its source is E3063) is in. Next: A2-3, the view model in one
+>   body (round 7's H4 built part of it: `lanes/a.md`; the M5-ahead pilot: `tasks/96/redesign/jobs/ahead/M5/`).
+> - **The heat rule:** `tools/heat_guard.ps1` runs with all work. **The testing rule:** `docs/AUTOPILOT.md` §3, "Test
+>   what a change can affect, once". One full test run at a time: the gate runs alone.
 >
 > **2026-11-13 afternoon — PAUSED by the owner after round 7's merges ("yes merge everything and then pause, even
 > the workers that are running don't pause them abruptly", "let them finish their job").** START HERE. Resume only
