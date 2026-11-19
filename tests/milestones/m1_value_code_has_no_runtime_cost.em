@@ -5,8 +5,8 @@ struct Vec3:
     y: f32
     z: f32
 
-fn add(a: Vec3, b: Vec3) -> Vec3:
-    return Vec3(a.x + b.x, a.y + b.y, a.z + b.z)
+fn add(rhs: Vec3, b: Vec3) -> Vec3:
+    return Vec3(rhs.x + b.x, rhs.y + b.y, rhs.z + b.z)
 
 fn main():
     c = add(Vec3(1, 2, 3), Vec3(4, 5, 6))

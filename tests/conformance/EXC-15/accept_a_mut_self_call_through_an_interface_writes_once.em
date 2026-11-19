@@ -8,7 +8,7 @@
 # none: a class with a non-`Copy` field is not locked twice (which would panic).
 
 interface Log:
-    fn add(x: int)
+    fn add(rhs: int)
 
 class Record implements Log:
     items: Array[int]
@@ -16,8 +16,8 @@ class Record implements Log:
     fn init():
         this.items = []
 
-    fn add(x: int):
-        this.items.push(owns x)
+    fn add(rhs: int):
+        this.items.push(owns rhs)
 
 class Holder:
     log: Log

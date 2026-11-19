@@ -4,6 +4,6 @@ error[E1010]: cannot find field `valeu` on `Derived`
 8 |     return item.valeu
   |                 ^^^^^
   |
-  = help: did you mean `value`?
+  = help: the nearest name is `value`
 
 error: could not compile due to 1 error(s)

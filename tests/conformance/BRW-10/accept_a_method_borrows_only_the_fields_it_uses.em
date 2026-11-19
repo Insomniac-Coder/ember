@@ -13,8 +13,8 @@ struct Words:
     fn bump():
         this.add(1)
 
-    fn add(n: int):
-        this.count += n
+    fn add(rhs: int):
+        this.count += rhs
 
 fn main():
     w = Words(["a", "bb", "ccc"])

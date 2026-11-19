@@ -169,7 +169,7 @@ fn report(body: &Body, read: &HashSet<LocalId>, sink: &mut Sink, reported: &mut 
                 decl.span,
                 format!("`{name}` declares a new binding; `{near}` is already in scope"),
             )
-            .primary_label(format!("did you mean to assign to `{near}`?"))
+            .primary_label(format!("the nearest name is `{near}`, which is in scope"))
             .help(format!("write `{near} = …`"))
             .note(
                 "`x = e` declares when `x` is not in scope and assigns when it is (GRM-4)",

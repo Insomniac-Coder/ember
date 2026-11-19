@@ -4976,12 +4976,61 @@ impl<'a> Checker<'a> {
             );
             return self.common.error;
         }
+        // `[IFC-5]` — a bare `dyn I` in a field, a result or a payload does not say who owns it: `E2173`.
+        if matches!(self.types.kind(ty), TyKind::Dyn { .. })
+            && matches!(context, "a field" | "a return type" | "an enum payload")
+            && let Some(message) = self.bare_dyn_message(ty, span, context)
+        {
+            self.error(codes::E2173, span, message);
+            return self.common.error;
+        }
         self.error(
             codes::E2020,
             span,
             format!("an unsized interface value cannot be used by value in {context}"),
         );
         self.common.error
+    }
+
+    /// `[IFC-5]` — the message of a bare `dyn I` where it does not say who owns it, from the source around the
+    /// type: the field (`main: dyn Shape` of `Scene`) or the function (`make`), with the two lines to write.
+    fn bare_dyn_message(&self, ty: Ty, span: Span, context: &str) -> Option<String> {
+        let text = &self.sources.get(&span.file)?.text;
+        let at = span.start as usize;
+        let line_start = text.get(..at)?.rfind('\n').map_or(0, |i| i + 1);
+        let before = text.get(line_start..at)?;
+        let shown = self.types.display(ty);
+        let owning = shown.replacen("dyn ", "owns dyn ", 1);
+        let viewing = shown.replacen("dyn ", "ref dyn ", 1);
+        let noun = shown.strip_prefix("dyn ")?.rsplit('.').next()?.to_lowercase();
+        if context == "a return type" {
+            let line = &text[line_start..];
+            let name = line.split_once("fn ")?.1.chars().take_while(|c| c.is_alphanumeric() || *c == '_').collect::<String>();
+            return Some(format!(
+                "`{name}` returns `{shown}`, which does not say whether the caller gets the {noun} or a view of one; write `-> {owning}` to hand it over, or `-> {viewing} from` the parameter it points into for a view"
+            ));
+        }
+        let field = if context == "an enum payload" {
+            let line = text[line_start..].trim_start();
+            line.chars().take_while(|c| c.is_alphanumeric() || *c == '_').collect::<String>()
+        } else {
+            before.trim().strip_suffix(':')?.trim().to_string()
+        };
+        let indent = text[line_start..].len() - text[line_start..].trim_start().len();
+        let owner = text[..line_start].lines().rev().find_map(|line| {
+            let trimmed = line.trim_start();
+            let outer = line.len() - trimmed.len() < indent;
+            let rest = ["pub struct ", "pub class ", "pub enum ", "struct ", "class ", "enum "].iter().find_map(|word| trimmed.strip_prefix(word));
+            rest.filter(|_| outer).map(|rest| rest.chars().take_while(|c| c.is_alphanumeric() || *c == '_').collect::<String>())
+        })?;
+        if context == "an enum payload" {
+            return Some(format!(
+                "`{owner}.{field}` holds a bare `{shown}`, which does not say whether it owns or views its {noun}; write `{owning}` to own it, or `{viewing}` for a view"
+            ));
+        }
+        Some(format!(
+            "`{field}: {shown}` does not say whether `{owner}` owns or views its {noun}; write `{field}: {owning}` to own it, or `{field}: {viewing}` for a view"
+        ))
     }
 
     /// `[FFI-8]` — the struct a flexible array member ends that `ty` holds by value, if any.
@@ -6220,7 +6269,7 @@ impl<'a> Checker<'a> {
                         decl.span,
                         format!("`extern class {path}` is not supported yet in this phase"),
                     )
-                    .help("declare an opaque `type` in an `extern` block if you only need a handle")
+                    .help("for a handle alone, declare an opaque `type` in an `extern` block")
                     .note(concat!(
                         "a declared foreign base needs the C++ importer and a trampoline, ",
                         "which are Phase 7 [FFI-39]"
@@ -6651,7 +6700,7 @@ impl<'a> Checker<'a> {
                 format!("`{name}` is bound by two glob imports, from `{}` and `{}`", sources[0], sources[1]),
             )
             .primary_label("which one is meant cannot be told")
-            .help(format!("import the one you mean by name, `from {} import {name}`", sources[0])),
+            .help(format!("import one of them by name, `from {} import {name}`", sources[0])),
         );
         true
     }
@@ -12538,13 +12587,10 @@ impl<'a> Checker<'a> {
                 && !self.default_copies.contains(&implementation)
                 && !self.implementation_signature_matches(ty, declaration, receiver, implementation, actual_receiver)
             {
-                self.error(
-                    codes::E2040,
-                    span,
-                    format!(
-                        "`{shown}.{method}` does not match the signature required by `{named}`"
-                    ),
-                );
+                let message = self
+                    .signature_difference(ty, &named, method, declaration, receiver, implementation, actual_receiver)
+                    .unwrap_or_else(|| format!("`{shown}.{method}` does not match the signature required by `{named}`"));
+                self.error(codes::E2040, span, message);
             }
             // D-781 — `[UNS-1]`: an `unsafe` implementation of a method the interface declares
             // safe would be called through the interface (an operator, a bound, `dyn`) with no
@@ -12720,6 +12766,120 @@ impl<'a> Checker<'a> {
         receiver == Some(wanted) || (receiver.is_some() && self.signatures[declaration.0 as usize].implicit_object)
     }
 
+    /// The first line of an interface's method as it is written (`fn scale(k: f64) -> f64:`), unless the interface or
+    /// the method has parameters, or the line names `Self`, whose reading depends on the implementation.
+    fn interface_first_line(&self, declaration: DefId, prefix_len: usize) -> Option<String> {
+        let signature = &self.signatures[declaration.0 as usize];
+        if prefix_len != 0 || !signature.generics.is_empty() || signature.decl == Span::DUMMY {
+            return None;
+        }
+        let text = &self.sources.get(&signature.decl.file)?.text;
+        let at = signature.decl.start as usize;
+        let start = text.get(..at)?.rfind('\n').map_or(0, |i| i + 1);
+        let end = at + text.get(at..)?.find('\n').unwrap_or(text.len() - at);
+        let line = text.get(start..end)?;
+        let line = line.find("static fn ").or_else(|| line.find("fn ")).map(|i| &line[i..])?;
+        let line = line.split('#').next()?.trim_end().trim_end_matches('\r').trim_end_matches(':').trim_end();
+        (!line.contains("Self") && !line.contains("this") || line.ends_with("owns this")).then(|| format!("{line}:"))
+    }
+
+    /// `[IFC-3]` — how an implementation's method differs from the interface's first line, the first difference
+    /// named with both sides and the line that compiles ("`Sq.scale` takes `k: i64`, and `Scaler.scale` takes
+    /// `k: f64`; write `fn scale(k: f64) -> f64:`"). `None` for a method with generics, which the old message covers.
+    fn signature_difference(
+        &mut self,
+        owner: Ty,
+        interface: &str,
+        method: Symbol,
+        declaration: DefId,
+        required_receiver: Option<Mode>,
+        implementation: DefId,
+        actual_receiver: Option<Mode>,
+    ) -> Option<String> {
+        let required = self.signatures[declaration.0 as usize].clone();
+        let actual = self.signatures[implementation.0 as usize].clone();
+        let prefix_len = self.generic_prefix.get(&declaration).map_or(0, Vec::len);
+        let actual_prefix_len = self.generic_prefix.get(&implementation).map_or(0, Vec::len);
+        if required.generics.len() != prefix_len || actual.generics.len() != actual_prefix_len {
+            return None;
+        }
+        let canonical = self.generic_prefix.get(&declaration).cloned().unwrap_or_default();
+        let actual_canonical = self.generic_prefix.get(&implementation).cloned().unwrap_or_default();
+        let shown_owner = self.types.display(owner);
+        let words = |mode: Mode| match mode {
+            Mode::Mut => "ref mut ",
+            Mode::Owned => "owns ",
+            _ => "",
+        };
+        // A parameter as its declaration writes it (`ref mut x: int`), where that names no `Self`.
+        let spelled = |this: &Self, span: Span| this.written_line(span).filter(|text| !text.contains("Self") && text.contains(':'));
+        let mut wanted = Vec::new();
+        let mut wanted_text = Vec::new();
+        for &(name, ty, mode, span) in &required.params {
+            let ty = self.substitute_ty(ty, &canonical);
+            let ty = self.substitute_self(ty, owner);
+            let ty = self.resolve_assoc(ty, owner);
+            wanted.push((name, ty, mode));
+            wanted_text.push(spelled(self, span));
+        }
+        let wanted_ret = {
+            let ty = self.substitute_ty(required.ret, &canonical);
+            let ty = self.substitute_self(ty, owner);
+            self.resolve_assoc(ty, owner)
+        };
+        let mut written: Vec<(Symbol, Ty, Mode)> = Vec::new();
+        let mut written_text = Vec::new();
+        for &(name, ty, mode, span) in actual.params.iter().skip(usize::from(actual_receiver.is_some())) {
+            written.push((name, self.substitute_ty(ty, &actual_canonical), mode));
+            written_text.push(spelled(self, span));
+        }
+        let written_ret = self.substitute_ty(actual.ret, &actual_canonical);
+        let void = self.common.void;
+        // The interface's own first line, as it is written, when it names nothing the implementation fills in;
+        // else the line built from its signature, unless a parameter of the interface is still open in it.
+        let open = interface.contains('[') || wanted.iter().any(|&(_, ty, _)| self.types.is_generic(ty)) || self.types.is_generic(wanted_ret);
+        let line = (!open).then(|| self.interface_first_line(declaration, prefix_len)).flatten().or_else(|| {
+            (!open).then(|| {
+                let params: Vec<String> = wanted.iter().map(|&(name, ty, mode)| format!("{}{name}: {}", words(mode), self.types.display(ty))).collect();
+                let object = if required_receiver == Some(Mode::Owned) { " owns this" } else { "" };
+                let result = if wanted_ret == void { String::new() } else { format!(" -> {}", self.types.display(wanted_ret)) };
+                format!("{}fn {method}({}){object}{result}:", if required_receiver.is_none() { "static " } else { "" }, params.join(", "))
+            })
+        });
+        let (here, there) = (format!("{shown_owner}.{method}"), format!("{interface}.{method}"));
+        let difference = if required_receiver != actual_receiver && !(required.implicit_object || actual.implicit_object) {
+            let this = |mode: Option<Mode>| match mode {
+                Some(Mode::Owned) => "`owns this`",
+                Some(Mode::Mut) => "`ref mut this`",
+                Some(_) => "`this` as a reading object",
+                None => "no object",
+            };
+            format!("`{here}` takes {}, and `{there}` takes {}", this(actual_receiver), this(required_receiver))
+        } else if wanted.len() != written.len() {
+            format!("`{here}` takes {} parameter{}, and `{there}` takes {}", written.len(), if written.len() == 1 { "" } else { "s" }, wanted.len())
+        } else if let Some(at) = (0..wanted.len()).find(|&i| {
+            let (e, a) = (wanted[i], written[i]);
+            e.0 != a.0 || e.2 != a.2 || !self.same_across_blocks(owner, e.1, a.1)
+        }) {
+            let (expected, actual) = (wanted[at], written[at]);
+            if expected.0 != actual.0 && expected.2 == actual.2 && self.same_across_blocks(owner, expected.1, actual.1) {
+                format!("`{here}` names its parameter `{}`, and `{there}` names it `{}`", actual.0, expected.0)
+            } else {
+                let mine = written_text[at].clone().unwrap_or_else(|| format!("{}{}: {}", words(actual.2), actual.0, self.types.display(actual.1)));
+                let theirs = wanted_text[at].clone().unwrap_or_else(|| format!("{}{}: {}", words(expected.2), expected.0, self.types.display(expected.1)));
+                format!("`{here}` takes `{mine}`, and `{there}` takes `{theirs}`")
+            }
+        } else if !self.same_across_blocks(owner, wanted_ret, written_ret) {
+            format!("`{here}` returns `{}`, and `{there}` returns `{}`", self.types.display(written_ret), self.types.display(wanted_ret))
+        } else {
+            return None;
+        };
+        Some(match line {
+            Some(line) => format!("{difference}; write `{line}`"),
+            None => difference,
+        })
+    }
+
     fn implementation_signature_matches(
         &mut self,
         owner: Ty,
@@ -12831,6 +12991,16 @@ impl<'a> Checker<'a> {
             actual_params.as_slice()
         };
         if expected_params.len() != actual_written.len() {
+            return false;
+        }
+        // `[IFC-3]` — the same parameter names.
+        let written_from = usize::from(required_receiver.is_some());
+        let names_agree = self.signatures[declaration.0 as usize]
+            .params
+            .iter()
+            .zip(self.signatures[implementation.0 as usize].params.iter().skip(written_from))
+            .all(|(expected, actual)| expected.0 == actual.0);
+        if !names_agree {
             return false;
         }
 
@@ -27343,20 +27513,18 @@ impl<'a> Checker<'a> {
 
     fn add_qualified_name_suggestions(
         &self,
-        mut diagnostic: Diagnostic,
+        diagnostic: Diagnostic,
         namespace: usize,
         written: Symbol,
         source_prefix: &str,
         use_span: Span,
     ) -> Diagnostic {
-        for candidate in self.qualified_name_suggestions(namespace, written, use_span) {
-            diagnostic = diagnostic.suggest(
-                format!("did you mean `{source_prefix}.{candidate}`?"),
-                use_span,
-                candidate,
-            );
-        }
-        diagnostic
+        let names: Vec<(String, String)> = self
+            .qualified_name_suggestions(namespace, written, use_span)
+            .into_iter()
+            .map(|candidate| (format!("{source_prefix}.{candidate}"), candidate))
+            .collect();
+        name_suggestions::nearest_help(diagnostic, &names, use_span)
     }
 
     fn add_name_suggestions(
@@ -27365,10 +27533,8 @@ impl<'a> Checker<'a> {
         written: Symbol,
         use_span: Span,
     ) -> Diagnostic {
-        for candidate in self.name_suggestions(written, use_span, false) {
-            diagnostic =
-                diagnostic.suggest(format!("did you mean `{candidate}`?"), use_span, candidate);
-        }
+        let names: Vec<(String, String)> = self.name_suggestions(written, use_span, false).into_iter().map(|name| (name.clone(), name)).collect();
+        diagnostic = name_suggestions::nearest_help(diagnostic, &names, use_span);
         self.add_import_suggestions(diagnostic, written, false)
     }
 
@@ -27494,16 +27660,13 @@ impl<'a> Checker<'a> {
 
     fn missing_field_diagnostic(&self, ty: Ty, name: Symbol, span: Span) -> Diagnostic {
         let shown_type = self.types.display(ty);
-        let mut diagnostic = Diagnostic::error(
+        let diagnostic = Diagnostic::error(
             codes::E1010,
             span,
             format!("cannot find field `{name}` on `{shown_type}`"),
         );
-        for candidate in self.field_name_suggestions(ty, name, span) {
-            diagnostic =
-                diagnostic.suggest(format!("did you mean `{candidate}`?"), span, candidate);
-        }
-        diagnostic
+        let names: Vec<(String, String)> = self.field_name_suggestions(ty, name, span).into_iter().map(|name| (name.clone(), name)).collect();
+        name_suggestions::nearest_help(diagnostic, &names, span)
     }
 
     /// `[CLO-2]` — whether a name a closure body could not find is one the
@@ -39267,13 +39430,8 @@ impl<'a> Checker<'a> {
                         .help(format!("`{name}` is a local of the script's implicit `main`, which no function reads: take it as a parameter, make it a `const` if it never changes, a `static`, or a `static mut` for a module variable that functions change"))
                         .note("the statements at file scope form the body of an implicit `fn main()`, so the names they bind are its locals, not module variables [FN-8], [STA-1]");
                 }
-                for candidate in self.name_suggestions(name, segments[0].span, true) {
-                    diagnostic = diagnostic.suggest(
-                        format!("did you mean `{candidate}`?"),
-                        segments[0].span,
-                        candidate,
-                    );
-                }
+                let names: Vec<(String, String)> = self.name_suggestions(name, segments[0].span, true).into_iter().map(|name| (name.clone(), name)).collect();
+                diagnostic = name_suggestions::nearest_help(diagnostic, &names, segments[0].span);
                 let diagnostic = self.add_import_suggestions(diagnostic, name, true);
                 self.sink.emit(diagnostic);
                 Expr { ty: self.common.error, kind: ExprKind::Error, span }
@@ -41354,13 +41512,8 @@ impl<'a> Checker<'a> {
                 format!("cannot find `{name}` in this scope"),
             );
             if segments.len() == 1 {
-                for candidate in self.name_suggestions(name, name_span, true) {
-                    diagnostic = diagnostic.suggest(
-                        format!("did you mean `{candidate}`?"),
-                        name_span,
-                        candidate,
-                    );
-                }
+                let names: Vec<(String, String)> = self.name_suggestions(name, name_span, true).into_iter().map(|name| (name.clone(), name)).collect();
+                diagnostic = name_suggestions::nearest_help(diagnostic, &names, name_span);
                 diagnostic = self.add_import_suggestions(diagnostic, name, true);
             } else {
                 let namespace = namespace.expect("a qualified call has a namespace prefix");
@@ -45704,7 +45857,7 @@ impl<'a> Checker<'a> {
                         self.sink.emit(
                             Diagnostic::error(codes::E2060, attr.span,
                                 format!("`{}` is generic, so its type parameters cannot be inferred for one C symbol", decl.name.name))
-                                .help("export a function that is not generic and calls the instance you mean"),
+                                .help("export a function that is not generic and calls the instance needed"),
                         );
                     }
                 }
@@ -59007,7 +59160,7 @@ impl<'a> Checker<'a> {
                         ),
                     )
                     .primary_label("arena array elements are never dropped individually")
-                    .help("use `alloc_uninit` only when you will explicitly manage every initialized value")
+                    .help("use `alloc_uninit` only where every initialized value is managed explicitly")
                     .note(format!("`{method}` always requires `!needs_drop(T)` [ARN-2, ARN-3]")),
                 );
                 return Expr { ty: self.common.error, kind: ExprKind::Error, span };

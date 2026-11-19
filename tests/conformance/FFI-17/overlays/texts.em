@@ -10,7 +10,7 @@ unsafe overlay cpp "texts.hpp":  # SAFETY(ffi): each entry matches its declarati
     fn tally_of(values: borrowed count(count), count)
     class Tally:
         fn new()
-        fn add(values: borrowed count(count), count)
+        fn add(rhs: borrowed count(count), count)
         @ffi(const)
         fn fill(out: count(count) borrowed, count)
         @ffi(const)

@@ -1,8 +1,8 @@
 class Bag:
     items: Array[int]
 
-    fn add(x: int):
-        this.items.push(owns x)
+    fn add(rhs: int):
+        this.items.push(owns rhs)
 
 @no_alias_checks
 fn fill(ref mut b: Bag):

@@ -59,25 +59,29 @@ pub(super) fn rank(
         .collect()
 }
 
+/// `[DIA-24]` — same file before other files, then by qualified name.
 fn compare_tie_breaks(use_span: Span, left: &Candidate, right: &Candidate) -> Ordering {
     let left_same_file = left.declaration.file == use_span.file;
     let right_same_file = right.declaration.file == use_span.file;
     left_same_file
         .cmp(&right_same_file)
         .reverse()
-        .then_with(|| {
-            if left_same_file {
-                left.declaration
-                    .start
-                    .abs_diff(use_span.start)
-                    .cmp(&right.declaration.start.abs_diff(use_span.start))
-            } else {
-                left.canonical_name
-                    .as_bytes()
-                    .cmp(right.canonical_name.as_bytes())
-            }
-        })
+        .then_with(|| left.canonical_name.as_bytes().cmp(right.canonical_name.as_bytes()))
         .then_with(|| left.name.as_bytes().cmp(right.name.as_bytes()))
+}
+
+/// `[DIA-24]`, `[DIA-2]` — the help of a name that was not found: the nearest names as a fact of the program ("the
+/// nearest name is `count`"; "the nearest names are `count`, `counter` and `cout`"), with the fix-it for the first.
+/// `names` are as they are to be written; `write` is the text a name is replaced by.
+pub(super) fn nearest_help(diagnostic: ember_diag::Diagnostic, names: &[(String, String)], span: Span) -> ember_diag::Diagnostic {
+    let Some((_, first)) = names.first() else { return diagnostic };
+    let shown: Vec<String> = names.iter().map(|(shown, _)| format!("`{shown}`")).collect();
+    let message = match shown.as_slice() {
+        [one] => format!("the nearest name is {one}"),
+        [init @ .., last] => format!("the nearest names are {} and {last}", init.join(", ")),
+        [] => return diagnostic,
+    };
+    diagnostic.suggest(message, span, first.clone())
 }
 
 /// `[MOD-3]` — the (at most) three `candidates` nearest `written`, nearest first, with no distance
@@ -165,7 +169,7 @@ mod tests {
     }
 
     #[test]
-    fn suggestions_rank_by_distance_then_proximity_and_cap_at_three() {
+    fn suggestions_rank_by_distance_then_qualified_name_and_cap_at_three() {
         let suggestions = rank(
             "pritn",
             Span::new(FileId(0), 100, 105),
@@ -177,7 +181,7 @@ mod tests {
             ],
         );
 
-        assert_eq!(suggestions, ["prtin", "print", "prain"]);
+        assert_eq!(suggestions, ["print", "prtin", "prain"]);
     }
 
     #[test]
@@ -209,7 +213,7 @@ mod tests {
     }
 
     #[test]
-    fn equal_distance_same_file_candidates_keep_proximity_then_spelling_order() {
+    fn equal_distance_same_file_candidates_keep_qualified_name_then_spelling_order() {
         let suggestions = rank(
             "pritn",
             Span::new(FileId(0), 100, 105),

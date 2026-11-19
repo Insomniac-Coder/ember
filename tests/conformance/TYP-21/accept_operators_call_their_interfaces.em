@@ -41,24 +41,24 @@ extend Vec2 implements Add, AddAssign, Sub, Neg, Mul[f64]:
     fn neg() -> Vec2:
         return Vec2(x=-this.x, y=-this.y)
 
-    fn mul(k: f64) -> Vec2:
-        return Vec2(x=this.x * k, y=this.y * k)
+    fn mul(rhs: f64) -> Vec2:
+        return Vec2(x=this.x * rhs, y=this.y * rhs)
 
 extend Mat2 implements Mul[Vec2]:
     type Output = Vec2
 
-    fn mul(v: Vec2) -> Vec2:
-        return Vec2(x=this.a * v.x + this.b * v.y, y=this.c * v.x + this.d * v.y)
+    fn mul(rhs: Vec2) -> Vec2:
+        return Vec2(x=this.a * rhs.x + this.b * rhs.y, y=this.c * rhs.x + this.d * rhs.y)
 
 extend Mat2 implements Mul[Mat2]:
     type Output = Mat2
 
-    fn mul(n: Mat2) -> Mat2:
+    fn mul(rhs: Mat2) -> Mat2:
         return Mat2(
-            a=this.a * n.a + this.b * n.c,
-            b=this.a * n.b + this.b * n.d,
-            c=this.c * n.a + this.d * n.c,
-            d=this.c * n.b + this.d * n.d,
+            a=this.a * rhs.a + this.b * rhs.c,
+            b=this.a * rhs.b + this.b * rhs.d,
+            c=this.c * rhs.a + this.d * rhs.c,
+            d=this.c * rhs.b + this.d * rhs.d,
         )
 
 # The bit operators, `~`, `<<` and `**` on a program's type.
@@ -81,11 +81,11 @@ extend Flags implements BitAnd, BitOr, BitXor, Not, Shl[int], Pow[int]:
     fn not() -> Flags:
         return Flags(bits=~this.bits)
 
-    fn shl(n: int) -> Flags:
-        return Flags(bits=this.bits << n)
+    fn shl(rhs: int) -> Flags:
+        return Flags(bits=this.bits << rhs)
 
-    fn pow(n: int) -> Flags:
-        return Flags(bits=this.bits ** n)
+    fn pow(rhs: int) -> Flags:
+        return Flags(bits=this.bits ** rhs)
 
 fn main():
     v = Vec2(x=1.0, y=2.0)

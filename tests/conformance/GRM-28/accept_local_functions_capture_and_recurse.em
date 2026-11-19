@@ -14,8 +14,8 @@ fn apply(f: fn(int) -> int, x: int) -> int:
 
 fn main():
     base = 10
-    fn add(x: int) -> int:
-        return x + base
+    fn add(rhs: int) -> int:
+        return rhs + base
     fn fact(n: int) -> int:
         if n <= 1:
             return 1

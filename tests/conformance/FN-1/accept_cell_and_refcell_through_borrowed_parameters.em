@@ -15,8 +15,8 @@ fn advance(s: Sprite):
 struct Scene:
     entities: RefCell[Array[int]]
 
-fn add(s: Scene, e: int):
-    with list = s.entities.borrow_mut():
+fn add(rhs: Scene, e: int):
+    with list = rhs.entities.borrow_mut():
         list.push(owns e)
 
 fn main():

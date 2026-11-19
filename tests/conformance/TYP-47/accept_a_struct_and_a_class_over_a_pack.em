@@ -31,8 +31,8 @@ class Bag:
 fn call(f: fn(Cs...) -> int, values: Cs...) -> int:
     return f(values...)
 
-fn add(a: int, b: int) -> int:
-    return a + b
+fn add(rhs: int, b: int) -> int:
+    return rhs + b
 
 [Cs...]
 fn tagged(id: int) -> Bag[Cs...]:

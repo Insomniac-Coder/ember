@@ -32,8 +32,8 @@ fn main():
     values: Array[c_int] = [1, 2, 3, 4]
     total = 0
     seen = 0
-    fn add(value: c_int):
-        total += value
+    fn add(rhs: c_int):
+        total += rhs
         seen += 1
     visit_each(values.as_span(), add)
     println(total, seen)

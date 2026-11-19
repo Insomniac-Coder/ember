@@ -18,8 +18,8 @@ struct Meter:
     total: int
 
 extend Meter:
-    fn add(amount: int = 1, times: int = 1):
-        this.total += amount * times
+    fn add(rhs: int = 1, times: int = 1):
+        this.total += rhs * times
 
     static fn make(start: int = LIMIT) -> Meter:
         return Meter(total=start)

@@ -3,4 +3,4 @@
 unsafe overlay cpp "texts.hpp":  # SAFETY(ffi): each entry matches its declaration in the header
     class Tally:
         fn new()
-        fn add(values: borrowed count(total), count)
+        fn add(rhs: borrowed count(total), count)

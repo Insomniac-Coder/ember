@@ -330,17 +330,17 @@ pub struct Vec2:
 extend Vec2 implements Add, Sub, Mul, Div, Neg:
     type Output = Vec2
 
-    fn add(o: Vec2) -> Vec2:
-        return Vec2(this.x + o.x, this.y + o.y)
+    fn add(rhs: Vec2) -> Vec2:
+        return Vec2(this.x + rhs.x, this.y + rhs.y)
 
-    fn sub(o: Vec2) -> Vec2:
-        return Vec2(this.x - o.x, this.y - o.y)
+    fn sub(rhs: Vec2) -> Vec2:
+        return Vec2(this.x - rhs.x, this.y - rhs.y)
 
-    fn mul(o: Vec2) -> Vec2:
-        return Vec2(this.x * o.x, this.y * o.y)
+    fn mul(rhs: Vec2) -> Vec2:
+        return Vec2(this.x * rhs.x, this.y * rhs.y)
 
-    fn div(o: Vec2) -> Vec2:
-        return Vec2(this.x / o.x, this.y / o.y)
+    fn div(rhs: Vec2) -> Vec2:
+        return Vec2(this.x / rhs.x, this.y / rhs.y)
 
     fn neg() -> Vec2:
         return Vec2(-this.x, -this.y)
@@ -348,32 +348,32 @@ extend Vec2 implements Add, Sub, Mul, Div, Neg:
 extend Vec2 implements Add[f32], Sub[f32], Mul[f32], Div[f32]:
     type Output = Vec2
 
-    fn add(s: f32) -> Vec2:
-        return Vec2(this.x + s, this.y + s)
+    fn add(rhs: f32) -> Vec2:
+        return Vec2(this.x + rhs, this.y + rhs)
 
-    fn sub(s: f32) -> Vec2:
-        return Vec2(this.x - s, this.y - s)
+    fn sub(rhs: f32) -> Vec2:
+        return Vec2(this.x - rhs, this.y - rhs)
 
-    fn mul(s: f32) -> Vec2:
-        return Vec2(this.x * s, this.y * s)
+    fn mul(rhs: f32) -> Vec2:
+        return Vec2(this.x * rhs, this.y * rhs)
 
-    fn div(s: f32) -> Vec2:
-        return Vec2(this.x / s, this.y / s)
+    fn div(rhs: f32) -> Vec2:
+        return Vec2(this.x / rhs, this.y / rhs)
 
 extend f32 implements Add[Vec2], Sub[Vec2], Mul[Vec2], Div[Vec2]:
     type Output = Vec2
 
-    fn add(v: Vec2) -> Vec2:
-        return Vec2(this + v.x, this + v.y)
+    fn add(rhs: Vec2) -> Vec2:
+        return Vec2(this + rhs.x, this + rhs.y)
 
-    fn sub(v: Vec2) -> Vec2:
-        return Vec2(this - v.x, this - v.y)
+    fn sub(rhs: Vec2) -> Vec2:
+        return Vec2(this - rhs.x, this - rhs.y)
 
-    fn mul(v: Vec2) -> Vec2:
-        return Vec2(this * v.x, this * v.y)
+    fn mul(rhs: Vec2) -> Vec2:
+        return Vec2(this * rhs.x, this * rhs.y)
 
-    fn div(v: Vec2) -> Vec2:
-        return Vec2(this / v.x, this / v.y)
+    fn div(rhs: Vec2) -> Vec2:
+        return Vec2(this / rhs.x, this / rhs.y)
 
 ## 3 `f32`s (`[STD-28]`, ODR-043).
 @derive(Copy)
@@ -457,17 +457,17 @@ pub struct Vec3:
 extend Vec3 implements Add, Sub, Mul, Div, Neg:
     type Output = Vec3
 
-    fn add(o: Vec3) -> Vec3:
-        return Vec3(this.x + o.x, this.y + o.y, this.z + o.z)
+    fn add(rhs: Vec3) -> Vec3:
+        return Vec3(this.x + rhs.x, this.y + rhs.y, this.z + rhs.z)
 
-    fn sub(o: Vec3) -> Vec3:
-        return Vec3(this.x - o.x, this.y - o.y, this.z - o.z)
+    fn sub(rhs: Vec3) -> Vec3:
+        return Vec3(this.x - rhs.x, this.y - rhs.y, this.z - rhs.z)
 
-    fn mul(o: Vec3) -> Vec3:
-        return Vec3(this.x * o.x, this.y * o.y, this.z * o.z)
+    fn mul(rhs: Vec3) -> Vec3:
+        return Vec3(this.x * rhs.x, this.y * rhs.y, this.z * rhs.z)
 
-    fn div(o: Vec3) -> Vec3:
-        return Vec3(this.x / o.x, this.y / o.y, this.z / o.z)
+    fn div(rhs: Vec3) -> Vec3:
+        return Vec3(this.x / rhs.x, this.y / rhs.y, this.z / rhs.z)
 
     fn neg() -> Vec3:
         return Vec3(-this.x, -this.y, -this.z)
@@ -475,32 +475,32 @@ extend Vec3 implements Add, Sub, Mul, Div, Neg:
 extend Vec3 implements Add[f32], Sub[f32], Mul[f32], Div[f32]:
     type Output = Vec3
 
-    fn add(s: f32) -> Vec3:
-        return Vec3(this.x + s, this.y + s, this.z + s)
+    fn add(rhs: f32) -> Vec3:
+        return Vec3(this.x + rhs, this.y + rhs, this.z + rhs)
 
-    fn sub(s: f32) -> Vec3:
-        return Vec3(this.x - s, this.y - s, this.z - s)
+    fn sub(rhs: f32) -> Vec3:
+        return Vec3(this.x - rhs, this.y - rhs, this.z - rhs)
 
-    fn mul(s: f32) -> Vec3:
-        return Vec3(this.x * s, this.y * s, this.z * s)
+    fn mul(rhs: f32) -> Vec3:
+        return Vec3(this.x * rhs, this.y * rhs, this.z * rhs)
 
-    fn div(s: f32) -> Vec3:
-        return Vec3(this.x / s, this.y / s, this.z / s)
+    fn div(rhs: f32) -> Vec3:
+        return Vec3(this.x / rhs, this.y / rhs, this.z / rhs)
 
 extend f32 implements Add[Vec3], Sub[Vec3], Mul[Vec3], Div[Vec3]:
     type Output = Vec3
 
-    fn add(v: Vec3) -> Vec3:
-        return Vec3(this + v.x, this + v.y, this + v.z)
+    fn add(rhs: Vec3) -> Vec3:
+        return Vec3(this + rhs.x, this + rhs.y, this + rhs.z)
 
-    fn sub(v: Vec3) -> Vec3:
-        return Vec3(this - v.x, this - v.y, this - v.z)
+    fn sub(rhs: Vec3) -> Vec3:
+        return Vec3(this - rhs.x, this - rhs.y, this - rhs.z)
 
-    fn mul(v: Vec3) -> Vec3:
-        return Vec3(this * v.x, this * v.y, this * v.z)
+    fn mul(rhs: Vec3) -> Vec3:
+        return Vec3(this * rhs.x, this * rhs.y, this * rhs.z)
 
-    fn div(v: Vec3) -> Vec3:
-        return Vec3(this / v.x, this / v.y, this / v.z)
+    fn div(rhs: Vec3) -> Vec3:
+        return Vec3(this / rhs.x, this / rhs.y, this / rhs.z)
 
 ## 4 `f32`s (`[STD-28]`, ODR-043).
 @derive(Copy)
@@ -578,17 +578,17 @@ pub struct Vec4:
 extend Vec4 implements Add, Sub, Mul, Div, Neg:
     type Output = Vec4
 
-    fn add(o: Vec4) -> Vec4:
-        return Vec4(this.x + o.x, this.y + o.y, this.z + o.z, this.w + o.w)
+    fn add(rhs: Vec4) -> Vec4:
+        return Vec4(this.x + rhs.x, this.y + rhs.y, this.z + rhs.z, this.w + rhs.w)
 
-    fn sub(o: Vec4) -> Vec4:
-        return Vec4(this.x - o.x, this.y - o.y, this.z - o.z, this.w - o.w)
+    fn sub(rhs: Vec4) -> Vec4:
+        return Vec4(this.x - rhs.x, this.y - rhs.y, this.z - rhs.z, this.w - rhs.w)
 
-    fn mul(o: Vec4) -> Vec4:
-        return Vec4(this.x * o.x, this.y * o.y, this.z * o.z, this.w * o.w)
+    fn mul(rhs: Vec4) -> Vec4:
+        return Vec4(this.x * rhs.x, this.y * rhs.y, this.z * rhs.z, this.w * rhs.w)
 
-    fn div(o: Vec4) -> Vec4:
-        return Vec4(this.x / o.x, this.y / o.y, this.z / o.z, this.w / o.w)
+    fn div(rhs: Vec4) -> Vec4:
+        return Vec4(this.x / rhs.x, this.y / rhs.y, this.z / rhs.z, this.w / rhs.w)
 
     fn neg() -> Vec4:
         return Vec4(-this.x, -this.y, -this.z, -this.w)
@@ -596,32 +596,32 @@ extend Vec4 implements Add, Sub, Mul, Div, Neg:
 extend Vec4 implements Add[f32], Sub[f32], Mul[f32], Div[f32]:
     type Output = Vec4
 
-    fn add(s: f32) -> Vec4:
-        return Vec4(this.x + s, this.y + s, this.z + s, this.w + s)
+    fn add(rhs: f32) -> Vec4:
+        return Vec4(this.x + rhs, this.y + rhs, this.z + rhs, this.w + rhs)
 
-    fn sub(s: f32) -> Vec4:
-        return Vec4(this.x - s, this.y - s, this.z - s, this.w - s)
+    fn sub(rhs: f32) -> Vec4:
+        return Vec4(this.x - rhs, this.y - rhs, this.z - rhs, this.w - rhs)
 
-    fn mul(s: f32) -> Vec4:
-        return Vec4(this.x * s, this.y * s, this.z * s, this.w * s)
+    fn mul(rhs: f32) -> Vec4:
+        return Vec4(this.x * rhs, this.y * rhs, this.z * rhs, this.w * rhs)
 
-    fn div(s: f32) -> Vec4:
-        return Vec4(this.x / s, this.y / s, this.z / s, this.w / s)
+    fn div(rhs: f32) -> Vec4:
+        return Vec4(this.x / rhs, this.y / rhs, this.z / rhs, this.w / rhs)
 
 extend f32 implements Add[Vec4], Sub[Vec4], Mul[Vec4], Div[Vec4]:
     type Output = Vec4
 
-    fn add(v: Vec4) -> Vec4:
-        return Vec4(this + v.x, this + v.y, this + v.z, this + v.w)
+    fn add(rhs: Vec4) -> Vec4:
+        return Vec4(this + rhs.x, this + rhs.y, this + rhs.z, this + rhs.w)
 
-    fn sub(v: Vec4) -> Vec4:
-        return Vec4(this - v.x, this - v.y, this - v.z, this - v.w)
+    fn sub(rhs: Vec4) -> Vec4:
+        return Vec4(this - rhs.x, this - rhs.y, this - rhs.z, this - rhs.w)
 
-    fn mul(v: Vec4) -> Vec4:
-        return Vec4(this * v.x, this * v.y, this * v.z, this * v.w)
+    fn mul(rhs: Vec4) -> Vec4:
+        return Vec4(this * rhs.x, this * rhs.y, this * rhs.z, this * rhs.w)
 
-    fn div(v: Vec4) -> Vec4:
-        return Vec4(this / v.x, this / v.y, this / v.z, this / v.w)
+    fn div(rhs: Vec4) -> Vec4:
+        return Vec4(this / rhs.x, this / rhs.y, this / rhs.z, this / rhs.w)
 
 ## 2 `i32`s (`[STD-28]`, ODR-043).
 @derive(Copy)
@@ -660,20 +660,20 @@ pub struct IVec2:
 extend IVec2 implements Add, Sub, Mul, FloorDiv, Rem, Neg:
     type Output = IVec2
 
-    fn add(o: IVec2) -> IVec2:
-        return IVec2(this.x + o.x, this.y + o.y)
+    fn add(rhs: IVec2) -> IVec2:
+        return IVec2(this.x + rhs.x, this.y + rhs.y)
 
-    fn sub(o: IVec2) -> IVec2:
-        return IVec2(this.x - o.x, this.y - o.y)
+    fn sub(rhs: IVec2) -> IVec2:
+        return IVec2(this.x - rhs.x, this.y - rhs.y)
 
-    fn mul(o: IVec2) -> IVec2:
-        return IVec2(this.x * o.x, this.y * o.y)
+    fn mul(rhs: IVec2) -> IVec2:
+        return IVec2(this.x * rhs.x, this.y * rhs.y)
 
-    fn floordiv(o: IVec2) -> IVec2:
-        return IVec2(this.x // o.x, this.y // o.y)
+    fn floordiv(rhs: IVec2) -> IVec2:
+        return IVec2(this.x // rhs.x, this.y // rhs.y)
 
-    fn rem(o: IVec2) -> IVec2:
-        return IVec2(this.x % o.x, this.y % o.y)
+    fn rem(rhs: IVec2) -> IVec2:
+        return IVec2(this.x % rhs.x, this.y % rhs.y)
 
     fn neg() -> IVec2:
         return IVec2(-this.x, -this.y)
@@ -681,38 +681,38 @@ extend IVec2 implements Add, Sub, Mul, FloorDiv, Rem, Neg:
 extend IVec2 implements Add[i32], Sub[i32], Mul[i32], FloorDiv[i32], Rem[i32]:
     type Output = IVec2
 
-    fn add(s: i32) -> IVec2:
-        return IVec2(this.x + s, this.y + s)
+    fn add(rhs: i32) -> IVec2:
+        return IVec2(this.x + rhs, this.y + rhs)
 
-    fn sub(s: i32) -> IVec2:
-        return IVec2(this.x - s, this.y - s)
+    fn sub(rhs: i32) -> IVec2:
+        return IVec2(this.x - rhs, this.y - rhs)
 
-    fn mul(s: i32) -> IVec2:
-        return IVec2(this.x * s, this.y * s)
+    fn mul(rhs: i32) -> IVec2:
+        return IVec2(this.x * rhs, this.y * rhs)
 
-    fn floordiv(s: i32) -> IVec2:
-        return IVec2(this.x // s, this.y // s)
+    fn floordiv(rhs: i32) -> IVec2:
+        return IVec2(this.x // rhs, this.y // rhs)
 
-    fn rem(s: i32) -> IVec2:
-        return IVec2(this.x % s, this.y % s)
+    fn rem(rhs: i32) -> IVec2:
+        return IVec2(this.x % rhs, this.y % rhs)
 
 extend i32 implements Add[IVec2], Sub[IVec2], Mul[IVec2], FloorDiv[IVec2], Rem[IVec2]:
     type Output = IVec2
 
-    fn add(v: IVec2) -> IVec2:
-        return IVec2(this + v.x, this + v.y)
+    fn add(rhs: IVec2) -> IVec2:
+        return IVec2(this + rhs.x, this + rhs.y)
 
-    fn sub(v: IVec2) -> IVec2:
-        return IVec2(this - v.x, this - v.y)
+    fn sub(rhs: IVec2) -> IVec2:
+        return IVec2(this - rhs.x, this - rhs.y)
 
-    fn mul(v: IVec2) -> IVec2:
-        return IVec2(this * v.x, this * v.y)
+    fn mul(rhs: IVec2) -> IVec2:
+        return IVec2(this * rhs.x, this * rhs.y)
 
-    fn floordiv(v: IVec2) -> IVec2:
-        return IVec2(this // v.x, this // v.y)
+    fn floordiv(rhs: IVec2) -> IVec2:
+        return IVec2(this // rhs.x, this // rhs.y)
 
-    fn rem(v: IVec2) -> IVec2:
-        return IVec2(this % v.x, this % v.y)
+    fn rem(rhs: IVec2) -> IVec2:
+        return IVec2(this % rhs.x, this % rhs.y)
 
 ## 3 `i32`s (`[STD-28]`, ODR-043).
 @derive(Copy)
@@ -757,20 +757,20 @@ pub struct IVec3:
 extend IVec3 implements Add, Sub, Mul, FloorDiv, Rem, Neg:
     type Output = IVec3
 
-    fn add(o: IVec3) -> IVec3:
-        return IVec3(this.x + o.x, this.y + o.y, this.z + o.z)
+    fn add(rhs: IVec3) -> IVec3:
+        return IVec3(this.x + rhs.x, this.y + rhs.y, this.z + rhs.z)
 
-    fn sub(o: IVec3) -> IVec3:
-        return IVec3(this.x - o.x, this.y - o.y, this.z - o.z)
+    fn sub(rhs: IVec3) -> IVec3:
+        return IVec3(this.x - rhs.x, this.y - rhs.y, this.z - rhs.z)
 
-    fn mul(o: IVec3) -> IVec3:
-        return IVec3(this.x * o.x, this.y * o.y, this.z * o.z)
+    fn mul(rhs: IVec3) -> IVec3:
+        return IVec3(this.x * rhs.x, this.y * rhs.y, this.z * rhs.z)
 
-    fn floordiv(o: IVec3) -> IVec3:
-        return IVec3(this.x // o.x, this.y // o.y, this.z // o.z)
+    fn floordiv(rhs: IVec3) -> IVec3:
+        return IVec3(this.x // rhs.x, this.y // rhs.y, this.z // rhs.z)
 
-    fn rem(o: IVec3) -> IVec3:
-        return IVec3(this.x % o.x, this.y % o.y, this.z % o.z)
+    fn rem(rhs: IVec3) -> IVec3:
+        return IVec3(this.x % rhs.x, this.y % rhs.y, this.z % rhs.z)
 
     fn neg() -> IVec3:
         return IVec3(-this.x, -this.y, -this.z)
@@ -778,38 +778,38 @@ extend IVec3 implements Add, Sub, Mul, FloorDiv, Rem, Neg:
 extend IVec3 implements Add[i32], Sub[i32], Mul[i32], FloorDiv[i32], Rem[i32]:
     type Output = IVec3
 
-    fn add(s: i32) -> IVec3:
-        return IVec3(this.x + s, this.y + s, this.z + s)
+    fn add(rhs: i32) -> IVec3:
+        return IVec3(this.x + rhs, this.y + rhs, this.z + rhs)
 
-    fn sub(s: i32) -> IVec3:
-        return IVec3(this.x - s, this.y - s, this.z - s)
+    fn sub(rhs: i32) -> IVec3:
+        return IVec3(this.x - rhs, this.y - rhs, this.z - rhs)
 
-    fn mul(s: i32) -> IVec3:
-        return IVec3(this.x * s, this.y * s, this.z * s)
+    fn mul(rhs: i32) -> IVec3:
+        return IVec3(this.x * rhs, this.y * rhs, this.z * rhs)
 
-    fn floordiv(s: i32) -> IVec3:
-        return IVec3(this.x // s, this.y // s, this.z // s)
+    fn floordiv(rhs: i32) -> IVec3:
+        return IVec3(this.x // rhs, this.y // rhs, this.z // rhs)
 
-    fn rem(s: i32) -> IVec3:
-        return IVec3(this.x % s, this.y % s, this.z % s)
+    fn rem(rhs: i32) -> IVec3:
+        return IVec3(this.x % rhs, this.y % rhs, this.z % rhs)
 
 extend i32 implements Add[IVec3], Sub[IVec3], Mul[IVec3], FloorDiv[IVec3], Rem[IVec3]:
     type Output = IVec3
 
-    fn add(v: IVec3) -> IVec3:
-        return IVec3(this + v.x, this + v.y, this + v.z)
+    fn add(rhs: IVec3) -> IVec3:
+        return IVec3(this + rhs.x, this + rhs.y, this + rhs.z)
 
-    fn sub(v: IVec3) -> IVec3:
-        return IVec3(this - v.x, this - v.y, this - v.z)
+    fn sub(rhs: IVec3) -> IVec3:
+        return IVec3(this - rhs.x, this - rhs.y, this - rhs.z)
 
-    fn mul(v: IVec3) -> IVec3:
-        return IVec3(this * v.x, this * v.y, this * v.z)
+    fn mul(rhs: IVec3) -> IVec3:
+        return IVec3(this * rhs.x, this * rhs.y, this * rhs.z)
 
-    fn floordiv(v: IVec3) -> IVec3:
-        return IVec3(this // v.x, this // v.y, this // v.z)
+    fn floordiv(rhs: IVec3) -> IVec3:
+        return IVec3(this // rhs.x, this // rhs.y, this // rhs.z)
 
-    fn rem(v: IVec3) -> IVec3:
-        return IVec3(this % v.x, this % v.y, this % v.z)
+    fn rem(rhs: IVec3) -> IVec3:
+        return IVec3(this % rhs.x, this % rhs.y, this % rhs.z)
 
 ## 4 `i32`s (`[STD-28]`, ODR-043).
 @derive(Copy)
@@ -852,20 +852,20 @@ pub struct IVec4:
 extend IVec4 implements Add, Sub, Mul, FloorDiv, Rem, Neg:
     type Output = IVec4
 
-    fn add(o: IVec4) -> IVec4:
-        return IVec4(this.x + o.x, this.y + o.y, this.z + o.z, this.w + o.w)
+    fn add(rhs: IVec4) -> IVec4:
+        return IVec4(this.x + rhs.x, this.y + rhs.y, this.z + rhs.z, this.w + rhs.w)
 
-    fn sub(o: IVec4) -> IVec4:
-        return IVec4(this.x - o.x, this.y - o.y, this.z - o.z, this.w - o.w)
+    fn sub(rhs: IVec4) -> IVec4:
+        return IVec4(this.x - rhs.x, this.y - rhs.y, this.z - rhs.z, this.w - rhs.w)
 
-    fn mul(o: IVec4) -> IVec4:
-        return IVec4(this.x * o.x, this.y * o.y, this.z * o.z, this.w * o.w)
+    fn mul(rhs: IVec4) -> IVec4:
+        return IVec4(this.x * rhs.x, this.y * rhs.y, this.z * rhs.z, this.w * rhs.w)
 
-    fn floordiv(o: IVec4) -> IVec4:
-        return IVec4(this.x // o.x, this.y // o.y, this.z // o.z, this.w // o.w)
+    fn floordiv(rhs: IVec4) -> IVec4:
+        return IVec4(this.x // rhs.x, this.y // rhs.y, this.z // rhs.z, this.w // rhs.w)
 
-    fn rem(o: IVec4) -> IVec4:
-        return IVec4(this.x % o.x, this.y % o.y, this.z % o.z, this.w % o.w)
+    fn rem(rhs: IVec4) -> IVec4:
+        return IVec4(this.x % rhs.x, this.y % rhs.y, this.z % rhs.z, this.w % rhs.w)
 
     fn neg() -> IVec4:
         return IVec4(-this.x, -this.y, -this.z, -this.w)
@@ -873,38 +873,38 @@ extend IVec4 implements Add, Sub, Mul, FloorDiv, Rem, Neg:
 extend IVec4 implements Add[i32], Sub[i32], Mul[i32], FloorDiv[i32], Rem[i32]:
     type Output = IVec4
 
-    fn add(s: i32) -> IVec4:
-        return IVec4(this.x + s, this.y + s, this.z + s, this.w + s)
+    fn add(rhs: i32) -> IVec4:
+        return IVec4(this.x + rhs, this.y + rhs, this.z + rhs, this.w + rhs)
 
-    fn sub(s: i32) -> IVec4:
-        return IVec4(this.x - s, this.y - s, this.z - s, this.w - s)
+    fn sub(rhs: i32) -> IVec4:
+        return IVec4(this.x - rhs, this.y - rhs, this.z - rhs, this.w - rhs)
 
-    fn mul(s: i32) -> IVec4:
-        return IVec4(this.x * s, this.y * s, this.z * s, this.w * s)
+    fn mul(rhs: i32) -> IVec4:
+        return IVec4(this.x * rhs, this.y * rhs, this.z * rhs, this.w * rhs)
 
-    fn floordiv(s: i32) -> IVec4:
-        return IVec4(this.x // s, this.y // s, this.z // s, this.w // s)
+    fn floordiv(rhs: i32) -> IVec4:
+        return IVec4(this.x // rhs, this.y // rhs, this.z // rhs, this.w // rhs)
 
-    fn rem(s: i32) -> IVec4:
-        return IVec4(this.x % s, this.y % s, this.z % s, this.w % s)
+    fn rem(rhs: i32) -> IVec4:
+        return IVec4(this.x % rhs, this.y % rhs, this.z % rhs, this.w % rhs)
 
 extend i32 implements Add[IVec4], Sub[IVec4], Mul[IVec4], FloorDiv[IVec4], Rem[IVec4]:
     type Output = IVec4
 
-    fn add(v: IVec4) -> IVec4:
-        return IVec4(this + v.x, this + v.y, this + v.z, this + v.w)
+    fn add(rhs: IVec4) -> IVec4:
+        return IVec4(this + rhs.x, this + rhs.y, this + rhs.z, this + rhs.w)
 
-    fn sub(v: IVec4) -> IVec4:
-        return IVec4(this - v.x, this - v.y, this - v.z, this - v.w)
+    fn sub(rhs: IVec4) -> IVec4:
+        return IVec4(this - rhs.x, this - rhs.y, this - rhs.z, this - rhs.w)
 
-    fn mul(v: IVec4) -> IVec4:
-        return IVec4(this * v.x, this * v.y, this * v.z, this * v.w)
+    fn mul(rhs: IVec4) -> IVec4:
+        return IVec4(this * rhs.x, this * rhs.y, this * rhs.z, this * rhs.w)
 
-    fn floordiv(v: IVec4) -> IVec4:
-        return IVec4(this // v.x, this // v.y, this // v.z, this // v.w)
+    fn floordiv(rhs: IVec4) -> IVec4:
+        return IVec4(this // rhs.x, this // rhs.y, this // rhs.z, this // rhs.w)
 
-    fn rem(v: IVec4) -> IVec4:
-        return IVec4(this % v.x, this % v.y, this % v.z, this % v.w)
+    fn rem(rhs: IVec4) -> IVec4:
+        return IVec4(this % rhs.x, this % rhs.y, this % rhs.z, this % rhs.w)
 
 ## 2 `u32`s (`[STD-28]`, ODR-043).
 @derive(Copy)
@@ -940,56 +940,56 @@ pub struct UVec2:
 extend UVec2 implements Add, Sub, Mul, FloorDiv, Rem:
     type Output = UVec2
 
-    fn add(o: UVec2) -> UVec2:
-        return UVec2(this.x + o.x, this.y + o.y)
+    fn add(rhs: UVec2) -> UVec2:
+        return UVec2(this.x + rhs.x, this.y + rhs.y)
 
-    fn sub(o: UVec2) -> UVec2:
-        return UVec2(this.x - o.x, this.y - o.y)
+    fn sub(rhs: UVec2) -> UVec2:
+        return UVec2(this.x - rhs.x, this.y - rhs.y)
 
-    fn mul(o: UVec2) -> UVec2:
-        return UVec2(this.x * o.x, this.y * o.y)
+    fn mul(rhs: UVec2) -> UVec2:
+        return UVec2(this.x * rhs.x, this.y * rhs.y)
 
-    fn floordiv(o: UVec2) -> UVec2:
-        return UVec2(this.x // o.x, this.y // o.y)
+    fn floordiv(rhs: UVec2) -> UVec2:
+        return UVec2(this.x // rhs.x, this.y // rhs.y)
 
-    fn rem(o: UVec2) -> UVec2:
-        return UVec2(this.x % o.x, this.y % o.y)
+    fn rem(rhs: UVec2) -> UVec2:
+        return UVec2(this.x % rhs.x, this.y % rhs.y)
 
 extend UVec2 implements Add[u32], Sub[u32], Mul[u32], FloorDiv[u32], Rem[u32]:
     type Output = UVec2
 
-    fn add(s: u32) -> UVec2:
-        return UVec2(this.x + s, this.y + s)
+    fn add(rhs: u32) -> UVec2:
+        return UVec2(this.x + rhs, this.y + rhs)
 
-    fn sub(s: u32) -> UVec2:
-        return UVec2(this.x - s, this.y - s)
+    fn sub(rhs: u32) -> UVec2:
+        return UVec2(this.x - rhs, this.y - rhs)
 
-    fn mul(s: u32) -> UVec2:
-        return UVec2(this.x * s, this.y * s)
+    fn mul(rhs: u32) -> UVec2:
+        return UVec2(this.x * rhs, this.y * rhs)
 
-    fn floordiv(s: u32) -> UVec2:
-        return UVec2(this.x // s, this.y // s)
+    fn floordiv(rhs: u32) -> UVec2:
+        return UVec2(this.x // rhs, this.y // rhs)
 
-    fn rem(s: u32) -> UVec2:
-        return UVec2(this.x % s, this.y % s)
+    fn rem(rhs: u32) -> UVec2:
+        return UVec2(this.x % rhs, this.y % rhs)
 
 extend u32 implements Add[UVec2], Sub[UVec2], Mul[UVec2], FloorDiv[UVec2], Rem[UVec2]:
     type Output = UVec2
 
-    fn add(v: UVec2) -> UVec2:
-        return UVec2(this + v.x, this + v.y)
+    fn add(rhs: UVec2) -> UVec2:
+        return UVec2(this + rhs.x, this + rhs.y)
 
-    fn sub(v: UVec2) -> UVec2:
-        return UVec2(this - v.x, this - v.y)
+    fn sub(rhs: UVec2) -> UVec2:
+        return UVec2(this - rhs.x, this - rhs.y)
 
-    fn mul(v: UVec2) -> UVec2:
-        return UVec2(this * v.x, this * v.y)
+    fn mul(rhs: UVec2) -> UVec2:
+        return UVec2(this * rhs.x, this * rhs.y)
 
-    fn floordiv(v: UVec2) -> UVec2:
-        return UVec2(this // v.x, this // v.y)
+    fn floordiv(rhs: UVec2) -> UVec2:
+        return UVec2(this // rhs.x, this // rhs.y)
 
-    fn rem(v: UVec2) -> UVec2:
-        return UVec2(this % v.x, this % v.y)
+    fn rem(rhs: UVec2) -> UVec2:
+        return UVec2(this % rhs.x, this % rhs.y)
 
 ## 3 `u32`s (`[STD-28]`, ODR-043).
 @derive(Copy)
@@ -1031,56 +1031,56 @@ pub struct UVec3:
 extend UVec3 implements Add, Sub, Mul, FloorDiv, Rem:
     type Output = UVec3
 
-    fn add(o: UVec3) -> UVec3:
-        return UVec3(this.x + o.x, this.y + o.y, this.z + o.z)
+    fn add(rhs: UVec3) -> UVec3:
+        return UVec3(this.x + rhs.x, this.y + rhs.y, this.z + rhs.z)
 
-    fn sub(o: UVec3) -> UVec3:
-        return UVec3(this.x - o.x, this.y - o.y, this.z - o.z)
+    fn sub(rhs: UVec3) -> UVec3:
+        return UVec3(this.x - rhs.x, this.y - rhs.y, this.z - rhs.z)
 
-    fn mul(o: UVec3) -> UVec3:
-        return UVec3(this.x * o.x, this.y * o.y, this.z * o.z)
+    fn mul(rhs: UVec3) -> UVec3:
+        return UVec3(this.x * rhs.x, this.y * rhs.y, this.z * rhs.z)
 
-    fn floordiv(o: UVec3) -> UVec3:
-        return UVec3(this.x // o.x, this.y // o.y, this.z // o.z)
+    fn floordiv(rhs: UVec3) -> UVec3:
+        return UVec3(this.x // rhs.x, this.y // rhs.y, this.z // rhs.z)
 
-    fn rem(o: UVec3) -> UVec3:
-        return UVec3(this.x % o.x, this.y % o.y, this.z % o.z)
+    fn rem(rhs: UVec3) -> UVec3:
+        return UVec3(this.x % rhs.x, this.y % rhs.y, this.z % rhs.z)
 
 extend UVec3 implements Add[u32], Sub[u32], Mul[u32], FloorDiv[u32], Rem[u32]:
     type Output = UVec3
 
-    fn add(s: u32) -> UVec3:
-        return UVec3(this.x + s, this.y + s, this.z + s)
+    fn add(rhs: u32) -> UVec3:
+        return UVec3(this.x + rhs, this.y + rhs, this.z + rhs)
 
-    fn sub(s: u32) -> UVec3:
-        return UVec3(this.x - s, this.y - s, this.z - s)
+    fn sub(rhs: u32) -> UVec3:
+        return UVec3(this.x - rhs, this.y - rhs, this.z - rhs)
 
-    fn mul(s: u32) -> UVec3:
-        return UVec3(this.x * s, this.y * s, this.z * s)
+    fn mul(rhs: u32) -> UVec3:
+        return UVec3(this.x * rhs, this.y * rhs, this.z * rhs)
 
-    fn floordiv(s: u32) -> UVec3:
-        return UVec3(this.x // s, this.y // s, this.z // s)
+    fn floordiv(rhs: u32) -> UVec3:
+        return UVec3(this.x // rhs, this.y // rhs, this.z // rhs)
 
-    fn rem(s: u32) -> UVec3:
-        return UVec3(this.x % s, this.y % s, this.z % s)
+    fn rem(rhs: u32) -> UVec3:
+        return UVec3(this.x % rhs, this.y % rhs, this.z % rhs)
 
 extend u32 implements Add[UVec3], Sub[UVec3], Mul[UVec3], FloorDiv[UVec3], Rem[UVec3]:
     type Output = UVec3
 
-    fn add(v: UVec3) -> UVec3:
-        return UVec3(this + v.x, this + v.y, this + v.z)
+    fn add(rhs: UVec3) -> UVec3:
+        return UVec3(this + rhs.x, this + rhs.y, this + rhs.z)
 
-    fn sub(v: UVec3) -> UVec3:
-        return UVec3(this - v.x, this - v.y, this - v.z)
+    fn sub(rhs: UVec3) -> UVec3:
+        return UVec3(this - rhs.x, this - rhs.y, this - rhs.z)
 
-    fn mul(v: UVec3) -> UVec3:
-        return UVec3(this * v.x, this * v.y, this * v.z)
+    fn mul(rhs: UVec3) -> UVec3:
+        return UVec3(this * rhs.x, this * rhs.y, this * rhs.z)
 
-    fn floordiv(v: UVec3) -> UVec3:
-        return UVec3(this // v.x, this // v.y, this // v.z)
+    fn floordiv(rhs: UVec3) -> UVec3:
+        return UVec3(this // rhs.x, this // rhs.y, this // rhs.z)
 
-    fn rem(v: UVec3) -> UVec3:
-        return UVec3(this % v.x, this % v.y, this % v.z)
+    fn rem(rhs: UVec3) -> UVec3:
+        return UVec3(this % rhs.x, this % rhs.y, this % rhs.z)
 
 ## 4 `u32`s (`[STD-28]`, ODR-043).
 @derive(Copy)
@@ -1120,56 +1120,56 @@ pub struct UVec4:
 extend UVec4 implements Add, Sub, Mul, FloorDiv, Rem:
     type Output = UVec4
 
-    fn add(o: UVec4) -> UVec4:
-        return UVec4(this.x + o.x, this.y + o.y, this.z + o.z, this.w + o.w)
+    fn add(rhs: UVec4) -> UVec4:
+        return UVec4(this.x + rhs.x, this.y + rhs.y, this.z + rhs.z, this.w + rhs.w)
 
-    fn sub(o: UVec4) -> UVec4:
-        return UVec4(this.x - o.x, this.y - o.y, this.z - o.z, this.w - o.w)
+    fn sub(rhs: UVec4) -> UVec4:
+        return UVec4(this.x - rhs.x, this.y - rhs.y, this.z - rhs.z, this.w - rhs.w)
 
-    fn mul(o: UVec4) -> UVec4:
-        return UVec4(this.x * o.x, this.y * o.y, this.z * o.z, this.w * o.w)
+    fn mul(rhs: UVec4) -> UVec4:
+        return UVec4(this.x * rhs.x, this.y * rhs.y, this.z * rhs.z, this.w * rhs.w)
 
-    fn floordiv(o: UVec4) -> UVec4:
-        return UVec4(this.x // o.x, this.y // o.y, this.z // o.z, this.w // o.w)
+    fn floordiv(rhs: UVec4) -> UVec4:
+        return UVec4(this.x // rhs.x, this.y // rhs.y, this.z // rhs.z, this.w // rhs.w)
 
-    fn rem(o: UVec4) -> UVec4:
-        return UVec4(this.x % o.x, this.y % o.y, this.z % o.z, this.w % o.w)
+    fn rem(rhs: UVec4) -> UVec4:
+        return UVec4(this.x % rhs.x, this.y % rhs.y, this.z % rhs.z, this.w % rhs.w)
 
 extend UVec4 implements Add[u32], Sub[u32], Mul[u32], FloorDiv[u32], Rem[u32]:
     type Output = UVec4
 
-    fn add(s: u32) -> UVec4:
-        return UVec4(this.x + s, this.y + s, this.z + s, this.w + s)
+    fn add(rhs: u32) -> UVec4:
+        return UVec4(this.x + rhs, this.y + rhs, this.z + rhs, this.w + rhs)
 
-    fn sub(s: u32) -> UVec4:
-        return UVec4(this.x - s, this.y - s, this.z - s, this.w - s)
+    fn sub(rhs: u32) -> UVec4:
+        return UVec4(this.x - rhs, this.y - rhs, this.z - rhs, this.w - rhs)
 
-    fn mul(s: u32) -> UVec4:
-        return UVec4(this.x * s, this.y * s, this.z * s, this.w * s)
+    fn mul(rhs: u32) -> UVec4:
+        return UVec4(this.x * rhs, this.y * rhs, this.z * rhs, this.w * rhs)
 
-    fn floordiv(s: u32) -> UVec4:
-        return UVec4(this.x // s, this.y // s, this.z // s, this.w // s)
+    fn floordiv(rhs: u32) -> UVec4:
+        return UVec4(this.x // rhs, this.y // rhs, this.z // rhs, this.w // rhs)
 
-    fn rem(s: u32) -> UVec4:
-        return UVec4(this.x % s, this.y % s, this.z % s, this.w % s)
+    fn rem(rhs: u32) -> UVec4:
+        return UVec4(this.x % rhs, this.y % rhs, this.z % rhs, this.w % rhs)
 
 extend u32 implements Add[UVec4], Sub[UVec4], Mul[UVec4], FloorDiv[UVec4], Rem[UVec4]:
     type Output = UVec4
 
-    fn add(v: UVec4) -> UVec4:
-        return UVec4(this + v.x, this + v.y, this + v.z, this + v.w)
+    fn add(rhs: UVec4) -> UVec4:
+        return UVec4(this + rhs.x, this + rhs.y, this + rhs.z, this + rhs.w)
 
-    fn sub(v: UVec4) -> UVec4:
-        return UVec4(this - v.x, this - v.y, this - v.z, this - v.w)
+    fn sub(rhs: UVec4) -> UVec4:
+        return UVec4(this - rhs.x, this - rhs.y, this - rhs.z, this - rhs.w)
 
-    fn mul(v: UVec4) -> UVec4:
-        return UVec4(this * v.x, this * v.y, this * v.z, this * v.w)
+    fn mul(rhs: UVec4) -> UVec4:
+        return UVec4(this * rhs.x, this * rhs.y, this * rhs.z, this * rhs.w)
 
-    fn floordiv(v: UVec4) -> UVec4:
-        return UVec4(this // v.x, this // v.y, this // v.z, this // v.w)
+    fn floordiv(rhs: UVec4) -> UVec4:
+        return UVec4(this // rhs.x, this // rhs.y, this // rhs.z, this // rhs.w)
 
-    fn rem(v: UVec4) -> UVec4:
-        return UVec4(this % v.x, this % v.y, this % v.z, this % v.w)
+    fn rem(rhs: UVec4) -> UVec4:
+        return UVec4(this % rhs.x, this % rhs.y, this % rhs.z, this % rhs.w)
 
 
 ## -- matrices (`[STD-28]`, ODR-043) -------------------------------------------
@@ -1256,14 +1256,14 @@ pub struct Mat2:
 extend Mat2 implements Add, Sub, Mul, Neg:
     type Output = Mat2
 
-    fn add(o: Mat2) -> Mat2:
-        return Mat2(this.x_axis + o.x_axis, this.y_axis + o.y_axis)
+    fn add(rhs: Mat2) -> Mat2:
+        return Mat2(this.x_axis + rhs.x_axis, this.y_axis + rhs.y_axis)
 
-    fn sub(o: Mat2) -> Mat2:
-        return Mat2(this.x_axis - o.x_axis, this.y_axis - o.y_axis)
+    fn sub(rhs: Mat2) -> Mat2:
+        return Mat2(this.x_axis - rhs.x_axis, this.y_axis - rhs.y_axis)
 
-    fn mul(o: Mat2) -> Mat2:
-        return Mat2(this * o.x_axis, this * o.y_axis)
+    fn mul(rhs: Mat2) -> Mat2:
+        return Mat2(this * rhs.x_axis, this * rhs.y_axis)
 
     fn neg() -> Mat2:
         return Mat2(-this.x_axis, -this.y_axis)
@@ -1271,20 +1271,20 @@ extend Mat2 implements Add, Sub, Mul, Neg:
 extend Mat2 implements Mul[Vec2]:
     type Output = Vec2
 
-    fn mul(v: Vec2) -> Vec2:
-        return this.y_axis.mul_add(Vec2.splat(v.y), this.x_axis * v.x)
+    fn mul(rhs: Vec2) -> Vec2:
+        return this.y_axis.mul_add(Vec2.splat(rhs.y), this.x_axis * rhs.x)
 
 extend Mat2 implements Mul[f32]:
     type Output = Mat2
 
-    fn mul(s: f32) -> Mat2:
-        return Mat2(this.x_axis * s, this.y_axis * s)
+    fn mul(rhs: f32) -> Mat2:
+        return Mat2(this.x_axis * rhs, this.y_axis * rhs)
 
 extend f32 implements Mul[Mat2]:
     type Output = Mat2
 
-    fn mul(m: Mat2) -> Mat2:
-        return m * this
+    fn mul(rhs: Mat2) -> Mat2:
+        return rhs * this
 
 ## A 3×3 matrix: a rotation or scale in space.
 @derive(Copy)
@@ -1395,14 +1395,14 @@ pub struct Mat3:
 extend Mat3 implements Add, Sub, Mul, Neg:
     type Output = Mat3
 
-    fn add(o: Mat3) -> Mat3:
-        return Mat3(this.x_axis + o.x_axis, this.y_axis + o.y_axis, this.z_axis + o.z_axis)
+    fn add(rhs: Mat3) -> Mat3:
+        return Mat3(this.x_axis + rhs.x_axis, this.y_axis + rhs.y_axis, this.z_axis + rhs.z_axis)
 
-    fn sub(o: Mat3) -> Mat3:
-        return Mat3(this.x_axis - o.x_axis, this.y_axis - o.y_axis, this.z_axis - o.z_axis)
+    fn sub(rhs: Mat3) -> Mat3:
+        return Mat3(this.x_axis - rhs.x_axis, this.y_axis - rhs.y_axis, this.z_axis - rhs.z_axis)
 
-    fn mul(o: Mat3) -> Mat3:
-        return Mat3(this * o.x_axis, this * o.y_axis, this * o.z_axis)
+    fn mul(rhs: Mat3) -> Mat3:
+        return Mat3(this * rhs.x_axis, this * rhs.y_axis, this * rhs.z_axis)
 
     fn neg() -> Mat3:
         return Mat3(-this.x_axis, -this.y_axis, -this.z_axis)
@@ -1410,21 +1410,21 @@ extend Mat3 implements Add, Sub, Mul, Neg:
 extend Mat3 implements Mul[Vec3]:
     type Output = Vec3
 
-    fn mul(v: Vec3) -> Vec3:
-        r = this.y_axis.mul_add(Vec3.splat(v.y), this.x_axis * v.x)
-        return this.z_axis.mul_add(Vec3.splat(v.z), r)
+    fn mul(rhs: Vec3) -> Vec3:
+        r = this.y_axis.mul_add(Vec3.splat(rhs.y), this.x_axis * rhs.x)
+        return this.z_axis.mul_add(Vec3.splat(rhs.z), r)
 
 extend Mat3 implements Mul[f32]:
     type Output = Mat3
 
-    fn mul(s: f32) -> Mat3:
-        return Mat3(this.x_axis * s, this.y_axis * s, this.z_axis * s)
+    fn mul(rhs: f32) -> Mat3:
+        return Mat3(this.x_axis * rhs, this.y_axis * rhs, this.z_axis * rhs)
 
 extend f32 implements Mul[Mat3]:
     type Output = Mat3
 
-    fn mul(m: Mat3) -> Mat3:
-        return m * this
+    fn mul(rhs: Mat3) -> Mat3:
+        return rhs * this
 
 ## A 4×4 matrix: a transform with translation, or a projection.
 @derive(Copy)
@@ -1667,14 +1667,14 @@ struct MinorPairs:
 extend Mat4 implements Add, Sub, Mul, Neg:
     type Output = Mat4
 
-    fn add(o: Mat4) -> Mat4:
-        return Mat4(this.x_axis + o.x_axis, this.y_axis + o.y_axis, this.z_axis + o.z_axis, this.w_axis + o.w_axis)
+    fn add(rhs: Mat4) -> Mat4:
+        return Mat4(this.x_axis + rhs.x_axis, this.y_axis + rhs.y_axis, this.z_axis + rhs.z_axis, this.w_axis + rhs.w_axis)
 
-    fn sub(o: Mat4) -> Mat4:
-        return Mat4(this.x_axis - o.x_axis, this.y_axis - o.y_axis, this.z_axis - o.z_axis, this.w_axis - o.w_axis)
+    fn sub(rhs: Mat4) -> Mat4:
+        return Mat4(this.x_axis - rhs.x_axis, this.y_axis - rhs.y_axis, this.z_axis - rhs.z_axis, this.w_axis - rhs.w_axis)
 
-    fn mul(o: Mat4) -> Mat4:
-        return Mat4(this * o.x_axis, this * o.y_axis, this * o.z_axis, this * o.w_axis)
+    fn mul(rhs: Mat4) -> Mat4:
+        return Mat4(this * rhs.x_axis, this * rhs.y_axis, this * rhs.z_axis, this * rhs.w_axis)
 
     fn neg() -> Mat4:
         return Mat4(-this.x_axis, -this.y_axis, -this.z_axis, -this.w_axis)
@@ -1682,22 +1682,22 @@ extend Mat4 implements Add, Sub, Mul, Neg:
 extend Mat4 implements Mul[Vec4]:
     type Output = Vec4
 
-    fn mul(v: Vec4) -> Vec4:
-        r = this.y_axis.mul_add(Vec4.splat(v.y), this.x_axis * v.x)
-        r = this.z_axis.mul_add(Vec4.splat(v.z), r)
-        return this.w_axis.mul_add(Vec4.splat(v.w), r)
+    fn mul(rhs: Vec4) -> Vec4:
+        r = this.y_axis.mul_add(Vec4.splat(rhs.y), this.x_axis * rhs.x)
+        r = this.z_axis.mul_add(Vec4.splat(rhs.z), r)
+        return this.w_axis.mul_add(Vec4.splat(rhs.w), r)
 
 extend Mat4 implements Mul[f32]:
     type Output = Mat4
 
-    fn mul(s: f32) -> Mat4:
-        return Mat4(this.x_axis * s, this.y_axis * s, this.z_axis * s, this.w_axis * s)
+    fn mul(rhs: f32) -> Mat4:
+        return Mat4(this.x_axis * rhs, this.y_axis * rhs, this.z_axis * rhs, this.w_axis * rhs)
 
 extend f32 implements Mul[Mat4]:
     type Output = Mat4
 
-    fn mul(m: Mat4) -> Mat4:
-        return m * this
+    fn mul(rhs: Mat4) -> Mat4:
+        return rhs * this
 
 ## -- rotations and transforms (`[STD-28]`, ODR-043) ---------------------------
 
@@ -1777,12 +1777,12 @@ pub struct Quat:
 extend Quat implements Mul:
     type Output = Quat
 
-    fn mul(o: Quat) -> Quat:
+    fn mul(rhs: Quat) -> Quat:
         return Quat(
-            this.w * o.x + this.x * o.w + this.y * o.z - this.z * o.y,
-            this.w * o.y - this.x * o.z + this.y * o.w + this.z * o.x,
-            this.w * o.z + this.x * o.y - this.y * o.x + this.z * o.w,
-            this.w * o.w - this.x * o.x - this.y * o.y - this.z * o.z,
+            this.w * rhs.x + this.x * rhs.w + this.y * rhs.z - this.z * rhs.y,
+            this.w * rhs.y - this.x * rhs.z + this.y * rhs.w + this.z * rhs.x,
+            this.w * rhs.z + this.x * rhs.y - this.y * rhs.x + this.z * rhs.w,
+            this.w * rhs.w - this.x * rhs.x - this.y * rhs.y - this.z * rhs.z,
         )
 
 extend Quat implements Mul[Vec3]:
@@ -1790,10 +1790,10 @@ extend Quat implements Mul[Vec3]:
 
     ## `v` rotated: `v + w t + q × t` with `t = 2 q × v`, `q` the vector part,
     ## `w t` added with one rounding (`[STD-3]`).
-    fn mul(v: Vec3) -> Vec3:
+    fn mul(rhs: Vec3) -> Vec3:
         q = Vec3(this.x, this.y, this.z)
-        t = q.cross(v) * 2.0
-        return t.mul_add(Vec3.splat(this.w), v + q.cross(t))
+        t = q.cross(rhs) * 2.0
+        return t.mul_add(Vec3.splat(this.w), rhs + q.cross(t))
 
 ## A scale, then a rotation, then a move.
 @derive(Copy)
@@ -1831,8 +1831,8 @@ extend Transform implements Mul:
     ## `o`, then this one. With a scale that is not the same along every
     ## axis and a rotation, the result is the usual approximation: scales
     ## multiply axis by axis.
-    fn mul(o: Transform) -> Transform:
-        return Transform(this.transform_point(o.translation), this.rotation * o.rotation, this.scale * o.scale)
+    fn mul(rhs: Transform) -> Transform:
+        return Transform(this.transform_point(rhs.translation), this.rotation * rhs.rotation, this.scale * rhs.scale)
 
 ## -- shapes (`[STD-28]`, ODR-043) ----------------------------------------------
 

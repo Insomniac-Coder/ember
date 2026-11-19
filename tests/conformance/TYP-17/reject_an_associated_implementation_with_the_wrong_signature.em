@@ -10,6 +10,6 @@ extend Pixel implements Default:
     static fn default(seed: i32) -> Pixel:
         return Pixel(seed)
 
-#$ error[E2040]: `Pixel.default` does not match the signature required by `Default`
+#$ error[E2040]: `Pixel.default` takes 1 parameter, and `Default.default` takes 0; write `static fn default() -> Pixel:`
 fn main():
     pass

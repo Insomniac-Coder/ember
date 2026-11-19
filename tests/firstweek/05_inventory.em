@@ -12,11 +12,11 @@ enum StockError:
 class Inventory:
     items: Map[String, Item] = {}
 
-    fn add(name: StrView, price: float, quantity: int):
-        if name in this.items:
-            this.items[name].quantity += quantity
+    fn add(rhs: StrView, price: float, quantity: int):
+        if rhs in this.items:
+            this.items[rhs].quantity += quantity
         else:
-            this.items[name] = Item(name=name, price=price, quantity=quantity)
+            this.items[rhs] = Item(rhs=rhs, price=price, quantity=quantity)
 
     fn sell(name: StrView, quantity: int) -> Result[float, StockError]:
         if name not in this.items:

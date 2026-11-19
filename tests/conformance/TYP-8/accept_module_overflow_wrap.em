@@ -6,8 +6,8 @@
 
 #! module overflow(wrap)
 
-fn add(a: i8, b: i8) -> i8:
-    return a + b
+fn add(rhs: i8, b: i8) -> i8:
+    return rhs + b
 
 fn main():
     println(add(127i8, 1i8))

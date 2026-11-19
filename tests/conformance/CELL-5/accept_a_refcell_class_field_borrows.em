@@ -16,9 +16,9 @@ class Holder:
     fn init():
         this.cell = RefCell([1, 2, 3])
 
-    fn add(x: int):
+    fn add(rhs: int):
         with g = this.cell.borrow_mut():
-            g.push(owns x)
+            g.push(owns rhs)
 
 fn main():
     b = Holder()

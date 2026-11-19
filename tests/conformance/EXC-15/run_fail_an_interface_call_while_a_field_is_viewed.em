@@ -6,7 +6,7 @@
 # the object; a live view of one through another handle is a conflict.
 
 interface Log:
-    fn add(x: int)
+    fn add(rhs: int)
 
 class Record implements Log:
     items: Array[int]
@@ -14,8 +14,8 @@ class Record implements Log:
     fn init():
         this.items = [0]
 
-    fn add(x: int):
-        this.items.push(owns x)
+    fn add(rhs: int):
+        this.items.push(owns rhs)
 
 class Holder:
     log: Log

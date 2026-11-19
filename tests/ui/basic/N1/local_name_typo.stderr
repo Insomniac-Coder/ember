@@ -4,6 +4,6 @@ error[E1010]: cannot find `coutn` in this scope
 3 |     println(coutn)
   |             ^^^^^
   |
-  = help: did you mean `count`?
+  = help: the nearest name is `count`
 
 error: could not compile due to 1 error(s)

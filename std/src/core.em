@@ -3185,107 +3185,107 @@ pub struct NonZero:
 extend i8 implements FloorDiv[NonZero[i8]], Rem[NonZero[i8]]:
     type Output = i8
 
-    fn floordiv(d: NonZero[i8]) -> i8:
-        return this // d.value
+    fn floordiv(rhs: NonZero[i8]) -> i8:
+        return this // rhs.value
 
-    fn rem(d: NonZero[i8]) -> i8:
-        return this % d.value
+    fn rem(rhs: NonZero[i8]) -> i8:
+        return this % rhs.value
 
 extend i16 implements FloorDiv[NonZero[i16]], Rem[NonZero[i16]]:
     type Output = i16
 
-    fn floordiv(d: NonZero[i16]) -> i16:
-        return this // d.value
+    fn floordiv(rhs: NonZero[i16]) -> i16:
+        return this // rhs.value
 
-    fn rem(d: NonZero[i16]) -> i16:
-        return this % d.value
+    fn rem(rhs: NonZero[i16]) -> i16:
+        return this % rhs.value
 
 extend i32 implements FloorDiv[NonZero[i32]], Rem[NonZero[i32]]:
     type Output = i32
 
-    fn floordiv(d: NonZero[i32]) -> i32:
-        return this // d.value
+    fn floordiv(rhs: NonZero[i32]) -> i32:
+        return this // rhs.value
 
-    fn rem(d: NonZero[i32]) -> i32:
-        return this % d.value
+    fn rem(rhs: NonZero[i32]) -> i32:
+        return this % rhs.value
 
 extend i64 implements FloorDiv[NonZero[i64]], Rem[NonZero[i64]]:
     type Output = i64
 
-    fn floordiv(d: NonZero[i64]) -> i64:
-        return this // d.value
+    fn floordiv(rhs: NonZero[i64]) -> i64:
+        return this // rhs.value
 
-    fn rem(d: NonZero[i64]) -> i64:
-        return this % d.value
+    fn rem(rhs: NonZero[i64]) -> i64:
+        return this % rhs.value
 
 extend i128 implements FloorDiv[NonZero[i128]], Rem[NonZero[i128]]:
     type Output = i128
 
-    fn floordiv(d: NonZero[i128]) -> i128:
-        return this // d.value
+    fn floordiv(rhs: NonZero[i128]) -> i128:
+        return this // rhs.value
 
-    fn rem(d: NonZero[i128]) -> i128:
-        return this % d.value
+    fn rem(rhs: NonZero[i128]) -> i128:
+        return this % rhs.value
 
 extend isize implements FloorDiv[NonZero[isize]], Rem[NonZero[isize]]:
     type Output = isize
 
-    fn floordiv(d: NonZero[isize]) -> isize:
-        return this // d.value
+    fn floordiv(rhs: NonZero[isize]) -> isize:
+        return this // rhs.value
 
-    fn rem(d: NonZero[isize]) -> isize:
-        return this % d.value
+    fn rem(rhs: NonZero[isize]) -> isize:
+        return this % rhs.value
 
 extend u8 implements FloorDiv[NonZero[u8]], Rem[NonZero[u8]]:
     type Output = u8
 
-    fn floordiv(d: NonZero[u8]) -> u8:
-        return this // d.value
+    fn floordiv(rhs: NonZero[u8]) -> u8:
+        return this // rhs.value
 
-    fn rem(d: NonZero[u8]) -> u8:
-        return this % d.value
+    fn rem(rhs: NonZero[u8]) -> u8:
+        return this % rhs.value
 
 extend u16 implements FloorDiv[NonZero[u16]], Rem[NonZero[u16]]:
     type Output = u16
 
-    fn floordiv(d: NonZero[u16]) -> u16:
-        return this // d.value
+    fn floordiv(rhs: NonZero[u16]) -> u16:
+        return this // rhs.value
 
-    fn rem(d: NonZero[u16]) -> u16:
-        return this % d.value
+    fn rem(rhs: NonZero[u16]) -> u16:
+        return this % rhs.value
 
 extend u32 implements FloorDiv[NonZero[u32]], Rem[NonZero[u32]]:
     type Output = u32
 
-    fn floordiv(d: NonZero[u32]) -> u32:
-        return this // d.value
+    fn floordiv(rhs: NonZero[u32]) -> u32:
+        return this // rhs.value
 
-    fn rem(d: NonZero[u32]) -> u32:
-        return this % d.value
+    fn rem(rhs: NonZero[u32]) -> u32:
+        return this % rhs.value
 
 extend u64 implements FloorDiv[NonZero[u64]], Rem[NonZero[u64]]:
     type Output = u64
 
-    fn floordiv(d: NonZero[u64]) -> u64:
-        return this // d.value
+    fn floordiv(rhs: NonZero[u64]) -> u64:
+        return this // rhs.value
 
-    fn rem(d: NonZero[u64]) -> u64:
-        return this % d.value
+    fn rem(rhs: NonZero[u64]) -> u64:
+        return this % rhs.value
 
 extend u128 implements FloorDiv[NonZero[u128]], Rem[NonZero[u128]]:
     type Output = u128
 
-    fn floordiv(d: NonZero[u128]) -> u128:
-        return this // d.value
+    fn floordiv(rhs: NonZero[u128]) -> u128:
+        return this // rhs.value
 
-    fn rem(d: NonZero[u128]) -> u128:
-        return this % d.value
+    fn rem(rhs: NonZero[u128]) -> u128:
+        return this % rhs.value
 
 extend usize implements FloorDiv[NonZero[usize]], Rem[NonZero[usize]]:
     type Output = usize
 
-    fn floordiv(d: NonZero[usize]) -> usize:
-        return this // d.value
+    fn floordiv(rhs: NonZero[usize]) -> usize:
+        return this // rhs.value
 
-    fn rem(d: NonZero[usize]) -> usize:
-        return this % d.value
+    fn rem(rhs: NonZero[usize]) -> usize:
+        return this % rhs.value

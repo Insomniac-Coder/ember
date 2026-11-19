@@ -7,8 +7,8 @@
 # program may call too, and `ember run` runs `main`, never a test. `ember test`
 # runs each test in a process of its own (the milestones run it on packages).
 
-fn add(a: int, b: int) -> int:
-    return a + b
+fn add(rhs: int, b: int) -> int:
+    return rhs + b
 
 @test
 fn adds():

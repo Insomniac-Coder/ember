@@ -1979,9 +1979,11 @@ impl Parser<'_> {
             }
             let texts: Vec<&str> = bounds.iter().map(|bound| self.src.get(bound.span.start as usize..bound.span.end as usize).unwrap_or("B")).collect();
             let needs = if texts.len() == 1 { format!("needs {}", texts[0]) } else { format!("needs ({})", texts.join(", ")) };
+            // The message gives the line with `needs`, as `[TYP-17]` says (`[T: Add + Copy]` gives `[T: needs (Add, Copy)]`).
+            let line = self.line_with(span, &needs);
+            let line = line.split(" #").next().unwrap_or(&line).trim_end();
             self.report(
-                Diagnostic::error(codes::E0100, span, "what a type needs is written after `needs`")
-                    .help(format!("write `{needs}`"))
+                Diagnostic::error(codes::E0100, span, format!("what a type needs is written after `needs`: write `{line}`"))
                     .note("several are listed in round brackets: `T: needs (Add, Default)` [TYP-17]"),
             );
             return bounds;

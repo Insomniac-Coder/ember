@@ -4,13 +4,13 @@
 #$ error[E1010]: cannot find type `Mutex` in this scope
 #$ help: `Mutex` is exported by `std.sync`: import it, `from std.sync import Mutex`
 #$ error[E1010]: cannot find `countr` in this scope
-#$ help: did you mean `counter`?
+#$ help: the nearest name is `counter`
+#$ help: the nearest name is `xpos`
+#$ help: the nearest name is `length_squared`
 #$ error[E1010]: cannot find field `xpso` on `Point`
-#$ help: did you mean `xpos`?
 #$ error[E2072]: `Point` has no method named `length_squard`
-#$ help: did you mean `length_squared`?
 #$ error[E2072]: `Point` has no method named `scald`
-#$ not-help: did you mean `scale`?
+#$ not-help: `scale`
 #$ error[E1010]: cannot find `sqrt` in this scope
 #$ help: `sqrt` is exported by `std.math`: import it, `from std.math import sqrt`
 # `[DIA-15]`: every suggestion comes from data the compiler already holds. A misspelt local is

@@ -149,3 +149,45 @@ Read first by every job in this lane; updated last by each.
   - IFC-6 and TYP-17: bound inference for a generic that is not `pub` is not built (`fn total[T](a: T, b: T)` with `a + b` is E2040 today).
   - TYP-10 (the shift panic's operands in five backends), TYP-23's wording (the callee is not known where the lambda is checked: `argument_of` is
     `None` there), TYP-17: not started.
+
+## W7, job 5 (`ref` in a parameter's type, what W6 left, diagnostics), 2026-11-19
+
+- **Credited (built_for_0915):** ERR-4 (the new test covers every method that takes a function as a `once fn`).
+- **Where things are:** `[FN-1]`'s `ref`/`ref mut` in a parameter's type is `E0117` in `refuse_mode_in_type` (`ember_parser/src/decls.rs`, also
+  lambda parameters in `body.rs`); the diagnostic's migration moves the word to the name, so `a_migrate_views.py`'s way of applying it works
+  (scratchpad `mig.py`: the same script with the suggestion's message); `ember fmt --migrate` does it too (`migrate.rs::parameter`). Generated
+  Ember source: `cimport.rs` (every `{param}: ref ...` is now `ref {param}: ...`) and `reload.rs`'s wrapper. A test that returned a view of an
+  `i32` parameter now uses `String`: a borrowed `Copy` parameter is passed as a copy (BRW-8), so `ref a: i32` cannot give a view back (E2031/E3060),
+  where `a: ref i32` could. `[TYP-23]`: `callee_named` (the innermost call's name, set by `synth_call`/`synth_method_call`) gives the lambda-word
+  message its callee. `[IFC-3]`: `signature_difference` and `interface_first_line` (`ember_typeck/src/lib.rs`, next to
+  `implementation_signature_matches`); the same parameter names are now required (std.math's operator impls, `FloorDiv`/`Rem` on `iN` and `Set`'s
+  operators, `Pool.index` were renamed to the interface's `rhs`/`i`, and 72 test programs). `[IFC-5]`: `bare_dyn_message` (E2173 for a bare
+  `dyn I` in a field, a result or a payload; a `dyn I` parameter stays as it was). `[DIA-24]`: `name_suggestions::nearest_help` (one help, "the
+  nearest name is `x`" / "the nearest names are `a`, `b` and `c`", same file first, then by qualified name; 15 tests, 4 `.stderr` snapshots and
+  `ui.rs` follow). `[DIA-2]`: the "you" in six helps and the lint label are gone, `E3016`'s message names `this.<field>`.
+  `[TYP-17]`: the `E0100` for `T: A + B` gives the whole line with `needs`.
+- **Traps:** a Python heredoc with `'\n'` inside Rust source writes a real newline: build the character with `chr(92)+'n'` (it broke the build three
+  times). `annotations.py` over 300 files waits for `%TEMP%\ember-suite.lock`, which another worktree's `cargo test` of the conformance suite holds for
+  an hour or more: do the full run last, and never start it with sources newer than the binary. A killed run leaves `ember.exe` locked: kill its
+  child with WMI. `cargo test -p ember_driver` runs the `milestones` suite of `tests/compile-fail`, `compile-pass`, `run-pass` and `milestones`, which
+  the quick check does not see (it reported 0 failing while 8 files were wrong): run `cargo test -p ember_driver --test milestones -- compile_fail_programs_are_rejected compile_pass_programs_compile run_pass_programs_pass milestones_pass` after a change of the parser or a diagnostic.
+- **Not credited, and why:**
+  - TYP-10: the panic text needs the amount: `AssertKind::ShiftTooLarge` must carry `amount: Operand` (+ the expression text, the type name and
+    `wrapping_shl`/`wrapping_shr`), which touches about 26 sites that list `RefCellBorrow`/`Bounds` (borrows.rs x4, coroutines.rs x4, kernels.rs x3,
+    progress_reduction.rs x4, loop_version.rs x3, regions.rs x2, inline.rs, list_locals.rs, loop_access.rs, perf_lints.rs, static_safe.rs,
+    strength_reduce.rs, temporary_owners.rs, unused.rs, access.rs, effects.rs, verify.rs, codegen_c x6, codegen_llvm x2, interp, driver): any one that
+    does not rewrite the operand after inlining or loop versioning miscompiles. Plus `ember_panic_shift` in the runtime. Not started.
+  - TYP-23: the wording and the callee are built, but a lambda whose body is `Ok(v)`/`Err(e)` given to a generic helper (`good.and_then(owns fn(owns v) => Ok(v))`)
+    does not take its error type from the expected result: `Ok(v)` is `Result[i64, void]` there (`synth_wrapper`, and `synth_lambda_fresh` drops an expected
+    result that has an open parameter), so the call is `E2020`. It needs the expected result to reach the body with the open parts as holes.
+  - TYP-17, IFC-6: bound inference for a generic that is not `pub`, the `pub` E2040 message, E2072's message and `dyn (A, B)`/`some (A, B)` (M11) are not built;
+    only the `E0100` line of `[T: A + B]` is. IFC-3: the marker parents (`Send`, `ThreadShared`: M4) and the line that compiles for a missing parent. IFC-4:
+    associated constants (`const N: int` in an interface, `A.N`, `T.N`) are not built at all (parser, extend, lookup, const evaluation). IFC-5: `ref dyn I`
+    over a struct and `dyn I` as a parameter given a value need M11; `shares dyn` M4.
+  - ERR-1: every clause is tested (`tests/conformance/ERR-1`) except that `AnyError`'s `From` needs `Send` and `ThreadShared` of `E`: `ThreadShared` does not exist in the
+    checker (M4, N130). ERR-3, ERR-8: the same, and `@from` on a variant with no field, two fields or a field that is no `Error` is E0104/E2020 and the spec says E2080.
+  - FN-8: the `#[cfg(unix)]` test `main_args_replace_text_that_is_not_utf8` exists (`milestones.rs`) but WSL has no `cargo`, so it has not run on Linux; the C runtime
+    alone was run there (`ember build --emit c`, then gcc in WSL with the same four argv byte strings: output as the test expects).
+  - DIA-2: `int` is shown as `i64` everywhere (`types.display`), where the rule says `int` unless the program writes `i64`: the table has one type for both.
+    DIA-3, 7, 8, 9, 10, 11, 16, 18, 21, 22, 23, 25: not started (no time); DIA-6a: 123 rows of the registry have a rule after the first with no reject case for the code
+    (script in the report), and three codes the document names are not registered (E1040, E9012, L3019).

@@ -8,8 +8,8 @@ struct Point:
     x: int
     y: int
 
-fn add(p: Point) -> int:
-    return p.x + p.y
+fn add(rhs: Point) -> int:
+    return rhs.x + rhs.y
 
 @noalloc
 @noio

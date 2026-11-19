@@ -4,6 +4,6 @@ error[E1010]: cannot find field `xx` on `Point`
 7 |     println(point.xx)
   |                   ^^
   |
-  = help: did you mean `x`?
+  = help: the nearest name is `x`
 
 error: could not compile due to 1 error(s)

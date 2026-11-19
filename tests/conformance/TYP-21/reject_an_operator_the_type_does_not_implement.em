@@ -8,13 +8,13 @@ struct Meters:
     v: f64
 
 extend Meters:
-    fn add(other: Meters) -> Meters:
-        return Meters(v=this.v + other.v)
+    fn add(rhs: Meters) -> Meters:
+        return Meters(v=this.v + rhs.v)
 
     fn neg() -> Meters:
         return Meters(v=-this.v)
 
-    fn pow(n: int) -> Meters:
+    fn pow(rhs: int) -> Meters:
         return this
 
 fn main():
