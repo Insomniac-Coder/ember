@@ -22,11 +22,11 @@ fn main():
     xs = [1, 2, 3, 4, 5, 6, 7, 8]
     k = 10
     out: Array[int] = []
-    for y in xs.iter().map(owns fn(x: ref int) => x + k):
+    for y in xs.iter().map(owns fn(ref x: int) => x + k):
         out.push(owns y)
     println(out)
     out = []
-    for y in xs.iter().filter(owns fn(x: ref int) => x % 2 == 0):
+    for y in xs.iter().filter(owns fn(ref x: int) => x % 2 == 0):
         out.push(owns y)
     println(out)
     out = []
@@ -35,26 +35,26 @@ fn main():
         out.push(owns y)
     println(out)
     out = []
-    for y in xs.iter().filter_map(owns fn(x: ref int) => Some(x * 100) if x > 6 else None):
+    for y in xs.iter().filter_map(owns fn(ref x: int) => Some(x * 100) if x > 6 else None):
         out.push(owns y)
     println(out)
     out = []
-    for y in xs.iter().take_while(owns fn(x: ref int) => x < 4):
+    for y in xs.iter().take_while(owns fn(ref x: int) => x < 4):
         out.push(owns y)
     else:
         print(out, "ended")
     println()
     out = []
-    for y in xs.iter().skip_while(owns fn(x: ref int) => x < 6).map(owns fn(x: ref int) => x * 2):
+    for y in xs.iter().skip_while(owns fn(ref x: int) => x < 6).map(owns fn(ref x: int) => x * 2):
         out.push(owns y)
     println(out)
     seen: Array[int] = []
     out = []
-    for y in (0..5).map(fn(x: int) => x * x).inspect(owns fn(v: ref int) => seen.push(owns v)):
+    for y in (0..5).map(fn(x: int) => x * x).inspect(owns fn(ref v: int) => seen.push(owns v)):
         out.push(owns y)
     println(seen, out)
     out = []
-    for y in xs.iter().rev().skip(2).map(owns fn(x: ref int) => -x):
+    for y in xs.iter().rev().skip(2).map(owns fn(ref x: int) => -x):
         if y == -4:
             break
         out.push(owns y)
@@ -62,6 +62,6 @@ fn main():
         print("never")
     println(out)
     total = 0
-    for y in xs.iter().map(owns fn(x: ref int) => x * 3 + 1):
+    for y in xs.iter().map(owns fn(ref x: int) => x * 3 + 1):
         total += y
     println(total)

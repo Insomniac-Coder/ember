@@ -74,6 +74,6 @@ fn main():
     println(marks, seen)
     tally = thread_shared Tally()
     tally_1 = thread_shared tally
-    counted = system(owns owned fn(ref mut q: Query[Vel]): tally_1.total.fetch_add(q.iter().map(owns fn(v: ref Vel) => v.x).sum()), "counted")
+    counted = system(owns owned fn(ref mut q: Query[Vel]): tally_1.total.fetch_add(q.iter().map(owns fn(ref v: Vel) => v.x).sum()), "counted")
     w.run_parallel(owns [counted, system(owns owned fn(ref mut q: Query[Pos]): TWO.store(q.iter().count()), "two")])
     println(tally.total.load(), TWO.load(), w.has[Mark](a))

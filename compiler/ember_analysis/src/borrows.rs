@@ -4034,14 +4034,7 @@ fn check_escapes(
         // `[UNS-4]` — a loan through a raw pointer points where the pointer does, never into this
         // frame: keeping that memory live is the obligation of the unsafe code that made it
         // (an imported C++ method's `T&` result, `[FFI-40]`).
-        // `[FN-1]` — a class parameter written `ref x: C` is a handle the caller keeps alive; a view of one of its fields
-        // points into the object, never into the handle's copy (the form `x: ref C` was a view type).
-        let through_a_class_parameter = is_parameter
-            && body.param_modes.get((place.local.0 as usize).wrapping_sub(1)) != Some(&ParameterMode::Owned)
-            && matches!(types.kind(root.ty), TyKind::Class(_))
-            && !place.projection.is_empty();
         if through_a_view
-            || through_a_class_parameter
             || crate::regions::through_raw_pointer(body, types, place)
             || (is_parameter
                 && arena_owner.is_some_and(|owner| is_named_arena_origin(body, owner, types)))

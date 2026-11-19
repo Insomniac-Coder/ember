@@ -1221,6 +1221,7 @@ impl Parser<'_> {
         // `[LEX-14]` — `ref: int` names the parameter with a keyword: no word before the name.
         let (mode, is_const) = if self.at_keyword_written_as_name(Punct::Colon) { (Mode::Borrow, false) } else { self.parse_param_word(false) };
         let worded = self.pos != before_word;
+        let mut reads = self.wrote_ref_at(before_word);
 
         // `[FN-4]` — the receiver follows the same modes as any parameter.
         if self.at_kw(Kw::SelfValue) {
@@ -1238,13 +1239,16 @@ impl Parser<'_> {
 
         let name = self.expect_ident();
         self.expect_punct(Punct::Colon);
-        let mode = if worded { mode } else { self.refuse_mode_in_type(name, true).unwrap_or(mode) };
+        let before_type = self.pos;
+        let mode = if worded { mode } else { self.refuse_mode_in_type(name).unwrap_or(mode) };
+        reads |= self.wrote_ref_at(before_type) && self.pos != before_type;
         // `[LEX-15]`, `[LT-48]` — `runtime` is a keyword only after the `:` and directly before `dyn`.
         if self.at_contextual("runtime") && self.at_kw_at(1, Kw::Dyn) {
             self.bump();
             self.runtime_params.push(id);
         }
         let ty = self.parse_type();
+        let ty = if reads { self.view_of(ty) } else { ty };
         let default = self.eat_punct(Punct::Eq).then(|| self.parse_expr());
         // `[CLO-6]` — calling a `once fn` parameter consumes it, so it is taken over as an
         // `owned` one is; `owned` is implied and need not be written.
@@ -1271,15 +1275,11 @@ impl Parser<'_> {
     /// Refused, the words are taken and the parameter is read as the line written right is (`ref mut
     /// c: Counter`), so what is checked after is what was meant: whether it was.
     /// Called for a name with no word before it: `ref mut x: ref mut T` is a parameter of a view type.
-    pub(crate) fn refuse_mode_in_type(&mut self, name: Ident, plain_too: bool) -> Option<Mode> {
+    pub(crate) fn refuse_mode_in_type(&mut self, name: Ident) -> Option<Mode> {
         if !self.at_kw(Kw::Ref) || self.in_extern_block || self.in_ffi_contract {
             return None;
         }
         let mutable = self.at_kw_at(1, Kw::Mut);
-        // A lambda's `fn(w: ref String)` is the callable type `fn(ref String)`: only `ref mut` is refused there.
-        if !mutable && !plain_too {
-            return None;
-        }
         let n = if mutable { 2 } else { 1 };
         let words = if mutable { self.span().to(self.tokens[self.pos + 1].span) } else { self.span() };
         let written = ember_span::Span::new(name.span.file, name.span.start, self.tokens[self.pos + n].span.start);
@@ -1300,6 +1300,22 @@ impl Parser<'_> {
             self.bump();
         }
         Some(if mutable { Mode::Mut } else { Mode::Borrow })
+    }
+
+    /// Whether the token at `at` is a `ref` with no `mut` after it.
+    pub(crate) fn wrote_ref_at(&self, at: usize) -> bool {
+        matches!(self.tokens.get(at).map(|token| &token.kind), Some(TokenKind::Keyword(Kw::Ref)))
+            && !matches!(self.tokens.get(at + 1).map(|token| &token.kind), Some(TokenKind::Keyword(Kw::Mut)))
+    }
+
+    /// `[FN-1]`, `[BRW-8]` — `ref x: T` views the caller's place: its type is the view of `T`, whatever
+    /// `T` turns out to be in an instance of a generic.
+    pub(crate) fn view_of(&mut self, ty: TypeExpr) -> TypeExpr {
+        if matches!(ty.kind, TypeKind::Ref { .. }) {
+            return ty;
+        }
+        let span = ty.span;
+        TypeExpr { id: self.next_id(), kind: TypeKind::Ref { mutable: false, inner: Box::new(ty) }, span }
     }
 
     pub(crate) fn parse_param_word(&mut self, in_type: bool) -> (Mode, bool) {
