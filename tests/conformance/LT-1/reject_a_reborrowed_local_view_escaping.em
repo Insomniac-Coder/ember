@@ -10,7 +10,7 @@ fn first_of_local() -> ref mut int:
     iterator = span.iter_mut()
     match iterator.next():
         Some(item):
-            return item    #$ error[E3060]: `xs` does not live long enough
+            return item    #$ error[E3063]: this points into `xs`
         None:
             panic("empty")
 

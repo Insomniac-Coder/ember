@@ -6,7 +6,7 @@
 # this frame's copy of it.
 
 fn keep(x: StrView) -> ref StrView:
-    return ref x    #$ error[E3060]: `x` does not live long enough
+    return ref x    #$ error[E3063]: this points into `x`
 
 fn main():
     r = keep("zz")

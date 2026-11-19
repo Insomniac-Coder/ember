@@ -12,11 +12,11 @@ struct Holder:
 
 fn leak() -> Pick:
     t = String("hello")
-    return Pick.Name(t)              #$ error[E3060]: `t` does not live long enough
+    return Pick.Name(t)              #$ error[E3063]: this points into `t`
 
 fn leak_nested() -> Holder:
     t = String("hello")
-    return Holder(Pick.Name(t))      #$ error[E3060]: `t` does not live long enough
+    return Holder(Pick.Name(t))      #$ error[E3063]: this points into `t`
 
 fn main():
     println(1)

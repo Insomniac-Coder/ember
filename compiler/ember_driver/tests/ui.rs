@@ -85,7 +85,7 @@ fn required_primary_fragments(shape: Shape) -> &'static [&'static str] {
         Shape::B9 => &["owned fn"],
         Shape::B10 => &["local"],
         Shape::B11 => &["assert_disjoint"],
-        Shape::B12 => &["owned copy"],
+        Shape::B12 => &["owned copy", "of your own"],
         Shape::B13 => &["separate parameters"],
         Shape::B16 => &["copy of"],
         Shape::B17 => &["weakref"],
@@ -687,14 +687,14 @@ fn cross_file_name_suggestions_ignore_file_and_import_discovery_order() {
 #[test]
 fn a_returned_view_of_a_local_is_one_error() {
     // D-190, `[DIA-14]` — the drop of `tmp` at the return is the escape
-    // `E3060` reports, not a second, `E3021` write while borrowed.
+    // `E3063` reports, not a second, `E3021` write while borrowed.
     let root = workspace_root();
     let path = root
         .join("tests/conformance/LT-3/reject_a_returned_view_of_a_local")
         .with_extension(ember_branding::SOURCE_EXT);
     let (exit, stderr) = check(&path, &root);
     assert_ne!(exit, 0, "the escaping view must be rejected");
-    assert_eq!(error_codes(&stderr), ["E3060"], "{stderr}");
+    assert_eq!(error_codes(&stderr), ["E3063"], "{stderr}");
 }
 
 /// `[DIA-21]`, `[DIA-13]` (ODR-179) — a Python habit's case lives at `tests/ui/python/<id>/<name>.em`

@@ -3979,7 +3979,7 @@ fn check_body(
     }
 }
 
-/// `E3060` — the borrowed value does not live long enough.
+/// `E3063` — a returned view would outlive what it points into.
 ///
 /// A borrow of a **view-typed parameter** is fine: the caller owns what it
 /// points at and `[LT-1]`'s elision ties the return's region to it. A borrow
@@ -4066,13 +4066,13 @@ fn check_escapes(
             let view = types.display(root.ty);
             format!("return `{view}` instead of `ref {view}`: `{owner}` already borrows the caller's data")
         } else if own_view_slot {
-            format!("return a view of what `{owner}` points to, or an owned value")
+            format!("return a view of what `{owner}` points to, or a value of your own (`copy of`)")
         } else if owned_parameter {
-            format!("borrow `{owner}` instead of taking it over (`owns`), or return an owned value")
+            format!("borrow `{owner}` instead of taking it over (`owns`), or return a value of your own (`String(...)`, `copy of`)")
         } else if is_parameter {
-            format!("take `{owner}` as a view (`Span[T]`, `StrView` or `ref T`), or return an owned value")
+            format!("take `{owner}` as a view (`Span[T]`, `StrView` or `ref T`), or return a value of your own (`copy of`)")
         } else {
-            "return an owned value, take the destination as a `ref mut` parameter, or borrow something the caller owns"
+            "return a value of your own (`String(...)`, `copy of`), take the destination as a `ref mut` parameter, or borrow something the caller owns"
                 .to_string()
         };
         let is_arena = arena_owner.is_some();
@@ -4132,13 +4132,15 @@ fn check_escapes(
                     .note("what a job allocates from its local arena goes when the job ends [JOB-5]"),
             );
         } else {
+            // `[FN-3]`, `[TYP-15]`, `[BRW-8]` (A2-2) — a view returned where it would outlive what it
+            // points into: `E3063`, shape B12.
             sink.emit_classified(
                 Diagnostic::error(
-                    codes::E3060,
+                    codes::E3063,
                     span,
-                    format!("`{name}` does not live long enough"),
+                    format!("this points into `{name}`, which ends when the function returns"),
                 )
-                .primary_label("the borrow is still live when the function returns")
+                .primary_label("the view is returned here")
                 .secondary(loan.span, format!("`{name}` is borrowed here"))
                 .secondary(root.span, storage)
                 .help(repair)

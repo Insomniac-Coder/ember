@@ -12,7 +12,7 @@ struct Holder:
 
 fn make() -> Holder[i32]:
     source: String = "local"
-    return Holder(source.as_str(), 0) #$ error[E3060]:
+    return Holder(source.as_str(), 0) #$ error[E3063]:
 
 fn main():
     _holder = make()

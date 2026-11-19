@@ -8,7 +8,7 @@ fn first_two(xs: Array[int]) -> ref mut int:
     tmp = copy of xs
     match tmp.get_pair_mut(0, 1):
         Some((a, _)):
-            return a #$ error[E3060]
+            return a #$ error[E3063]
         None:
             panic("short")
 

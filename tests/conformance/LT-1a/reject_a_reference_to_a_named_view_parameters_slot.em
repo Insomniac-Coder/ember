@@ -5,7 +5,7 @@
 # own copy, which ends with the call whatever `@borrows` says (`[BRW-8]`).
 
 fn pick(a: StrView, x: StrView) -> ref StrView from a:
-    return ref x    #$ error[E3060]: `x` does not live long enough
+    return ref x    #$ error[E3063]: this points into `x`
 
 fn main():
     println(pick("a", "b"))

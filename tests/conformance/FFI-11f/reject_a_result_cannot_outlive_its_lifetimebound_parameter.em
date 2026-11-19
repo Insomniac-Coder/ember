@@ -20,7 +20,7 @@ fn second_of_new() -> ref c_int:
     unsafe:  # SAFETY(ffi): a vector of three, read while it lives
         match cpp.numbers():
             Ok(values):
-                return cpp.pick(values, 1)    #$ error[E3060]: `values` does not live long enough
+                return cpp.pick(values, 1)    #$ error[E3063]: this points into `values`
             Err(_):
                 panic("no numbers")
 
@@ -28,7 +28,7 @@ fn last_of_new(ref mine: cpp.Shelf) -> ref c_int:
     match shelf():
         Ok(theirs):
             unsafe:  # SAFETY(ffi): both shelves are live during the call
-                return mine.last_of(theirs)    #$ error[E3060]: `theirs` does not live long enough
+                return mine.last_of(theirs)    #$ error[E3063]: this points into `theirs`
         Err(_):
             panic("no shelf")
 

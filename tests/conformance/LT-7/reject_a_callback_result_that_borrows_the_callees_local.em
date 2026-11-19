@@ -1,6 +1,6 @@
 #$ test: compile-fail
 #$ rules: LT-7, LT-1
-#$ error[E3060]: `tmp` does not live long enough
+#$ error[E3063]: this points into `tmp`
 # The callback's result borrows `tmp` for as long as the callee keeps it, which
 # ends when the callee returns.
 

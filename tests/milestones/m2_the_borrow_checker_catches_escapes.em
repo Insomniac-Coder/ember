@@ -1,6 +1,6 @@
 #$ test: compile-fail
 #$ rules: BRW-1, BRW-2, LT-1
-#$ error[E3060]: does not live long enough
+#$ error[E3063]: which ends when the function returns
 
 ## Milestone M2 (Part XX §3). The specification writes it over `Array[i32]`
 ## and `xs[0]`, which needs `Index` to return a `ref` — that arrives with

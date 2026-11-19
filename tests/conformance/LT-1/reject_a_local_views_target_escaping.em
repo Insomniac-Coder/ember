@@ -6,12 +6,12 @@
 fn bad_span() -> ref int:
     xs = [1, 2]
     s = xs.as_span()
-    return ref s[0]    #$ error[E3060]: `xs` does not live long enough
+    return ref s[0]    #$ error[E3063]: this points into `xs`
 
 fn bad_ref() -> ref int:
     x = 5
     q: ref int = x
-    return q    #$ error[E3060]: `x` does not live long enough
+    return q    #$ error[E3063]: this points into `x`
 
 fn main():
     println(bad_span(), bad_ref())

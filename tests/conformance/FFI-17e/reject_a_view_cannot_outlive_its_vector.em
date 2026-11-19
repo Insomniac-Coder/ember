@@ -10,7 +10,7 @@ fn first_squares() -> Span[c_int]:
     unsafe:  # SAFETY(ffi): a call with a value
         match cpp.squares(3):
             Ok(values):
-                return values.span()    #$ error[E3060]: `values` does not live long enough
+                return values.span()    #$ error[E3063]: this points into `values`
             Err(_):
                 panic("no squares")
 

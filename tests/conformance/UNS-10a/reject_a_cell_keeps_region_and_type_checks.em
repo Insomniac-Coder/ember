@@ -12,7 +12,7 @@ fn keep() -> Span[int]:
     # SAFETY(aliasing): nothing else reaches the cell's storage while the write runs
     unsafe:
         write(cell.get(), 0, 4)
-    return xs[..]    #$ error[E3060]: `xs` does not live long enough
+    return xs[..]    #$ error[E3063]: this points into `xs`
 
 fn main():
     cell = UnsafeCell(1)

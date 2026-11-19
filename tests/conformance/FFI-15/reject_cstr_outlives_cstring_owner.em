@@ -1,7 +1,7 @@
 #$ test: compile-fail
 #$ rules: FFI-15, LT-1, BRW-4
 #$ profiles: debug
-#$ error[E3060]: `value` does not live long enough
+#$ error[E3063]: this points into `value`
 
 import std.ffi
 

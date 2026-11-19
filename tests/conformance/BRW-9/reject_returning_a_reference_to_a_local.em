@@ -1,7 +1,7 @@
 #$ test: compile-fail
 #$ rules: BRW-9, LT-1, LT-5, DIA-7
 #$ profiles: debug, development, release
-#$ error[E3060]: does not live long enough
+#$ error[E3063]: which ends when the function returns
 
 # A `ref` is safe only while its source place is alive. Returning this borrow
 # would expose a pointer into `local` after the callee frame has ended.

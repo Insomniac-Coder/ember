@@ -18,10 +18,10 @@ fn from_span(h: H) -> ref int:
     return ref h.s[0]
 
 fn from_array(owns h: H) -> ref int:
-    return ref h.arr[0]    #$ error[E3060]: `h.arr[0]` does not live long enough
+    return ref h.arr[0]    #$ error[E3063]: this points into `h.arr[0]`
 
 fn from_box(h: H) -> ref int:
-    return ref h.b.x    #$ error[E3060]: `h.b.x` does not live long enough
+    return ref h.b.x    #$ error[E3063]: this points into `h.b.x`
 
 fn main():
     println(0)

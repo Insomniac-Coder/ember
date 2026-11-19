@@ -5,7 +5,7 @@
 
 fn local() -> ref int:
     x = 5
-    return x    #$ error[E3060]: `x` does not live long enough
+    return x    #$ error[E3063]: this points into `x`
 
 fn main():
     pass
