@@ -5,5 +5,5 @@
 fn main():
     s = String.from("abc")
     view = s.as_str()
-    s.insert(0, 'x')  #$ error[E3021]: `s` is borrowed here and mutably borrowed elsewhere
-    println(view)
+    s.insert(0, 'x')
+    println(view)    #$ error[E3060]

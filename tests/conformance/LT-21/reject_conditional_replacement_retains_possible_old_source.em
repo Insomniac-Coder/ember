@@ -14,5 +14,5 @@ fn main():
     replace = true
     if replace:
         pair.selected = replacement.as_span()
-    old.push(owns 1) #$ error[E3021]: `old` is borrowed here and mutably borrowed elsewhere
-    println(pair.selected.len())
+    old.push(owns 1)
+    println(pair.selected.len())    #$ error[E3060]

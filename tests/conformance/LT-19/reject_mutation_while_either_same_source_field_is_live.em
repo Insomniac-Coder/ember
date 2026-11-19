@@ -12,5 +12,5 @@ fn main():
     shared = values.as_span()
     pair = Pair(shared, shared)
     println(pair.left[0])
-    values.push(owns 2) #$ error[E3021]: `values` is borrowed here and mutably borrowed elsewhere
-    println(pair.right[0])
+    values.push(owns 2)
+    println(pair.right[0])    #$ error[E3060]

@@ -17,5 +17,5 @@ fn main():
     right: Array[i32] = Array[i32]()
     right.push(owns 42)
     pair = Pair[i32](left.as_span(), right.as_span())
-    right.push(owns 43) #$ error[E3021]: `right` is borrowed here and mutably borrowed elsewhere
-    println(right_len[i32](pair))
+    right.push(owns 43)
+    println(right_len[i32](pair))    #$ error[E3060]

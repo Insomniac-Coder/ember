@@ -5078,20 +5078,43 @@ fn check_point(
                     .note("borrowed storage must remain valid through every use, including a destructor [DRP-7]"));
                 continue;
             }
-            // `[OWN-3]`, `[BRW-17]` — a hand-over reshapes the giver's place: the view still used
-            // after it is the error, at that use.
-            if matches!(access, Access::Move)
+            // `[OWN-3]`, `[BRW-17]` — a hand-over, or any change that may move or free what a
+            // read-only view points into, reshapes the place: the view ends there, and its later use
+            // is the error, at that use.
+            // A loop's walk is `E3020` (`[CTL-2]`), an arena's scope `E3096`, and a view a `dyn` or
+            // virtual call gives may be checked while running (`[LT-48]`): each keeps its own path.
+            let reshaped = !matches!(access, Access::Move)
+                && !loan.arena_scope
+                && reshapes_at(body, types, point, place, *access, loan_place)
+                && !loan_held_by_for_iterator(body, regions, loan, point)
+                && !crate::dyn_kinds::held_by_a_dyn_call(body, &form.sites, loan.borrower);
+            if (matches!(access, Access::Move) || reshaped)
                 && !loan.capability.is_mut()
                 && let Some(later) = later
             {
                 if !repeated {
-                    sink.emit_classified(
+                    let diagnostic = if reshaped {
+                        Diagnostic::error(
+                            codes::E3060,
+                            later,
+                            format!(
+                                "{name} is changed on line {} in a way that may move or free what a view made on line {} points into, and the view is used here",
+                                ember_diag::line_mark(span),
+                                ember_diag::line_mark(loan.span)
+                            ),
+                        )
+                        .primary_label("the view is used here")
+                        .secondary(span, "this may move or free what the view points into")
+                        .secondary(loan.span, "the view is made here")
+                        .help("use the view before that line, or make it again after it; or keep a value of your own (`copy of`)")
+                    } else {
                         Diagnostic::error(codes::E3060, later, format!("{name} was handed over, and a view of it is still used here"))
                             .primary_label("the view is used here")
                             .secondary(span, "handed over here")
                             .secondary(loan.span, "the view is made here")
-                            .help("use the view before the hand-over, or hand over a copy: `copy of`"),
-                    );
+                            .help("use the view before the hand-over, or hand over a copy: `copy of`")
+                    };
+                    sink.emit_classified(diagnostic);
                 }
                 continue;
             }
@@ -5656,6 +5679,48 @@ fn through_indirection(body: &Body, types: &TypeTable, place: &Place) -> bool {
 /// its feet). D-374: this was a second copy of the walk with no class-field
 /// step, so `h.field` had the class's type and a `Shared[T]` stored in a
 /// class field began no access at all.
+/// `[BRW-17]`, `[BCK-3]` — whether `access` to `place` at `point` may move or free what a view of
+/// `loan_place` points into: a built-in that adds, removes, reorders or replaces the elements of
+/// what its first argument points at (both, for `mem.swap`), or a write of a whole value that owns
+/// memory over a place the view points inside (`xs = [9]` while a view reads `xs[0]`). A write of
+/// the viewed place itself is a change, not a reshape (`[BRW-1]`).
+fn reshapes_at(body: &Body, types: &TypeTable, point: Point, place: &Place, access: Access, loan_place: &Place) -> bool {
+    match access {
+        // The `ref mut` a reshaping built-in is given, where it is taken: the call that receives it
+        // as the argument it reshapes.
+        Access::Borrow { mutable: true } => {
+            let block = &body.blocks[point.block];
+            let Some(StmtKind::Assign { place: taken, rvalue: Rvalue::Ref { mutable: true, .. } }) =
+                block.stmts.get(point.index).map(|stmt| &stmt.kind)
+            else {
+                return false;
+            };
+            if !taken.projection.is_empty() {
+                return false;
+            }
+            body.blocks.iter().any(|block| match &block.terminator {
+                // An arena's `reset` reuses what it made: `E3021` (`[ALC-5]`), not a reshape of a view's place.
+                Terminator::Call { func: FuncRef::Builtin { which, .. }, args, .. }
+                    if crate::summaries::reshaping_builtin(types, which) && !matches!(which, ember_mir::Builtin::ArenaReset) =>
+                {
+                    let reshaped = if matches!(which, ember_mir::Builtin::MemSwap { .. }) { 2 } else { 1 };
+                    args.iter().take(reshaped).any(|arg| {
+                        matches!(arg, Operand::Copy(given) | Operand::Move(given) if given.local == taken.local && given.projection.is_empty())
+                    })
+                }
+                _ => false,
+            })
+        }
+        Access::Write => {
+            loan_place.local == place.local
+                && loan_place.projection.len() > place.projection.len()
+                && loan_place.projection.starts_with(&place.projection)
+                && crate::summaries::reshaped_by_write(types, place_ty(body, types, place), 0)
+        }
+        _ => false,
+    }
+}
+
 fn place_ty(body: &Body, types: &TypeTable, place: &Place) -> Ty {
     crate::regions::place_type(body, types, place)
 }

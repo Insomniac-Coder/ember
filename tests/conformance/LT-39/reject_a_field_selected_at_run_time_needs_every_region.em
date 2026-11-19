@@ -27,10 +27,10 @@ fn main():
     right.push(owns 8)
     pair = bundle(left.as_span(), right.as_span())
     chosen = pick(pair, 0)
-    right.push(owns 9)    #$ error[E3021]: `right` is borrowed here and mutably borrowed elsewhere
-    println(chosen[0])
+    right.push(owns 9)
+    println(chosen[0])    #$ error[E3060]
     again = bundle(left.as_span(), right.as_span())
     which = 0
     selected = again.left if which == 0 else again.right
-    right.push(owns 10)    #$ error[E3021]: `selected` is what keeps it alive
-    println(selected[0])
+    right.push(owns 10)
+    println(selected[0])    #$ error[E3060]

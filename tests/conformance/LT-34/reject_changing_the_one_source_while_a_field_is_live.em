@@ -15,5 +15,5 @@ fn halves(all: Span[i32]) -> Halves:
 fn main():
     values: Array[i32] = Array[i32]()
     parts = halves(values.as_span())
-    values.push(owns 6) #$ error[E3021]: `values` is borrowed here and mutably borrowed elsewhere
-    println(parts.back.len())
+    values.push(owns 6)
+    println(parts.back.len())    #$ error[E3060]

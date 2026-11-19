@@ -8,5 +8,5 @@ fn main():
     for w in xs.windows(2):
         xs.push(owns w[0])                #$ error[E3020]: cannot mutate `xs` while it is borrowed by this loop
     it = xs.windows(2)
-    xs.clear()                       #$ error[E3021]
-    _first = it.next()
+    xs.clear()
+    _first = it.next()    #$ error[E3060]

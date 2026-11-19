@@ -8,5 +8,5 @@ fn main():
     s: String = String()
     s.push_str("hi")
     view: StrView = s
-    s.push_str("!")  #$ error[E3021]: `s` is borrowed here and mutably borrowed elsewhere
-    println(view)
+    s.push_str("!")
+    println(view)    #$ error[E3060]

@@ -81,7 +81,7 @@ fn required_primary_fragments(shape: Shape) -> &'static [&'static str] {
         Shape::B4 => &["ref mut"],
         Shape::B5 => &["index", "Handle", "Weak"],
         Shape::B6 => &["from"],
-        Shape::B7 => &["owned value"],
+        Shape::B7 => &["owned value", "of your own"],
         Shape::B9 => &["owned fn"],
         Shape::B10 => &["local"],
         Shape::B11 => &["assert_disjoint"],

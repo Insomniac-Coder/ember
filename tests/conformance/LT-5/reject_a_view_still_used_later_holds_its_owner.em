@@ -7,5 +7,5 @@ fn main():
     xs: Array[i32] = Array[i32]()
     xs.push(owns 1)
     v = ref xs[0]
-    xs.push(owns 2)                 #$ error[E3021]: `xs[0]` is borrowed here
-    println(v)
+    xs.push(owns 2)
+    println(v)    #$ error[E3060]

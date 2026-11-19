@@ -13,8 +13,8 @@ class Bag:
 fn main():
     b = Bag()
     v = b.items[..]
-    b.items.push(owns 4)    #$ error[E3021]: `b.items` is borrowed here and mutably borrowed elsewhere
-    println(v)
+    b.items.push(owns 4)
+    println(v)    #$ error[E3060]
     w = b.items[..]
     b.items = [9]      #$ error[E3021]: `b.items` cannot be written while it is borrowed
     println(w)

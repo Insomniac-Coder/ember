@@ -15,5 +15,5 @@ fn main():
     println(best)
     words = ["x".to_string(), "yy".to_string()]
     found = words.iter().find(owns fn(ref w: String) => w.len() == 2)
-    words.push(owns "z".to_string())    #$ error[E3021]: `found` is what keeps it alive
-    println(found)
+    words.push(owns "z".to_string())
+    println(found)    #$ error[E3060]

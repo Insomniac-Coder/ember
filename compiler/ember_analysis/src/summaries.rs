@@ -238,7 +238,7 @@ fn steps_of(body: &Body, types: &TypeTable, place: &Place) -> Vec<Step> {
 /// §VII.1 — whether writing a value of this type is a reshape: it owns memory the write may free or
 /// move (a list, a string, a box, an object's handle, a `dyn` value, or anything holding one), or it
 /// is an enum whose variant the write may change. A number, a `bool`, a view or a pointer is not.
-fn reshaped_by_write(types: &TypeTable, ty: ember_types::Ty, depth: usize) -> bool {
+pub(crate) fn reshaped_by_write(types: &TypeTable, ty: ember_types::Ty, depth: usize) -> bool {
     if depth > 8 {
         return true;
     }
@@ -254,7 +254,7 @@ fn reshaped_by_write(types: &TypeTable, ty: ember_types::Ty, depth: usize) -> bo
 
 /// §VII.1 — a built-in that adds, removes, reorders or replaces the elements of the list, string or
 /// table its first argument points at, or replaces the value it points at.
-fn reshaping_builtin(types: &TypeTable, which: &Builtin) -> bool {
+pub(crate) fn reshaping_builtin(types: &TypeTable, which: &Builtin) -> bool {
     match which {
         Builtin::ArrayPush
         | Builtin::ArrayInsert

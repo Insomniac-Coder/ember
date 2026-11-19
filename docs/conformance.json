@@ -19,7 +19,7 @@
         "XV.6"
       ],
       "rules": 436,
-      "done": 247,
+      "done": 248,
       "missing": [
         "ATT-1",
         "BRW-1",
@@ -32,7 +32,6 @@
         "BRW-17",
         "BRW-18",
         "BRW-19",
-        "BRW-2",
         "BRW-20",
         "BRW-21",
         "BRW-22",
@@ -224,7 +223,7 @@
         "XV.7"
       ],
       "rules": 627,
-      "done": 312,
+      "done": 313,
       "missing": [
         "ALC-1",
         "ALC-2",
@@ -253,7 +252,6 @@
         "BRW-17",
         "BRW-18",
         "BRW-19",
-        "BRW-2",
         "BRW-20",
         "BRW-21",
         "BRW-22",
@@ -549,7 +547,7 @@
         "XVI"
       ],
       "rules": 690,
-      "done": 344,
+      "done": 345,
       "missing": [
         "ALC-1",
         "ALC-2",
@@ -580,7 +578,6 @@
         "BRW-17",
         "BRW-18",
         "BRW-19",
-        "BRW-2",
         "BRW-20",
         "BRW-21",
         "BRW-22",
@@ -905,7 +902,7 @@
         "Annex B"
       ],
       "rules": 756,
-      "done": 376,
+      "done": 377,
       "missing": [
         "ALC-1",
         "ALC-2",
@@ -936,7 +933,6 @@
         "BRW-17",
         "BRW-18",
         "BRW-19",
-        "BRW-2",
         "BRW-20",
         "BRW-21",
         "BRW-22",

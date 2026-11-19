@@ -14,6 +14,6 @@ fn main():
         t = s
         println(s)    #$ error[E3040]: `s` was handed over to `t` on line 14 and is used on line 15
         v = xs[..]
-        xs.push(owns 4)    #$ error[E3021]: `xs` is borrowed here and mutably borrowed elsewhere
-        println(v)
+        xs.push(owns 4)
+        println(v)    #$ error[E3060]
         println(t)

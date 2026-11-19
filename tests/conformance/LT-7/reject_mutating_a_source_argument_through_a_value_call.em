@@ -12,5 +12,5 @@ fn main():
     n = 2
     v = h(xs, n)
     n = 3
-    xs.push(owns 9)    #$ error[E3021]: `xs` is borrowed here and mutably borrowed elsewhere
-    println(v, n)
+    xs.push(owns 9)
+    println(v, n)    #$ error[E3060]

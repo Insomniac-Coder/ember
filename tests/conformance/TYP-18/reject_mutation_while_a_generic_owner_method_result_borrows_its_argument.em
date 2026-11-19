@@ -14,5 +14,5 @@ fn main():
     values: Array[i32] = Array[i32]()
     values.push(owns 59)
     seen = holder.passthrough(values.as_span())
-    values.push(owns 60) #$ error[E3021]: `values` is borrowed here and mutably borrowed elsewhere
-    println(seen[0])
+    values.push(owns 60)
+    println(seen[0])    #$ error[E3060]

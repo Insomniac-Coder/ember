@@ -442,6 +442,18 @@ pub(crate) fn explain<'s>(body: &Body, sites: &'s DynSites, borrower: LocalId) -
     (culprits.is_some() || site.help.is_some()).then_some(Explained { block, argument, site, culprits })
 }
 
+/// `[LT-1]`, E3021's row of the code table — whether the loan `borrower` holds is an argument of a `dyn`
+/// or virtual call, whose result may point into it for some kinds and not others: a change of what it
+/// holds while that result is used is a change of what a read-only name reads (`E3021`), checked while
+/// running where `runtime` says so (`[LT-48]`), whatever the change.
+pub(crate) fn held_by_a_dyn_call(body: &Body, sites: &DynSites, borrower: LocalId) -> bool {
+    let borrower = converted(body, sites, borrower);
+    sites.keys().any(|&block| {
+        let Terminator::Call { args, .. } = &body.blocks[block].terminator else { return false };
+        args.iter().any(|arg| matches!(arg, Operand::Copy(place) | Operand::Move(place) if place.local == borrower))
+    })
+}
+
 /// `[LT-48]` (D-967) — the value a conversion makes of `local` for the call: an argument given as
 /// another view type is converted first (a `String` where a `StrView` is wanted: `_7 = &s`,
 /// `_6 = as_str(copy _7)`, then `p.title(_6)`), so the loan `_7` holds reaches the `dyn` call

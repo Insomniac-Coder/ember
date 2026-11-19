@@ -1,6 +1,6 @@
 #$ test: compile-fail
 #$ rules: SPN-1, SPN-3, BRW-1, BRW-2
-#$ error[E3021]: `values` is borrowed here and mutably borrowed elsewhere
+#$ error[E3060]
 
 # The child Span keeps the original Array's shared loan alive even though the
 # parent Span's final direct use is the split call.

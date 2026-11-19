@@ -23,8 +23,8 @@ struct Shower:
         xs = [1, 2]
         v = ref xs
         r = p.pick(v)
-        xs.push(owns 3)    #$ error[E3021]: `xs` is borrowed here and mutably borrowed elsewhere
-        println(r, v)
+        xs.push(owns 3)
+        println(r, v)    #$ error[E3060]
 
 fn main():
     s = Shower(n=1)

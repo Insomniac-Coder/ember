@@ -13,5 +13,5 @@ struct Pair:
 fn main():
     p = Pair([1], [2])
     r = p.first_a()
-    p.a.push(owns 4) #$ error[E3021]: `p.a` is borrowed here and mutably borrowed elsewhere
-    println(r)
+    p.a.push(owns 4)
+    println(r)    #$ error[E3060]

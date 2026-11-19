@@ -20,5 +20,5 @@ fn main():
     right.push(owns 8)
     pair = bundle(left.as_span(), right.as_span())
     copy_pair = fn() => pair
-    right.push(owns 9) #$ error[E3021]: `right` is borrowed here and mutably borrowed elsewhere
-    println(copy_pair().left[0])
+    right.push(owns 9)
+    println(copy_pair().left[0])    #$ error[E3060]

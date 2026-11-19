@@ -8,5 +8,5 @@ fn head(xs: Array[int]) -> Span[int]:
 fn main():
     xs = [1, 2, 3]
     s = head(xs)
-    xs.push(owns 4)    #$ error[E3021]: `xs` is borrowed here and mutably borrowed elsewhere
-    println(s[0])
+    xs.push(owns 4)
+    println(s[0])    #$ error[E3060]

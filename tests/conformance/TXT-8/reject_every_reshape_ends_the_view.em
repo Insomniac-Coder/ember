@@ -6,14 +6,14 @@
 fn main():
     s = String("abc")
     v = s.as_str()
-    s.push_str("d")    #$ error[E3021]: `s` is borrowed here and mutably borrowed elsewhere
-    println(v)
+    s.push_str("d")
+    println(v)    #$ error[E3060]
     w = s.trim()
-    s.push('x')    #$ error[E3021]: `s` is borrowed here and mutably borrowed elsewhere
-    println(w)
+    s.push('x')
+    println(w)    #$ error[E3060]
     x = s[0..1]
     s = String("zzz")    #$ error[E3021]: `s` cannot be written while it is borrowed
     println(x)
     z = s.as_str()
-    s += "q"    #$ error[E3021]: `s` is borrowed here and mutably borrowed elsewhere
-    println(z)
+    s += "q"
+    println(z)    #$ error[E3060]

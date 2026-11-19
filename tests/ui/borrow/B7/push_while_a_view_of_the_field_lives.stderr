@@ -1,0 +1,13 @@
+error[E3060]: `b.items` is changed on line 7 in a way that may move or free what a view made on line 6 points into, and the view is used here
+ --> tests/ui/borrow/B7/push_while_a_view_of_the_field_lives.em:8:13
+  |
+6 |     view = b.items[..]
+  |            ------- the view is made here
+7 |     b.items.push(owns 4)
+  |     -------------------- this may move or free what the view points into
+8 |     println(view)
+  |             ^^^^ the view is used here
+  |
+  = help: use the view before that line, or make it again after it; or keep a value of your own (`copy of`)
+
+error: could not compile due to 1 error(s)

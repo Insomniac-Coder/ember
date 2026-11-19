@@ -12,5 +12,5 @@ fn main():
     replacement: Array[i32] = Array[i32]()
     pair = Pair(old.as_span(), stable.as_span())
     pair.selected = replacement.as_span()
-    replacement.push(owns 1) #$ error[E3021]: `replacement` is borrowed here and mutably borrowed elsewhere
-    println(pair.selected.len())
+    replacement.push(owns 1)
+    println(pair.selected.len())    #$ error[E3060]

@@ -7,6 +7,6 @@ fn main():
     a: Option[String] = Some("abc")
     match a:
         Some(s):
-            a = None  #$ error[E3021]
-            println(s)
+            a = None
+            println(s)    #$ error[E3060]
         None: pass

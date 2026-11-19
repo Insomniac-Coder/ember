@@ -6,7 +6,7 @@ fn main():
     text = String.from("left:right")
     match text.split_once(":"):
         Some((before, after)):
-            text.clear()  #$ error[E3021]: `text` is borrowed here and mutably borrowed elsewhere
-            println(before, after)
+            text.clear()
+            println(before, after)    #$ error[E3060]
         None:
             println("none")
