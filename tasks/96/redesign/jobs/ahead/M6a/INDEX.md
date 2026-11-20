@@ -3,8 +3,12 @@
 Written from `docs/spec-source/Ember_v0.9.20_Hardened_14.md` alone (`355cf49f`, tag `spec-h14`, sha256
 `F88C7977…`) by the Opus deputy D2, one milestone ahead of the builders, on 2026-11-20. M6a is
 MILESTONES.md's "Calls checked by the summaries; one name for one variable; messages that name the
-chain": A4-4 to A4-7, A2-10, A2-13, A1-21, A1-22, A3-6 to A3-8, A7-14. This first batch covers 15 of
-the rules those items complete (§0); the rest are listed in §2 for a second batch. Nothing was built:
+chain": A4-4 to A4-7, A2-10, A2-13, A1-21, A1-22, A3-6 to A3-8, A7-14. **Batch 1** (merged) covered 15
+of the rules those items complete; **batch 2** (the same day) the 29 the lead listed after it: RC-5,
+BCK-7, the EXC rules of A4-6, WK-3, BCK-1 to BCK-3, BCK-5, BCK-6, BCK-8, LT-35, LT-47, BRW-22's copy
+clause and the DIA rules of A7-14. Rules already credited (`docs/phase-status.json`, `built_for_0915`)
+and tested in `tests/conformance` were skipped: WK-2, CLS-7a, DIA-16; BCK-4 is M5's (`ahead/M5/BCK-4`).
+§2 says what is left. Nothing was built:
 every expectation is the spec's words and codes, never the compiler's. The files fail until M6a is
 built; when a rule is built, its directory moves to `tests/conformance/<RULE>/` and is checked with
 `python tasks/impl-0.9.9/annotations.py tests/conformance/<RULE>`. No hardening is cut here.
@@ -39,10 +43,23 @@ today (`FN-9/accept_a_ref_mut_class_parameter_may_change_and_replace`,
 `FN-9/accept_a_changing_method_through_a_ref_mut_p`,
 `BRW-21/accept_a_call_through_a_function_value_whose_functions_keep_the_promise`); none was run.
 
-**Totals.** 15 rules, 42 clauses, 69 files (34 accept, 35 reject), 159 cases: 68 error expectations
-(16 with the spec's text, 52 code only) and 91 output lines.
+**Batch 2's probe.** One fault fixed (`copy of` a span returned as an `Array`, LT-47); every other
+failure is not built: the compile-time checks for links and class objects (today run-time, or E3021
+where the spec says E3060 for a reshape), positions across a push, a method's object reserved, a
+`Map` walked `for k, ref mut v in`, `sharedref mut` (M5's A2-8), the message texts (E3040's label,
+E0100's and E0113's texts, `int` printed `i64`: Q10), and M6c's `assert_disjoint`. WK-3's file checks
+clean today; none was run.
+
+**Totals.** 44 rules, 77 clauses, 119 files (54 accept, 65 reject), 285 cases. Batch 1: 15 rules, 42
+clauses, 69 files (34 accept, 35 reject), 159 cases: 68 error expectations (16 with the spec's text,
+52 code only) and 91 output lines. Batch 2: 29 rules, 35 clauses, 50 files (20 accept, 30 reject),
+126 cases: 64 error expectations (18 with the spec's whole text; 9 pinned in part, to the words a DIA
+rule names, such as "used here" or `` `i64` ``; 37 code only), 56 output lines and 6 `#$ help:` or
+`#$ not-help:` lines, which batch 2 counts as cases.
 
 ## 0. Rules covered, and what else each needs before it can be credited
+
+### Batch 1
 
 | rule | clauses | files | cases | also needs (beyond M6a's own items) |
 |---|---|---|---|---|
@@ -61,6 +78,40 @@ today (`FN-9/accept_a_ref_mut_class_parameter_may_change_and_replace`,
 | FN-9 | 4 | 7 | 14 | M2 |
 | OBJ-5 | 2 | 3 | 3 | M2, M4 (`weakref`); M9 (`thread_shared this`, its own file) |
 | DSP-5 | 1 | 2 | 4 | M2; not written: through `dyn` and interface values (M11). Its first sentence is built (`tests/conformance/DSP-5`) |
+
+### Batch 2
+
+| rule | clauses | files | cases | also needs (beyond M6a's own items) |
+|---|---|---|---|---|
+| RC-5 | 1 | 3 | 8 | M8 (the stored-function file's capture words); not written: point 2 (`weakref thread_shared`, M9), the hand-over to a thread (M9) |
+| BCK-7 | 2 | 4 | 7 | none |
+| EXC-1 | 1 | 2 | 6 | none |
+| EXC-2 | 1 | 2 | 3 | none |
+| EXC-3 | 1 | 2 | 5 | none |
+| EXC-16 | 1 | 2 | 6 | none |
+| EXC-17 | 2 | 2 | 4 | M5's A2-8 (`sharedref mut`) |
+| EXC-19 | 1 | 1 | 4 | none (the method case is A4-7's summary) |
+| WK-3 | 1 | 1 | 3 | not written: a `thread_shared` value ended at its making thread's check point (M9) |
+| BCK-1 | 1 | 2 | 6 | none (positions are M5's BRW-16) |
+| BCK-2 | 1 | 2 | 5 | none (a view last used as an argument: BRW-21.1) |
+| BCK-3 | 1 | 2 | 6 | M2 (`static mut`); the rest of the clause is M5's BRW-1, BRW-17, BRW-18 files |
+| BCK-5 | 1 | 2 | 5 | none |
+| BCK-6 | 1 | 1 | 6 | M5's A2-5 (a position across a push) |
+| BCK-8 | 2 | 3 | 3 | M2; M5's A2-5; not written: which build checks a line (`[EFF-2a]`, two packages) |
+| LT-35 | 1 | 2 | 3 | not written: a foreign function's every field used and kept (M12) |
+| LT-47 | 2 | 3 | 6 | none |
+| BRW-22 | 1 | 1 | 3 | M2; BRW-22.1 (noalias on every `ref mut`) is M6c's |
+| DIA-2 | 1 | 1 | 4 | Q10 |
+| DIA-3 | 1 | 1 | 3 | none |
+| DIA-7 | 1 | 1 | 6 | M2 |
+| DIA-9 | 1 | 1 | 4 | M2 |
+| DIA-10 | 1 | 1 | 4 | M8 (B9's message offers a capture word) |
+| DIA-11 | 1 | 1 | 4 | M6c (`assert_disjoint`, `@no_alias_checks`' check) |
+| DIA-22 | 1 | 1 | 3 | M2 |
+| DIA-25 | 2 | 2 | 3 | not written: the runner applying every machine-applicable fix (A7-14's tooling), PAR-1's several-line replacement (M9) |
+| DIA-26 | 1 | 1 | 1 | none |
+| DIA-27 | 2 | 2 | 3 | M2; Q9 |
+| DIA-28 | 1 | 1 | 2 | M2; not written: `E7018` over `E3020` and `E3020` over `E7007` (M9) |
 
 ## 1. Rules, clauses and tests
 
@@ -183,16 +234,91 @@ Message column: "spec" = the spec's text; "none" = code only.
 |---|---|---|---|
 | 5.2 | what a `virtual` call may change is worked out from every override | `reject_a_virtual_call_makes_what_every_override_changes`; `accept_a_virtual_call_whose_overrides_change_nothing_walked` | none |
 
-## 2. Not in this batch, and old tests seen
+### Batch 2: RC-5 (VIII.2) — a view of an object reached through a link
 
-Rules the M6a items complete that this batch did not write: from A2-10, BRW-1, BRW-15 and BRW-17's
-call clauses (M5's files that wait for M6a already cover them: `BRW-1/accept_a_ref_mut_parameter_and_a_module_variable_are_checked_at_the_call`,
+| clause | what it says | test | message |
+|---|---|---|---|
+| 5.1 | no line or call in the view's life may end an object of its class family, held directly or through owners, nor a place of a function type whose state owns one: E3060 at the later use | `reject_a_line_or_call_that_may_end_the_object_a_link_view_reads` (`remove_all`; a base-class list; a list of teams); `reject_a_stored_function_that_may_end_the_object_a_link_view_reads` (`reset()`, `h.keep = fn(): pass`; M8); `accept_the_ways_out_and_ends_of_other_families` | spec (all three); none |
+
+### BCK-7 (XVIII.4) — links
+
+| clause | what it says | test | message |
+|---|---|---|---|
+| 7.1 | two paths through links follow BCK-3's rule for links | `reject_two_paths_through_links_may_reach_one_object`; `accept_two_paths_through_links_proved_apart` | none |
+| 7.2 | a link view lives while nothing may end its family (E3060); across a call that may change one it does not live (E3021); a walk keeps a `weakref` | `reject_a_link_view_across_a_call_that_may_change_or_end_its_object`; `accept_a_walk_across_such_a_call_keeps_a_weakref_link` | none |
+
+### EXC-1, EXC-2, EXC-3, EXC-16, EXC-17, EXC-19 (VIII.3) — changes through several names
+
+| clause | what it says | test | message |
+|---|---|---|---|
+| EXC-1.1 | a field changed through another name while viewed: E3021; reshaped: E3060; while a `ref mut` name of it is used: E3022 | `reject_a_field_changed_through_another_name_while_viewed`; `accept_a_field_changed_after_the_views_last_use` | none |
+| EXC-2.1 | a field read through another name while a `ref mut` name of it is used: E3021 | `reject_a_field_read_through_another_name_while_a_ref_mut_name_is_used`; `accept_a_field_read_through_its_ref_mut_name_or_after_it` | none |
+| EXC-3.1 | one class family and a link or kept view: may be one unless known different; refused with the `is not` line | `reject_a_link_that_may_reach_the_only_name_of_its_object` (the turret, E3022; a base-class link, E3021); `accept_paths_the_compiler_knows_differ` (`is not`, unrelated classes, a fresh object) | spec (turret); none |
+| EXC-16.1 | a memory-owning field given a new value is a reshape: E3020 in a walk of it, E3060 for a view of the old value | `reject_giving_a_memory_owning_field_a_new_value_is_a_reshape` (directly and through `reset`); `accept_a_new_value_after_the_walk_and_the_views_last_use` | none |
+| EXC-17.1 | a number or `bool` write is not a reshape | `accept_writing_a_number_field_is_not_a_reshape` | — |
+| EXC-17.2 | such a write through another name while a read-only view of the field is used: E3021, a `sharedref mut` link's included | `reject_a_number_written_through_another_name_while_viewed` | none |
+| EXC-19.1 | fields are separate places; a method touches the fields its body touches | `accept_fields_are_separate_places` (the spec's loop, and through a method) | — |
+
+### WK-3 (VIII.5) — ended before its `drop`
+
+| clause | what it says | test | message |
+|---|---|---|---|
+| 3.1 | a link opened in the object's own `drop` or its child's finds it ended; ending the link stays allowed | `accept_an_object_is_ended_before_its_drop_runs` | — |
+
+### BCK-1, BCK-2, BCK-3, BCK-5, BCK-6, BCK-8 (XVIII.4) — the checking algorithm
+
+| clause | what it says | test | message |
+|---|---|---|---|
+| BCK-1.1 | values carry the views they may hold, through copies, projections, results and views put in through `ref mut` | `reject_a_value_carries_the_views_it_may_hold` (4); `accept_a_value_carries_only_the_views_it_may_hold` (`from a`) | none |
+| BCK-2.1 | live where a value carrying it is used later on some path, with no assignment between; a result's views on the paths to the `return` only | `accept_liveness_follows_uses_and_paths`; `reject_a_view_live_on_some_path` | none |
+| BCK-3.1 | a read or change made by a call, through its summary, is checked against the live views | `reject_a_read_or_change_made_by_a_call_is_checked_against_live_views` (E3021, E3060, E3021, E3022); `accept_a_call_that_reaches_no_live_views_place` | none |
+| BCK-5.1 | a changeable argument is reserved, then activated; then the arguments are checked against each other | `accept_a_changeable_argument_is_reserved_then_activated` (`v.push(owns v.len())`); `reject_a_change_of_a_reserved_place_and_arguments_that_overlap` | none |
+| BCK-6.1 | the four required acceptances | `accept_the_required_acceptances` (`first_even`; the conditional store, Q11) | — |
+| BCK-8.1 | a list parameter only added to keeps a position usable | `accept_a_list_parameter_it_only_adds_to_keeps_a_position`; `reject_a_callee_that_removes_ends_the_position` | none |
+| BCK-8.2 | the least fixed point covers recursion | `reject_a_recursive_group_is_covered_by_the_fixed_point` | none |
+
+### LT-35, LT-47 (VII.6) — regions through calls
+
+| clause | what it says | test | message |
+|---|---|---|---|
+| LT-35.1 | a call needs only the regions of the fields its callee uses; through a function value, every function put there counts | `reject_a_call_through_a_function_value_needs_what_every_function_uses`; `accept_a_call_needs_only_the_regions_of_the_fields_it_uses` | none |
+| LT-47.1 | only a view argument, a part of one or program text may be put in through `ref mut`; a callee's local is E3063 | `reject_a_view_of_the_callees_own_local_put_in_through_ref_mut`; `accept_the_views_a_callee_may_put_in` | spec |
+| LT-47.2 | the put view may point into any other argument; used after one changed: E3060 | `reject_a_use_of_the_put_view_after_an_argument_changed` | spec |
+
+### BRW-22 (VII.4) — the copy clause
+
+| clause | what it says | test | message |
+|---|---|---|---|
+| 22.2 | a call compiled against a copy has one name for the place | `accept_a_call_against_a_copy_has_one_name_for_the_place` (every profile) | — |
+
+### DIA-2, 3, 7, 9, 10, 11, 22, 25, 26, 27, 28 (XVII.6) — the message framework
+
+| clause | what it says | test | message |
+|---|---|---|---|
+| DIA-2.1 | names as the program wrote them: `i64`, `[int; 3]`, `int` for `len()`, the caller's variable in the line to write | `reject_a_refusal_names_what_the_program_wrote` | the names only (Q10) |
+| DIA-3.1 | view errors label the later use, "used here" | `reject_a_view_error_labels_the_later_use` (E3060, E3040, E3021) | the label only |
+| DIA-7.1 | each error emits its shape's help | `reject_each_shape_emits_its_help` (B1, B2, B3, B4, B7, B16) | spec (all six) |
+| DIA-9.1 | no `unsafe`, no `shares` alone, where a safe one-owner fix compiles | `reject_no_help_suggests_unsafe_or_shares_where_a_safe_one_owner_fix_compiles` | none; `not-help` |
+| DIA-10.1 | B1, B2, B4, B5, B9 helps name a construct, never "consider restructuring" | `reject_a_help_names_a_concrete_construct` (B2, B4, B9) | spec (three); `not-help` |
+| DIA-11.1 | S1 names the `assert_disjoint` call, gives the copy or removing `@no_alias_checks` | `reject_assert_disjoint_inside_no_alias_checks_gives_the_lines_that_need_no_check` | the call's name; `help` |
+| DIA-22.1 | a callee's fact is reported at the call | `reject_a_callees_fact_is_reported_at_the_call` (E3031, E3020, E3028) | none |
+| DIA-25.1 | the line a message gives compiles | `accept_the_line_a_message_gives_compiles` | — |
+| DIA-25.2 | a form that would not do what it says is refused with the line that does | `reject_a_form_that_would_not_do_what_its_words_say` (E0113) | spec |
+| DIA-26.1 | one mistake, one message; a stored function's at the store | `reject_one_mistake_in_a_stored_function_gives_one_message_at_the_store` | none |
+| DIA-27.1 | a message names the chain of calls | `reject_a_message_names_the_chain_of_calls` (one link; two links in part, Q9) | spec; in part |
+| DIA-27.2 | no message asks for a word on a first line | `reject_no_message_asks_for_a_word_on_a_first_line` (E0100) | spec (`[EFF-24]`'s) |
+| DIA-28.1 | where both fixes compile, the rule that names the case: E3060 over E3022, E3031 over E3021 | `reject_two_errors_on_one_line_show_the_one_the_rule_names` | none |
+
+## 2. Not written, and old tests seen
+
+Skipped as credited and tested: WK-2, CLS-7a, DIA-16; BCK-4 is M5's (`ahead/M5/BCK-4`, its two
+clauses). Still not written, from the rules M6a's items complete: BRW-1, BRW-15 and BRW-17's call
+clauses, which M5's ahead files already cover (`BRW-1/accept_a_ref_mut_parameter_and_a_module_variable_are_checked_at_the_call`,
 the parameter case of `BRW-15/reject_a_changing_method_through_a_read_only_name`, BRW-17.3 and 17.4's
-files), LT-35, LT-47; from A2-13, BRW-22's copy clause (one name for the merged place: a code-shape
-check, with M6c's noalias); from A3-6, WK-2, WK-3; from A3-7, RC-5 and BCK-7; from A3-8, BCK-1 to
-BCK-6 and BCK-8 (BCK-5's and BCK-8's call checks are exercised by BRW-11, BRW-21 and MONO-10 here);
-from A4-6, EXC-1, EXC-2, EXC-3, EXC-16, EXC-17, EXC-19; from A4-7, CLS-7a; from A7-14, the DIA rules
-(DIA-22, DIA-25 to DIA-28 and the shape helps) and the runner's check that every fix compiles.
+files); BRW-22.1 (noalias, M6c); every clause whose row in §0 says "not written" (other milestones'
+features, or a two-package test); A7-14's tooling (the runner that applies each fix and checks
+again) and the shape helps of DIA-7 for the shapes not in DIA-7's or DIA-10's files (O1, O2, O6 to
+O9, B5, B6, B10 to B12, B17, A1, U1, R1), most of them other milestones' codes.
 
 Old tests seen while writing (not a sweep): `tests/conformance/BRW-11/reject_overlapping_mut_arguments.em`
 (`update_both(ref mut value, ref mut value)`, E3022) is accepted by exception 1 (a run-pass);
@@ -215,3 +341,6 @@ recommended reading unless the row says otherwise, and say so in their header.
 | Q6 | BRW-21, CLS-7, BRW-1 | where is `ref mut this` (or `this`) checked: `close(ref mut this)` inside `shut`, where `this` may be any `Ui` and `close` clears `UIS` then writes `u.count`? | (A) at `shut`'s callers through its summary (`this` is used after a line that may end it): `UIS[0].shut()` is E3031, `mine.shut()` allowed, `shut` compiles; (B) at `close(ref mut this)`: `this` may be in `UIS` ("`this` is never the only name of its object"), so `shut` is refused in every program | **(A)**: `[BRW-21]` counts `this` among the view parameters whose fact is kept and checked at each call, and `[BRW-1]` keeps the function itself compiling for a `ref mut` parameter and a module variable. File: `CLS-7/reject_ref_mut_this_given_to_a_call_that_may_end_its_object` |
 | Q7 | OBJ-5, CLS-7a, E3013 | a `drop` that calls an `owns this` method that stores the object (`this.retire()`, `fn retire() owns this: this.archive()`, `fn archive() owns this: ARCHIVE.push(owns this)`): E3016 (OBJ-5, CLS-7a: stored from a `drop` or anything it calls) or E3013 (a hand-over out of a name that does not own the value; today's compiler says "cannot move `this` out of `drop`") | (A) E3016; (B) E3013 | **(A)**: the rule for the object being ended is the specific one, and its message's fix (keep a copy of a field) compiles where E3013's cannot (`[DIA-28]`). File: `OBJ-5/reject_a_drop_that_calls_what_stores_this` |
 | Q8 | GRM, BRW-18, CLS-7 | `this.handlers[this.current](ref mut this)` (the spec's line) calls an element of a field; `x.f[T](...)` is also a method call with a type argument (`"4".parse[int]()`). Today's compiler reads the first as the second (E2072, "`Ui` has no method named `handlers`") | (a) the text decides it: what `f` names chooses (a field: an element, then a call through it; a method: type arguments) | (a); an implementation gap, no P-row. File: `CLS-7/accept_ref_mut_this_given_to_calls` |
+| Q9 | DIA-27, EFF-25, BRW-18 | the chain's form beyond one call: with `step()` calling `tick()` calling `note`, which pushes to `LOG`, inside a walk of `LOG`. The spec's forms are one link ("(through `note`, line 4)") and a stored handler ("(through `click`, which runs the handler stored on line 9, `log_click`, which pushes to `LOG`)") | (a) every link with its line: "(through `tick`, line A, and `note`, line B)"; (b) the first and the last: "(through `tick`, line A, … `note`, line B)"; (c) as the handler form: "(through `tick`, which calls `note`, line B, which pushes to `LOG`)" | **(c)**: it is the spec's own form for a chain of more than one step, and it names every function with the one line that changes, which is the line DIA-27's fix acts on. File: `DIA-27/reject_a_message_names_the_chain_of_calls` claims only "`step()` (line N) adds to `LOG` (through `tick`", true under all three. P-row: DIA-27 adds the two-step example |
+| Q10 | DIA-2 | the lead ruled (review.md, W7: "`int` is the prelude's alias of `i64`, and DIA-2 says nothing of it") that `int` may be printed `i64`; Hardened_14's DIA-2 (changed in 0.9.20) says "`int`, not `i64`" and "`int` for an untyped literal's default and for `len()`'s result", and `[int; 3]` where the program writes it | (A) the text: a type is named as the program spells it, else as its declaration does, and `int` for literals and `len()`; (B) the ruling: one type, printed `i64` | **(A)**, the text of the cut the build follows; the ruling may predate it. Raised, not decided: the lead's ruling stands until the lead says. File: `DIA-2/reject_a_refusal_names_what_the_program_wrote` follows (A) |
+| Q11 | BCK-6 | "a loop that conditionally stores a view in a local declared outside it and changes the place it views on rounds where it did not": the place changed is (a) the place the view will view, on rounds before it is stored (`while`: change `xs[i]`, or store `ref xs[i]` and `break`); or (b) on any round where nothing is stored, while an earlier round's view is still live (`for i in 0..n:` storing `ref xs[i]` on some rounds and writing `xs[i] = 0` on the others, the view used after the loop) | (a), (b) | **(a)**: under (b) the stored view and the later round's write are two elements of one list whose indexes the rules of `[BRW-5]` do not prove apart (each round's `i` against an earlier round's), so (b) would need a proof the spec does not state. File: `BCK-6/accept_the_required_acceptances` (accepted under both). P-row: BCK-6 adds the example |
