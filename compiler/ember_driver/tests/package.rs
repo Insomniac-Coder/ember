@@ -420,8 +420,10 @@ fn a_binary_package_replaces_the_global_allocator() {
                 # SAFETY: every block is `System`'s, whose promises it keeps; this only counts them.\n\
                 unsafe extend Counting implements Allocator:\n    \
                 fn allocate(layout: Layout) -> *mut u8:\n        this.blocks.fetch_add(1)\n        return System().allocate(layout)\n\n    \
-                fn deallocate(p: *mut u8, layout: Layout):\n        System().deallocate(p, layout)\n\n    \
-                fn reallocate(p: *mut u8, old: Layout, new_size: usize) -> *mut u8:\n        this.blocks.fetch_add(1)\n        return System().reallocate(p, old, new_size)\n";
+                @safety(\"`p` came from this manager with `layout`\")\n    \
+                unsafe fn deallocate(p: *mut u8, layout: Layout):\n        System().deallocate(p, layout)\n\n    \
+                @safety(\"`p` came from this manager with `old`\")\n    \
+                unsafe fn reallocate(p: *mut u8, old: Layout, new_size: usize) -> *mut u8:\n        this.blocks.fetch_add(1)\n        return System().reallocate(p, old, new_size)\n";
     let main = "import heap\n\nfn main():\n    words: Array[String] = []\n    for i in 0..50:\n        words.push(owns f\"word {i}\")\n    \
                 println(words.len(), heap.COUNTING.blocks.load() >= 50)\n";
     let manifest = |kind: &str, named: &str| format!("[package]\nname = \"app\"\nkind = \"{kind}\"\n\n[build]\nglobal_allocator = \"{named}\"\n");

@@ -254,3 +254,28 @@ questions). W8's FN-9 (a plain class parameter only reads its object) is reverte
 - **Not this job:** M5's views (the lead builds them: `borrows.rs`, `regions.rs`, `check_point`, loops, spans,
   `sharedref mut`); `std/src/sync.em`; `E3063` against `E3060`; kind tests and casts (`[DSP-4]`, `[DSP-6]`).
 - Every test and message follows the spec's words; a rule is credited only when each clause is built and tested.
+
+
+## H5 (Opus), lane a: M10, memory managers with `using` (about 20 tasks) (rolling slot, 2026-11-20)
+
+Worktree `C:\Users\ism19\Code\ember\.claude\worktrees\lane-a` (branch `lane-a`, from `main` at `cc94e84f`); notes in
+`lanes/a.md`, section "M10 (H5)". The items are `gap/01-ownership.md`'s **A1-13** (the `Allocator` interface of 0.9.15)
+and **A1-14** (`using A`), and `gap/07-syntax-types-diagnostics.md`'s **A7-11** (`using` memory managers: parse and type
+formation), with verdict 107 (`decisions.md`, `[ALC-2]`: `std.mem.FoundByAddress`) and the measured choice about the
+instance word (MILESTONES.md's M10 row). The rules: `[ALC-1]` to `[ALC-6]`, `[HEAP-1]`, `[OBJ-4]`'s `using` clause,
+`[TYP-46]`, `[TYP-46a]`, `[TYP-38]`'s `using m`, `[OWN-10]`'s `using current` example. In this order:
+1. A1-13: `std.mem.Allocator` and `Layout` as 0.9.15 writes them; the global allocator glue calls them.
+2. A7-11: `T using A` after a type and `e using inst` after a making expression, parsed and typed; the errors the rules
+   give (E2114 on a type with no heap memory, E2020 for an instance of the wrong kind or a value from another manager,
+   E1010 for `Array[T, A]`).
+3. A1-14: the code: blocks from `A.allocate`, growth through `A.reallocate`, the end through `A.deallocate`, direct
+   (monomorphised) calls; one instance word only where `A` may have several instances; `Array.new_in(inst)`; `Arena` and
+   `FixedArena` implement `Allocator`.
+4. Credit each `[ALC-*]` and other rule whose every clause is built and tested.
+- **Not this job:** A1-15 and A1-16 (an instance kept as its values need it; the arena borrow model): they are
+  `ember_analysis/src/borrows.rs`, the lead's file this round. Leave `borrows.rs` and `regions.rs` alone; where a rule's
+  clause needs them, report it. Not `std/src/sync.em`, not the parser's statement grammar beyond `using`.
+- Speed: an object made `using` an instance costs what C's call of that allocator costs, no more: say what each change
+  costs, and check one program's C with `EMBER_BACKEND=c`.
+- `CARGO_BUILD_JOBS=3 RUST_TEST_THREADS=4` (the coordinator, after the laptop's crash), a commit as soon as each rule
+  passes.

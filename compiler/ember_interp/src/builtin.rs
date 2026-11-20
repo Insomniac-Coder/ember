@@ -151,6 +151,14 @@ impl Interp<'_, '_> {
         Ok(value)
     }
 
+    /// What a raw pointer points to, one level: a `*mut *mut T` reads and writes a `*mut T`.
+    fn pointee(&self, ty: Ty) -> Ty {
+        match self.types.kind(ty) {
+            TyKind::Ref { inner, .. } | TyKind::Ptr { inner, .. } => *inner,
+            _ => self.element_of(ty),
+        }
+    }
+
     fn element_of(&self, ty: Ty) -> Ty {
         match self.types.kind(ty) {
             TyKind::Vec { elem, .. } | TyKind::Span { elem, .. } | TyKind::Array { elem, .. } => *elem,
@@ -661,14 +669,14 @@ impl Interp<'_, '_> {
             Builtin::PtrRead => {
                 let p = self.pointer(&args[0])?;
                 let i = self.word(&args[1])?;
-                let elem = self.element_of(arg_ty);
+                let elem = self.pointee(arg_ty);
                 let size = self.size(elem);
                 self.mem.read(p + i * size, size)?.to_vec()
             }
             Builtin::PtrWrite => {
                 let p = self.pointer(&args[0])?;
                 let i = self.word(&args[1])?;
-                let elem = self.element_of(arg_ty);
+                let elem = self.pointee(arg_ty);
                 let value = self.operand(&args[2], Some(elem))?;
                 let size = self.size(elem);
                 self.mem.write(p + i * size, &value)?;

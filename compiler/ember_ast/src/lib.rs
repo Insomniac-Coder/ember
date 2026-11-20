@@ -650,6 +650,9 @@ pub enum TypeKind {
     /// `[TYP-45]`, `[HEAP-9]` — `owns T`: one owner, in a heap block of its own; `owns dyn I` holds
     /// any implementer of `I`.
     Owns(Box<TypeExpr>),
+    /// `[TYP-46]`, `[ALC-1]` — `T using A`: the kind of memory manager the value's own memory comes
+    /// from, after the whole type before it (`owns Mesh using LevelArena`).
+    Using { inner: Box<TypeExpr>, manager: Box<TypeExpr> },
     /// `[TYP-45]`, `[RC-1]`, `[WK-11]` — `shares T`, `shares mut T`, `thread_shared T`, `weakref T`,
     /// `sharedref mut T`: who owns the value, or a link to it.
     Link { kind: LinkKind, inner: Box<TypeExpr> },
@@ -888,6 +891,9 @@ pub enum ExprKind {
     /// `[GRM-13]`), and in `b = owns n` for a number (`[OWN-9]`). The checker
     /// says where else it may stand.
     Owned(Box<Expr>),
+    /// `[TYP-46]`, `[ALC-1]`, `[GRM-43]` — `e using inst`: the instance of a memory manager the value
+    /// `e` makes is made in (`owns Mesh(points=[0.0]) using current` is `owns (Mesh(…) using current)`).
+    Using { value: Box<Expr>, instance: Box<Expr> },
     /// `[GRM-22]` — `yield_expr := "yield" [ expression ]`. It occupies
     /// `return`'s grammatical position and precedence, but unlike a `Jump` its
     /// type is the coroutine's **resume type** (`void` unless the coroutine

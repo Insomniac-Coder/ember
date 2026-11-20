@@ -570,6 +570,10 @@ impl Printer {
             }
             ExprKind::Paren(e) => self.expr(e),
             ExprKind::Owned(inner) => self.nest("Owned", |p| p.expr(inner)),
+            ExprKind::Using { value, instance } => self.nest("Using", |p| {
+                p.expr(value);
+                p.expr(instance);
+            }),
             ExprKind::CopyOf(inner) => self.nest("CopyOf", |p| p.expr(inner)),
             ExprKind::Link { kind, value } => self.nest(kind.word(), |p| p.expr(value)),
             ExprKind::Comptime(inner) => self.nest("Comptime", |p| p.expr(inner)),
@@ -662,6 +666,7 @@ pub fn type_str(ty: &TypeExpr) -> String {
             format!("{kw}{}", type_str(inner))
         }
         TypeKind::Owns(inner) => format!("owns {}", type_str(inner)),
+        TypeKind::Using { inner, manager } => format!("{} using {}", type_str(inner), type_str(manager)),
         TypeKind::Link { kind, inner } => format!("{} {}", kind.word(), type_str(inner)),
         TypeKind::Tuple(items) => {
             format!("({})", items.iter().map(type_str).collect::<Vec<_>>().join(", "))

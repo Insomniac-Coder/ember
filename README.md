@@ -40,7 +40,7 @@ the tool computes. Work planned for after 1.0 has its own row, outside the overa
 | Phase | Scope | Done |
 |---|---|---:|
 | 1 | Core language (Parts II–VI) | 35% |
-| 2 | Ownership, borrowing, regions | 17% |
+| 2 | Ownership, borrowing, regions | 18% |
 | 3 | Classes, reference counting, exclusivity | 6% |
 | 4 | Effects, compile time, reflection, derives | 13% |
 | 5 | C interoperability | 17% |

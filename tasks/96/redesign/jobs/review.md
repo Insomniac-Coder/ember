@@ -731,3 +731,17 @@ D2's second batch (29 rules, 50 files) is merged too. Its new questions (INDEX Â
 (the stored-handler shape recommended); Q11, BCK-6's "rounds where it did not" (the reading needing no index proof
 recommended). Q10 is no question: Hardened_14's DIA-2 says `int`, not `i64`, and `[int; 3]` as written, so the
 compiler's `i64` is an implementation gap (the type table holds one type for both); the W7 ruling only let DIA-2 wait.
+
+## H5 (lane a, M10's first half), collected 2026-11-20
+
+Merged: the `Allocator` interface and `Layout` of 0.9.15 (A1-13), `using` parsed and typed (A7-11), `owns T using A`
+with verdict 107's four owners (A1-14 in part), `Arena` implements `Allocator`; ALC-2 credited; two general fixes
+(`p.write(v)` moved a value that needs drop and also ended it; the evaluator wrote a whole `T` through a `*mut *mut T`).
+The full quick check and the error pages pass on the merge. Left (lanes/a.md, "M10 (H5)"): `Array[T] using A`,
+`Array.new_in`, growth through `reallocate`, `using` on the other heap types and on classes, `FixedArena`, a generic
+manager instance (today the manager's kind is read from the source, before implementations are collected), the
+lead's A1-15/A1-16 and LT-4's E3063 in `borrows.rs`.
+Its questions, for the owner or Hardened_15: (1) a safe `fn deallocate` implementing the interface's `unsafe fn`: is
+a direct call of it E3100 too (reading (b), recommended: the reason holds for every give-back)? (2) ALC-6's "out of
+memory: ... (line 8)" against COST-6's "`out of memory`: ... on line 6": ALC-6's text followed. Accepted as built:
+the "delegates to `Global` recurses" clause covered by the package test; COST-6's caller-line text is COST-6's gap.

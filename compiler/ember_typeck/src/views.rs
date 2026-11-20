@@ -686,6 +686,9 @@ impl Checker<'_> {
                 .join(" and "),
         };
         let (name, noun, first) = (&change.name, &change.noun, &change.first_line);
+        if let Some(message) = self.using_change_message(change.write, name, first) {
+            return message;
+        }
         let (head, call) = match &change.field {
             Some(field) => (format!("`{}` sets `{field}`, but `{name}` only reads the caller's {noun}; write `{first}`", change.function), "call"),
             None if change.element => (format!("`{}` writes an element of the caller's {noun}, but `{name}` only reads it; write `{first}`", change.change), "call it"),

@@ -36,6 +36,9 @@ const BP_MUL: u8 = bp(12);
 const BP_CAST: u8 = bp(13);
 const BP_UNARY: u8 = bp(14);
 const BP_POW: u8 = bp(15);
+// `[GRM-43]` (Part III's row 18) — `using` after a value binds tighter than `**` and the words before
+// a value, and looser than a call: `owns Mesh(…) using current` is `owns (Mesh(…) using current)`.
+const BP_USING: u8 = bp(15) + 1;
 const BP_POSTFIX: u8 = bp(16);
 
 impl Parser<'_> {
@@ -1932,6 +1935,14 @@ impl Parser<'_> {
                     // `[FN-8]` — a `?` in a script's own statements makes the implicit `main` fallible.
                     self.script_try |= self.at_script_level();
                     ExprKind::Try(Box::new(expr))
+                }
+                // `[GRM-43]` — `made := postfix_expr ["using" postfix_expr]`: the instance the value is
+                // made in.
+                TokenKind::Keyword(Kw::Using) if min_bp <= BP_USING && !matches!(expr.kind, ExprKind::Using { .. }) => {
+                    self.bump();
+                    let atom = self.parse_atom(false);
+                    let instance = self.parse_postfix(atom, BP_POSTFIX, false);
+                    ExprKind::Using { value: Box::new(expr), instance: Box::new(instance) }
                 }
                 TokenKind::Keyword(Kw::As) if min_bp <= BP_CAST => {
                     self.bump();
