@@ -176,10 +176,21 @@ pub fn size_of() -> usize:
 pub fn align_of() -> usize:
     return 0
 
-## `[ALC-2]` (ODR-175) — the size and the alignment of a block of memory an `Allocator` gives.
+## `[ALC-2]` — the size and the alignment of a block of memory an `Allocator` gives. Both are read
+## anywhere and set only here: `Layout(size, align)` checks that `align` is a power of two and that
+## `size` rounded up to a multiple of `align` fits in an `isize`, and panics (`invalid Layout`)
+## otherwise, so no other `Layout` exists.
 pub struct Layout:
-    pub size: usize
-    pub align: usize
+    pub(read) size: usize
+    pub(read) align: usize
+
+    pub fn init(size: usize, align: usize):
+        if align == 0 or (align & (align - 1)) != 0:
+            panic("`invalid Layout`: an alignment that is not a power of two")
+        if size > (isize.MAX as usize) - (align - 1):
+            panic("`invalid Layout`: a size that rounded up to a multiple of its alignment does not fit in an `isize`")
+        this.size = size
+        this.align = align
 
 ## `[ALC-2]` (ODR-175) — what gives a program its heap memory. Implementing it is `unsafe`
 ## (`unsafe extend T implements Allocator:`): the implementer promises that `allocate` gives memory
@@ -187,11 +198,30 @@ pub struct Layout:
 ## null when it has none; that `deallocate` is given back only what `allocate` or `reallocate` gave,
 ## with the layout it was asked for; and that `reallocate` gives a block of `new_size` bytes holding
 ## the first of `p`'s (`p` then given back), or null, leaving `p` as it was. A binary package may
-## make one the global allocator, which every heap type allocates through (`[ALC-3]`).
+## make one the global allocator, which every heap type allocates through (`[ALC-3]`). Giving memory
+## back, or moving it, is `unsafe`: Ember may still use it, and a wrong `Layout` is undefined in C, so
+## a program's own call of `deallocate` or `reallocate` is made inside `unsafe:` (`E3100`); the
+## calls the compiler makes for a value made `using` a manager are its own (`[ALC-1]`).
 pub unsafe interface Allocator:
     fn allocate(layout: Layout) -> *mut u8
-    fn deallocate(p: *mut u8, layout: Layout)
-    fn reallocate(p: *mut u8, old: Layout, new_size: usize) -> *mut u8
+    @safety("`p` came from this manager's `allocate` or `reallocate` with `layout`, and nothing uses it after")
+    unsafe fn deallocate(p: *mut u8, layout: Layout)
+    @safety("`p` came from this manager's `allocate` or `reallocate` with `old`, and nothing uses it after; only the result is used")
+    unsafe fn reallocate(p: *mut u8, old: Layout, new_size: usize) -> *mut u8
+
+## `[ALC-2]` (verdict 107) — the size and alignment of a piece of a manager that implements
+## `FoundByAddress`.
+pub const PIECE: usize = 65536
+
+## `[ALC-2]` (verdict 107) — a manager whose values' instance is found from their address, as C's
+## `free(p)` finds its heap. Implementing it is `unsafe` (`unsafe extend PoolArena implements
+## FoundByAddress:`): the implementer promises that every block it hands out lies in a piece of
+## memory that starts at a multiple of `PIECE` bytes and holds the instance's address in its first
+## word, within 64 bytes it never hands out, a value bigger than a piece taking a piece of its own.
+## A value made in it then keeps no instance word: its growth and its end read the instance from the
+## start of its piece, one mask and one load (`[ALC-1]`).
+pub unsafe interface FoundByAddress:
+    pass
 
 ## `[ALC-2]` — the runtime's allocator: the one every heap type uses, which is the package's global
 ## allocator when it names one (`[build] global_allocator`, `[ALC-3]`) or the functions its
@@ -208,11 +238,13 @@ unsafe extend Global implements Allocator:
         return global_allocate(layout.size, layout.align)
 
     ## Gives a block back to the runtime, which allocates and frees through one allocator.
-    fn deallocate(p: *mut u8, layout: Layout):
+    @safety("`p` came from this manager's `allocate` or `reallocate` with `layout`, and nothing uses it after")
+    unsafe fn deallocate(p: *mut u8, layout: Layout):
         global_deallocate(p, layout.size, layout.align)
 
     ## The new block the runtime allocates, the old one given back; or null.
-    fn reallocate(p: *mut u8, old: Layout, new_size: usize) -> *mut u8:
+    @safety("`p` came from this manager's `allocate` or `reallocate` with `old`, and nothing uses it after; only the result is used")
+    unsafe fn reallocate(p: *mut u8, old: Layout, new_size: usize) -> *mut u8:
         return global_reallocate(p, old.size, new_size, old.align)
 
 ## The runtime's: it allocates a block, or gives null when there is no memory.
@@ -240,12 +272,14 @@ unsafe extend System implements Allocator:
         return system_allocate(layout.size, layout.align)
 
     ## Gives a block back to the platform's allocator, which allocates and frees them.
-    fn deallocate(p: *mut u8, layout: Layout):
+    @safety("`p` came from this manager's `allocate` or `reallocate` with `layout`, and nothing uses it after")
+    unsafe fn deallocate(p: *mut u8, layout: Layout):
         system_deallocate(p, layout.size, layout.align)
 
     ## The block grown or shrunk in place, or a new one the platform allocates holding the first
     ## bytes of `p` (`p` then given back); or null, `p` as it was.
-    fn reallocate(p: *mut u8, old: Layout, new_size: usize) -> *mut u8:
+    @safety("`p` came from this manager's `allocate` or `reallocate` with `old`, and nothing uses it after; only the result is used")
+    unsafe fn reallocate(p: *mut u8, old: Layout, new_size: usize) -> *mut u8:
         return system_reallocate(p, old.size, new_size, old.align)
 
 ## The runtime's: the platform allocates a block, or gives null when there is no memory.
@@ -269,7 +303,10 @@ fn global_allocate_through(a: A, size: usize, align: usize) -> *mut u8:
 
 [A: needs Allocator]
 fn global_deallocate_through(a: A, p: *mut u8, size: usize, align: usize):
-    a.deallocate(p, Layout(size, align))
+    # SAFETY: the runtime gives back only a block this allocator gave, with the size and alignment
+    # it was asked for.
+    unsafe:
+        a.deallocate(p, Layout(size, align))
 
 ## `[LAY-2]` — the byte offset of a field of struct `T`, named as written:
 ## `offset_of[Header](length)`. The compiler reads the name; this declaration

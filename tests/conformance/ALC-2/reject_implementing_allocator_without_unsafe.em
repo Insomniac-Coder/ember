@@ -1,8 +1,8 @@
 #$ test: compile-fail
 #$ rules: ALC-2, TYP-43
-## `[ALC-2]` (ODR-175) — implementing `Allocator`, an `unsafe interface`, is `unsafe`: in a plain
-## `extend` or in a type's header it is `E3100`, whose help is `unsafe extend`. And `unsafe extend`
-## writes only a marker or an `unsafe interface` (`[TYP-43]`): another interface is `E2040`.
+## `[ALC-2]` — implementing `Allocator`, an `unsafe interface`, is `unsafe`: in a plain `extend` or
+## in a type's header it is `E3100`, whose help is `unsafe extend`. And `unsafe extend` writes only a
+## marker or an `unsafe interface` (`[TYP-43]`): another interface is `E2040`.
 
 from std.mem import Allocator, Layout, Global
 
@@ -13,10 +13,12 @@ extend Plain implements Allocator:    #$ error[E3100]: implementing `std.mem.All
     fn allocate(layout: Layout) -> *mut u8:
         return Global().allocate(layout)
 
-    fn deallocate(p: *mut u8, layout: Layout):
+    @safety("`p` came from this manager's `allocate` or `reallocate` with `layout`, and nothing uses it after")
+    unsafe fn deallocate(p: *mut u8, layout: Layout):
         Global().deallocate(p, layout)
 
-    fn reallocate(p: *mut u8, old: Layout, new_size: usize) -> *mut u8:
+    @safety("`p` came from this manager's `allocate` or `reallocate` with `old`, and nothing uses it after; only the result is used")
+    unsafe fn reallocate(p: *mut u8, old: Layout, new_size: usize) -> *mut u8:
         return Global().reallocate(p, old, new_size)
 
 struct Header implements Allocator:    #$ error[E3100]: implementing `std.mem.Allocator` is `unsafe`
@@ -25,10 +27,12 @@ struct Header implements Allocator:    #$ error[E3100]: implementing `std.mem.Al
     fn allocate(layout: Layout) -> *mut u8:
         return Global().allocate(layout)
 
-    fn deallocate(p: *mut u8, layout: Layout):
+    @safety("`p` came from this manager's `allocate` or `reallocate` with `layout`, and nothing uses it after")
+    unsafe fn deallocate(p: *mut u8, layout: Layout):
         Global().deallocate(p, layout)
 
-    fn reallocate(p: *mut u8, old: Layout, new_size: usize) -> *mut u8:
+    @safety("`p` came from this manager's `allocate` or `reallocate` with `old`, and nothing uses it after; only the result is used")
+    unsafe fn reallocate(p: *mut u8, old: Layout, new_size: usize) -> *mut u8:
         return Global().reallocate(p, old, new_size)
 
 interface Named:

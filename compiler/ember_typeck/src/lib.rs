@@ -25857,6 +25857,25 @@ impl<'a> Checker<'a> {
         None
     }
 
+    /// `[ALC-2]` — what `def` does when it is `std.mem.Allocator`'s `deallocate` or `reallocate`, as
+    /// the interface declares it (a call through a bound) or as a type implements it: "gives memory
+    /// back" or "moves memory".
+    fn allocator_give_back(&self, def: DefId) -> Option<&'static str> {
+        let allocator = Symbol::intern("std.mem.Allocator");
+        let does = |name: Symbol| match name.as_str() {
+            "deallocate" => Some("gives memory back"),
+            "reallocate" => Some("moves memory"),
+            _ => None,
+        };
+        if let Some(&(name, ..)) = self.interfaces.get(&allocator)?.methods.iter().find(|(_, declared, ..)| *declared == def) {
+            return does(name);
+        }
+        let implemented = self.interface_methods.iter().find(|((_, interface, _), entry)| *interface == allocator && entry.def == def).map(|((_, _, name), _)| *name);
+        implemented
+            .or_else(|| self.methods.iter().find(|(_, entry)| entry.def == def && entry.from_interface == Some(allocator)).map(|((_, name), _)| *name))
+            .and_then(does)
+    }
+
     fn check_direct_call_safety(&mut self, def: DefId, span: Span) {
         // `[DIA-5]` — an error at the call names the C declaration.
         if self.foreign_declarations.contains_key(&def) && !self.c_declarations.is_empty() {
@@ -25886,6 +25905,10 @@ impl<'a> Checker<'a> {
                 }
             }
             (CallKind::Foreign, refusal)
+        } else if let Some(does) = self.allocator_give_back(def) {
+            // `[ALC-2]` — giving memory back, or moving it, through any `Allocator`.
+            let message = format!("`{callee}` {does} that Ember may still use, and a wrong `Layout` is undefined in C; write it inside `unsafe:` with a `# SAFETY:` note");
+            (CallKind::Other, Diagnostic::error(codes::E3100, span, message))
         } else {
             (CallKind::Declared, Diagnostic::error(codes::E3100, span, "calling an `unsafe fn` requires an `unsafe` block"))
         };
