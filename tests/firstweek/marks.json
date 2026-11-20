@@ -30,7 +30,7 @@
     "helps": ["R1:P6", "R1:P27", "R1:P1", "R2:N9"]
   },
   "07_todo_list.em": {
-    "mark": "rejected", "shape": "P26", "codes": ["E1010", "E2020", "E3013"], "after_helps": "accepted",
+    "mark": "rejected", "shape": "P26", "codes": ["E1010", "E2020", "E3013", "E3023"], "after_helps": "accepted",
     "shapes": ["P26", "P1", "P6"],
     "helps": ["R1:P26", "R1:P1", "R1:P6", "R2:O2"]
   },
@@ -100,7 +100,7 @@
     "helps": ["R1:P23", "R1:P6", "R2:N9"]
   },
   "21_particles.em": {
-    "mark": "rejected", "shape": "P3", "codes": ["E1010", "E2020"], "after_helps": "accepted",
+    "mark": "rejected", "shape": "P3", "codes": ["E1010", "E2020", "E3023"], "after_helps": "accepted",
     "shapes": ["P3", "N4"],
     "helps": ["R1:P3", "R1:N4", "R2:N4"]
   },

@@ -35,7 +35,7 @@ total = 0
 for x in xs.iter():
     total += x
 print(xs, left, right, total, "")
-for x in xs.iter_mut():
+for ref mut x in xs:
     x *= 2
 println(xs)
 names = [String.from("a")]

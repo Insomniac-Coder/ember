@@ -39,7 +39,7 @@ class TodoList:
         return id
 
     fn complete(id: int) -> bool:
-        for task in this.tasks.iter_mut():
+        for ref mut task in this.tasks:
             if task.id == id:
                 task.status = Status.Done
                 return true

@@ -558,13 +558,22 @@ impl Checker<'_> {
             KeptKind::Loop => ("round", format!("the loop over `{source}` gives")),
             KeptKind::Pattern => ("block", format!("`{source}` holds")),
         };
-        Diagnostic::error(
+        let diagnostic = Diagnostic::error(
             codes::E3023,
             write,
             format!("`{name}` is the {noun} {whose} and stays that {noun} for the whole {scope}; for {a_noun} of your own write `new_{name} = {name}` first and change `new_{name}`"),
         )
         .secondary(decl.span, format!("`{name}` is given its {noun} here"))
-        .note("a loop, pattern or opened name keeps what it was given [BRW-14]")
+        .note("a loop, pattern or opened name keeps what it was given [BRW-14]");
+        // `[CTL-1]` — to change the element itself, the loop names it `ref mut` (`for v in
+        // xs.iter_mut():` being 0.9.10's spelling of `for ref mut v in xs:`).
+        match (header.kind, self.line_with(decl.span, &format!("ref mut {name}"))) {
+            (KeptKind::Loop, Some(line)) => {
+                let line = line.replacen(".iter_mut():", ":", 1);
+                diagnostic.help(format!("to change the {noun} in `{}` itself, write `{line}`", source.trim_end_matches(".iter_mut()")))
+            }
+            _ => diagnostic,
+        }
     }
 }
 

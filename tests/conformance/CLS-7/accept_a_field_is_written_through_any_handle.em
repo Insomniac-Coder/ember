@@ -34,6 +34,6 @@ fn main():
     r = ref mut h.values
     r.push(owns 9)
     println(h.values)
-    for x in h.values.iter_mut():
+    for ref mut x in h.values:
         x += 1
     println(h.values)

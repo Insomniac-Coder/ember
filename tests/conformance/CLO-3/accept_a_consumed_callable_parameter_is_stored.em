@@ -22,7 +22,7 @@ class Bus:
         this.handlers.push(owns handler)
 
     fn publish(e: Event):
-        for h in this.handlers.iter_mut():
+        for ref mut h in this.handlers:
             h(e)
 
 fn report(e: Event):

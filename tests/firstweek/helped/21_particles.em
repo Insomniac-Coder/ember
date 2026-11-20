@@ -38,7 +38,7 @@ class Fountain:
                 lifetime=this.rng.range(1.0, 3.0)))
 
     fn update(dt: float):
-        for p in this.particles.iter_mut():
+        for ref mut p in this.particles:
             p.velocity.y += (GRAVITY * dt) as f32
             p.position += p.velocity * dt as f32
             if p.position.y < 0.0:

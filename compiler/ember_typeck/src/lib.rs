@@ -38053,6 +38053,29 @@ impl<'a> Checker<'a> {
         span: Span,
     ) -> Option<Stmt> {
         let incoming_class_init = self.class_init.clone();
+        // `[CTL-1]` (A2-6) — `for v in xs.iter_mut():` is 0.9.10's spelling of a loop over `xs`: its
+        // name only views each element, as every loop name does (`v += 1` is `E3023`, whose help
+        // gives `for ref mut v in xs:`), and `for ref mut v in xs.iter_mut():` is `for ref mut v in xs:`.
+        if let ast::ExprKind::MethodCall { recv, name, generic_args, args } = &iter.kind
+            && name.name.is("iter_mut")
+            && generic_args.is_empty()
+            && args.is_empty()
+            && matches!(pattern.kind, ast::PatternKind::Bind { sub: None, .. })
+            // A place: a loop over a temporary takes its elements over (`for x in make():`).
+            && matches!(unparenthesized(recv).kind, ast::ExprKind::Path { .. } | ast::ExprKind::Field { .. } | ast::ExprKind::IndexOrInstantiate { .. })
+        {
+            let mut seen = self.synth_quiet_type(recv);
+            while let TyKind::Ref { inner, .. } = *self.types.kind(seen) {
+                seen = inner;
+            }
+            // A `MutSpan` is walked through its own `iter_mut()` (below): it is left as written.
+            if matches!(
+                self.types.kind(seen),
+                TyKind::Vec { text: false, .. } | TyKind::Array { .. } | TyKind::ArrayN { .. } | TyKind::Span { mutable: false, .. }
+            ) {
+                return self.check_for_iterator(label, pattern, recv, body, else_block, span);
+            }
+        }
         // `[CTL-1]` — `for x in owned e:` consumes `e`. Its `into_iter()`
         // (`IntoIterator`) is the iterator, and the loop takes what that
         // iterator's `next` gives: an `Array`'s or a `Set`'s elements, a
@@ -38079,8 +38102,36 @@ impl<'a> Checker<'a> {
         if iterable.ty == self.common.error {
             return None;
         }
-        // `[CTL-1]` — a loop over a `Map` gives its keys. A pair pattern over keys that are not
-        // pairs is 0.9.8's `for k, v in m:`, which is `m.items()`'s (`[CLI-20]`).
+        // `[CTL-1]` (A2-6) — a loop over a `Map` gives its keys, and with two names its keys and
+        // values, as `m.items()` gives them; `for k, ref mut v in m:` names each value as a place the
+        // loop may change.
+        let rewritten;
+        let (iterable, pattern) = match &pattern.kind {
+            ast::PatternKind::Tuple(items)
+                if items.len() == 2 && self.map_key_type(iterable.ty).is_some_and(|key| !matches!(self.types.kind(key), TyKind::Tuple(_))) =>
+            {
+                let changes = matches!(items[1].kind, ast::PatternKind::Bind { by_ref: true, mutable: true, sub: None, .. });
+                let method = ast::Ident { name: Symbol::intern(if changes { "__items_mut" } else { "items" }), span: iter.span };
+                let mut pair = pattern.clone();
+                if changes
+                    && let ast::PatternKind::Tuple(names) = &mut pair.kind
+                    && let ast::PatternKind::Bind { by_ref, mutable, .. } = &mut names[1].kind
+                {
+                    // The item is a `ref mut V` already: the name binds it.
+                    *by_ref = false;
+                    *mutable = false;
+                }
+                rewritten = pair;
+                // `synth_method_on`, as the compiler's other calls of its own methods (`__nested`).
+                let walked = self.synth_method_on(iterable, iter.span, method, &[], &[], None, iter.span);
+                (walked, &rewritten)
+            }
+            _ => (iterable, pattern),
+        };
+        if iterable.ty == self.common.error {
+            return None;
+        }
+        // A pair pattern over a `Map` whose keys are pairs: the keys.
         if let ast::PatternKind::Tuple(items) = &pattern.kind
             && items.len() == 2
         {
@@ -38202,6 +38253,15 @@ impl<'a> Checker<'a> {
                 span: iter.span,
             };
             return self.check_for_iterator(label, pattern, &call, body, else_block, span);
+        }
+        // `[CTL-1]`, `[CTL-2]` (A2-6) — `for ref mut x in e:` names each element so that it may change
+        // it, the only name for it while it is used: the counted loop over a changeable view of `e`,
+        // whose name is a `ref mut` view of the element it is on (`x = 5` writes that element).
+        if let ast::PatternKind::Bind { by_ref: true, mutable: true, sub: None, .. } = pattern.kind
+            && let TyKind::Vec { elem, text: false } | TyKind::Array { elem, .. } | TyKind::ArrayN { elem, .. } | TyKind::Span { elem, .. } =
+                *self.types.kind(iterable.ty)
+        {
+            return self.check_for_indexed(label, (iterable, elem), pattern, false, true, None, body, else_block, span);
         }
         // `[CTL-3]`'s spirit for a collection: iterating an `Array[T]` is a
         // counted loop over its indices, with no iterator object at all.
@@ -61721,13 +61781,27 @@ impl<'a> Checker<'a> {
         )
         .secondary(decl.span, "the loop names each one read-only")
         .note("a method that changes its object is not called through a name that only reads it [EXC-15]");
-        // The line to write: until M5 builds `for ref mut x in e:` (`[CTL-1]`, A2-6), the walk that
-        // names each element so that it may change it is `iter_mut()`'s.
+        // The line to write: `for ref mut x in e:` names each element so that it may change it
+        // (`[CTL-1]`, `[EXC-15]`'s "write `for ref mut p in players:` in place of line 7").
         if let Some(iterable) = header.strip_prefix(&written).and_then(|rest| rest.trim().strip_suffix(':')) {
             let line = text.get(..start).map_or(1, |before| before.matches('\n').count() + 1);
-            refused = refused.help(format!("write `for {name} in {}.iter_mut():` in place of line {line}", iterable.trim()));
+            refused = refused.help(format!("write `for ref mut {name} in {}:` in place of line {line}", iterable.trim()));
         }
         Some(refused)
+    }
+
+    /// The key type of a `Map` (or a view of one).
+    fn map_key_type(&self, ty: Ty) -> Option<Ty> {
+        let mut seen = ty;
+        while let TyKind::Ref { inner, .. } = *self.types.kind(seen) {
+            seen = inner;
+        }
+        match *self.types.kind(seen) {
+            TyKind::Struct(id) if self.collection_named(seen) == Some("std.collections.Map") => {
+                self.types.struct_def(id).origin.as_ref().and_then(|(_, args)| args.first().copied())
+            }
+            _ => None,
+        }
     }
 
     fn pass_receiver_to(&mut self, receiver: Expr, mode: Mode, callee: DefId, span: Span) -> Expr {

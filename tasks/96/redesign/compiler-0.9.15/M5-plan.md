@@ -25,6 +25,12 @@ to `tests/conformance/<RULE>/` when it is built.
   (every write of `j` adds a positive constant to a stable `i` or to `j`), the line inside `if i != j:` (blocks the
   arm dominates and only it enters, `i` and `j` unchanged). Used where a loan meets an access (`check_point`).
   Left: E3022's texts for two arguments of one call and for one place twice (A2-4b).
+- **A2-6, first half, done** (2026-11-20): `for ref mut x in e:` over a list, a fixed array or a span (the counted
+  loop over a changeable view, `check_for_indexed`); a `Map` with two names (`m.items()`), `for k, ref mut v in m:`
+  (std's `__items_mut`, the compiler's, as `__nested` is); `for v in xs.iter_mut():` is 0.9.10's spelling of a loop
+  over `xs` (a place), so `v += 1` is `E3023` with the help `for ref mut v in xs:`, and E3023's method help gives
+  `for ref mut p in players:`. std.ecs, 9 tests and 5 first-week helped copies follow the migration. Left: E3020's
+  texts (the spec's two-line messages), a counting loop's refusal of a removal, generators.
 - **A2-3 mostly done** (round 7's H4, `lanes/a.md`): part names are views, re-pointing, names that keep their place,
   `const ref mut`, BRW-13 credited. Left: the `Cell` refusal (BRW-15.1), a `ref mut dst: MutSpan` parameter by
   address (BRW-14.8), BRW-1's `E3021` text for a part name, a part of a `packed` struct.

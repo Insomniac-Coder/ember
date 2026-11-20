@@ -27,7 +27,7 @@ fn tuple_of(x: (Entity, Cs...)) -> int:
 
 [Ts...]
 fn listeners(ref mut f: Array[fn(Ts...)], values: Ts...):
-    for g in f.iter_mut():
+    for ref mut g in f:
         g(values...)
 
 fn show(a: int, b: int):

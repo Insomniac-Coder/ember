@@ -12,7 +12,7 @@ struct Pair:
 
 fn main():
     m: Map[String, Array[int]] = {"x": [1, 2]}
-    for v in m["x"].iter_mut():
+    for ref mut v in m["x"]:
         v += 1
     for i, v in m["x"].iter_mut().enumerate():
         v += i
@@ -22,6 +22,6 @@ fn main():
         p += 1000
     println(m["x"])
     ps: Map[int, Pair] = {1: Pair([5])}
-    for v in ps[1].a.iter_mut():
+    for ref mut v in ps[1].a:
         v *= 2
     println(ps[1].a)

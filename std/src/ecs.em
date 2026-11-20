@@ -356,7 +356,7 @@ pub class World:
     ## It allocates a new `Array`.
     pub fn run_parallel(owns systems: Array[System]):
         sets: Array[Array[Access]] = []
-        for system in systems.iter_mut():
+        for ref mut system in systems:
             sets.push(owns system.accesses())
         for i in 0..systems.len():
             for j in i + 1..systems.len():
@@ -387,7 +387,7 @@ pub class World:
     ## It allocates as the `Array` it adds to grows.
     pub fn apply(commands: Commands):
         with queued = commands.queued.lock():
-            for change in queued.iter_mut():
+            for ref mut change in queued:
                 change.apply(this)
             queued.clear()
 

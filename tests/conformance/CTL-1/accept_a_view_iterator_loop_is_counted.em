@@ -26,7 +26,7 @@ fn main():
     ps: Array[P] = []
     for i in 0..5:
         ps.push(owns P(i, 10 * i))
-    for p in ps.iter_mut():
+    for ref mut p in ps:
         p.x += 100
     total = 0
     for p in ps.iter():

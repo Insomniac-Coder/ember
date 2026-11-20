@@ -27,7 +27,7 @@ class EventBus:
         if topic not in this.subscribers:
             println(f"(nobody listens to {topic})")
             return
-        for handler in this.subscribers[topic].iter_mut():
+        for ref mut handler in this.subscribers[topic]:
             handler(event)
             this.delivered += 1
 

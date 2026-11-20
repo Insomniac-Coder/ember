@@ -4,5 +4,5 @@
 ## `m[k] = v` is (D-818).
 
 fn bump(m: Map[String, Array[int]]):
-    for v in m["a"].iter_mut():  #$ error[E3023]
+    for ref mut v in m["a"]:  #$ error[E3023]
         v += 1

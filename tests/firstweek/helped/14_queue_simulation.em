@@ -56,7 +56,7 @@ fn main():
         if rng.chance(45):
             queue.push(owns Customer(id=next_id, arrived=minute, items=rng.between(1, 6)))
             next_id += 1
-        for till in tills.iter_mut():
+        for ref mut till in tills:
             till.tick()
             if till.is_free() and queue.len() > 0:
                 customer = queue.remove(0)

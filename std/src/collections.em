@@ -1023,6 +1023,28 @@ extend[K: needs (Eq, Hash), V, H: needs (Hasher, Default)] MapValuesMut[K, V, H]
 extend[K: needs (Eq, Hash), V, H: needs (Hasher, Default)] MapItems[K, V, H] implements Iterator:
     type Item = (ref K, ref V)
 
+## `[CTL-1]` — the compiler's, for `for k, ref mut v in m:`: each key, and its value as a place the
+## loop may change. Not a method of `Map`'s own: `keys()`, `values()`, `values_mut()` and `items()` are.
+@view
+[K: needs (Eq, Hash), V, H: needs (Hasher, Default)]
+pub struct MapItemsMut:
+    owner: ref mut Map[K, V, H]
+    at: int
+
+    pub fn next() -> Option[(ref K, ref mut V)]:
+        while this.at < this.owner.entries.len():
+            i = this.at
+            this.at += 1
+            match this.owner.entries[i]:
+                Some(ref mut e):
+                    return Some((ref e.key, ref mut e.value))
+                None:
+                    pass
+        return None
+
+extend[K: needs (Eq, Hash), V, H: needs (Hasher, Default)] MapItemsMut[K, V, H] implements Iterator:
+    type Item = (ref K, ref mut V)
+
 ## The methods that name the view types declared above.
 extend[K: needs (Eq, Hash), V, H: needs (Hasher, Default)] Map[K, V, H]:
     pub fn entry(owns k: K) -> MapEntry[K, V, H]:
@@ -1043,6 +1065,10 @@ extend[K: needs (Eq, Hash), V, H: needs (Hasher, Default)] Map[K, V, H]:
 
     pub fn items() -> MapItems[K, V, H]:
         return MapItems(ref this, 0)
+
+    ## The compiler's, for `for k, ref mut v in m:` (`[CTL-1]`).
+    pub fn __items_mut() -> MapItemsMut[K, V, H]:
+        return MapItemsMut(ref mut this, 0)
 
 
 ## `[STD-11]`, `[STD-16]` (ODR-032) — a `Map` with no values: insertion

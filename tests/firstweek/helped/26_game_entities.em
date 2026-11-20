@@ -63,7 +63,7 @@ fn main():
         println(f"turn {turn}: {hero.describe()}")
         alive = [shares mut m for m in monsters if m.alive()]
         hero.act(alive[0])
-        for m in monsters.iter_mut():
+        for ref mut m in monsters:
             if m.alive() and hero.alive():
                 m.act(hero)
         turn += 1

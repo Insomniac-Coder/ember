@@ -39,7 +39,7 @@ fn main():
     for i in 0..5:
         ps.push(owns P(i, i + 1))
     for step in 0..3:
-        for p in ps.iter_mut():
+        for ref mut p in ps:
             p.x += p.v
     line: Array[String] = []
     for p in ps:
@@ -48,7 +48,7 @@ fn main():
     xs: Array[int] = [1]
     total = 0
     for r in 0..5:
-        for x in xs.iter_mut():
+        for ref mut x in xs:
             x += 1
         xs.push(owns r)
         for x in xs:
