@@ -716,3 +716,13 @@ Rulings on W9's questions:
    arguments on a method of a built-in generic (`Result.and_then`) are E2072 today: a defect for the next job, the
    help stays.
 6. E2113's message keeps the spec's `if e is KeyEvent as k:` text, which compiles once M11 builds kind tests.
+
+## D2 (deputy, M6a's bank), collected 2026-11-20
+
+Merged: `tasks/96/redesign/jobs/ahead/M6a/` (15 rules, 42 clauses, 69 files; INDEX.md). Its eight spec questions
+(INDEX §3) stay open for the owner or Hardened_15, each file following the deputy's recommended reading and saying so:
+`ref mut this` to a callee that replaces its parameter (E2103 recommended, the registry row's case); the line a
+"stored on line N" names; CLO-17's `t.on_visit` example against its wording; CLO-17 against BRW-18's message; FN-9's
+"neither changes nor ends while `p` is used"; where `ref mut this` is checked; a `drop` handing `this` to an `owns this`
+method (E3016 recommended). Its eighth, `x.f[i](...)` for a field `f`, the spec already decides (an element call):
+an implementation gap (today E2072).
