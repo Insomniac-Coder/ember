@@ -297,8 +297,10 @@ fn run_checks(
             (flowed, map)
         })
     };
-    let symbols: HashMap<&str, usize> = bodies.iter().enumerate().map(|(at, body)| (body.symbol.as_str(), at)).collect();
-    let drop_runs = crate::drop_runs::DropRuns::new(bodies, types, &symbols);
+    let symbols_cell: std::sync::OnceLock<HashMap<&str, usize>> = std::sync::OnceLock::new();
+    let symbols = || symbols_cell.get_or_init(|| bodies.iter().enumerate().map(|(at, body)| (body.symbol.as_str(), at)).collect());
+    let drop_runs_cell: std::sync::OnceLock<crate::drop_runs::DropRuns<'_>> = std::sync::OnceLock::new();
+    let drop_runs = || drop_runs_cell.get_or_init(|| crate::drop_runs::DropRuns::new(bodies, types, symbols()));
     // `[THR-20]` — a function another thread may run that reaches a `static mut`: in the program's own
     // check only (not the borrow report's, nor the run-time kind checks' second look); a program with no
     // module variable has nothing here to refuse.
@@ -310,9 +312,12 @@ fn run_checks(
     }
     // The borrow report reads every form once: it is given the summaries from the start.
     let eager = reports.is_some();
-    let std_bodies: std::sync::Arc<Vec<bool>> = std::sync::Arc::new(bodies.iter().map(crate::summaries::in_std).collect());
+    // Only a form given the summaries reads these (a chain's names, where it stops): made on first need.
+    let std_bodies_cell: std::sync::OnceLock<std::sync::Arc<Vec<bool>>> = std::sync::OnceLock::new();
+    let std_bodies = || std_bodies_cell.get_or_init(|| std::sync::Arc::new(bodies.iter().map(crate::summaries::in_std).collect()));
     // A method by its type (`Enemy.drop`), a function by its name.
-    let body_names: std::sync::Arc<Vec<String>> = std::sync::Arc::new(
+    let body_names_cell: std::sync::OnceLock<std::sync::Arc<Vec<String>>> = std::sync::OnceLock::new();
+    let body_names = || body_names_cell.get_or_init(|| std::sync::Arc::new(
         bodies
             .iter()
             .map(|body| {
@@ -320,7 +325,7 @@ fn run_checks(
                 crate::summaries::owner_of(body, types).map_or_else(|| short.to_string(), |owner| format!("{owner}.{short}"))
             })
             .collect(),
-    );
+    ));
     // `[BRW-5]` — each function's written name and its parameters' names.
     let callees: std::sync::Arc<HashMap<String, (String, Vec<String>)>> = std::sync::Arc::new(
         bodies
@@ -387,11 +392,14 @@ fn run_checks(
         let start = sink.mark();
         for (at, form) in forms.iter().enumerate() {
             let _ = form.callees.set(callees.clone());
-            if eager {
+            let given = |form: &crate::dyn_kinds::Form| {
                 let _ = form.summaries.set(flow().1.clone());
+                let _ = form.body_names.set(body_names().clone());
+                let _ = form.std_bodies.set(std_bodies().clone());
+            };
+            if eager {
+                given(form);
             }
-            let _ = form.body_names.set(body_names.clone());
-            let _ = form.std_bodies.set(std_bodies.clone());
             let checked = form.body.as_ref().unwrap_or(body);
             // What its calls and ends run is read only where they meet a loan of a static it names
             // (`summary_accesses`): a body that names none needs none of it.
@@ -399,7 +407,7 @@ fn run_checks(
                 matches!(&block.terminator, Terminator::Call { func: FuncRef::Builtin { which: Builtin::LazyStatic { .. } | Builtin::ConstStatic { .. } | Builtin::ForeignStatic { .. }, .. }, .. })
             });
             if names_a_static {
-                let _ = form.runs.set(crate::summaries::runs_of(index, checked, bodies, types, &symbols, targets(), &drop_runs));
+                let _ = form.runs.set(crate::summaries::runs_of(index, checked, bodies, types, symbols(), targets(), drop_runs()));
             }
             let capture_paths = capture_borrow_paths(checked, &capture_contracts);
             // A kept body's diagnostics all go through `own`, its errors only on.
@@ -413,7 +421,7 @@ fn run_checks(
             };
             check(&mut own, if at == 0 { reports.as_deref_mut() } else { None });
             if !eager && form.wanted.load(std::sync::atomic::Ordering::Relaxed) {
-                let _ = form.summaries.set(flow().1.clone());
+                given(form);
                 form.guards.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).clear();
                 own = Sink::new();
                 own.migrating = sink.migrating;
@@ -472,7 +480,7 @@ fn run_checks(
         .collect();
     // `[BRW-16]` — the positions pass decides as the checks did: it is given the summaries wherever a body,
     // kept or not, may make a position again after a written function.
-    let summaries = (flow_cell.get().is_some() || bodies.iter().any(|body| crate::positions::may_need_summaries(body, types))).then(|| flow().1.clone());
+    let summaries = (flow_cell.get().is_some() || bodies.iter().any(|body| body.kept && crate::positions::may_need_summaries(body, types))).then(|| flow().1.clone());
     (ranges, BorrowFacts { stores: store_summaries, kinds, summaries }, guards)
 }
 
@@ -5006,7 +5014,7 @@ fn check_point_with(
                     point.block,
                     point.index,
                     loan.borrower,
-                    &repoints_of(body, types, form),
+                    repoints_of(body, types, form),
                 )
                 && {
                     let at = Point { block: call, index: body.blocks[call].stmts.len() };
@@ -5296,7 +5304,7 @@ fn check_point_with(
                 // another name still holds its borrow there: that name (a view made from the position,
                 // `other = boss`) is not made again and keeps the old buffer's address.
                 let kept_by = (position && matches!(access, Access::Borrow { mutable: true }))
-                    .then(|| crate::positions::repointed_add_at(body, point.block, point.index, loan.borrower, &repoints_of(body, types, form)))
+                    .then(|| crate::positions::repointed_add_at(body, point.block, point.index, loan.borrower, repoints_of(body, types, form)))
                     .flatten()
                     .and_then(|call| {
                         let at = Point { block: call, index: body.blocks[call].stmts.len() };
@@ -6403,15 +6411,15 @@ fn summary_of<'a>(form: &'a crate::dyn_kinds::Form, symbol: &str) -> Option<&'a 
 
 /// `[BRW-16]` — the adds after which a position is made again, kept once worked out with the summaries; without
 /// them (a written function's add then keeps no position), worked out for this check only, the form wanted.
-fn repoints_of<'a>(body: &Body, types: &TypeTable, form: &'a crate::dyn_kinds::Form) -> std::borrow::Cow<'a, HashSet<(usize, LocalId)>> {
+fn repoints_of<'a>(body: &Body, types: &TypeTable, form: &'a crate::dyn_kinds::Form) -> &'a HashSet<(usize, LocalId)> {
     match form.summaries.get() {
-        Some(summaries) => std::borrow::Cow::Borrowed(form.repoints.get_or_init(|| crate::positions::repoints(body, types, Some(&**summaries)))),
-        None => {
+        Some(summaries) => form.repoints.get_or_init(|| crate::positions::repoints(body, types, Some(&**summaries))),
+        None => form.repoints_plain.get_or_init(|| {
             if crate::positions::may_need_summaries(body, types) {
                 form.wanted.store(true, std::sync::atomic::Ordering::Relaxed);
             }
-            std::borrow::Cow::Owned(crate::positions::repoints(body, types, None))
-        }
+            crate::positions::repoints(body, types, None)
+        }),
     }
 }
 

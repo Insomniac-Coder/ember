@@ -117,6 +117,8 @@ pub(crate) struct Form {
     pub index: std::sync::OnceLock<crate::index_proofs::IndexProofs>,
     /// `[BRW-16]` — the adds after which a position is made again (`positions::repoints`).
     pub repoints: std::sync::OnceLock<std::collections::HashSet<(usize, ember_mir::LocalId)>>,
+    /// The same, worked out without the summaries (a first check, before the form is known to want them).
+    pub repoints_plain: std::sync::OnceLock<std::collections::HashSet<(usize, ember_mir::LocalId)>>,
     /// `[STA-1]`, `[LT-3]` — each temporary holding a module variable's reference, by its static's one
     /// root (`borrows::module_variable_roots`).
     pub statics: std::sync::OnceLock<HashMap<ember_mir::LocalId, ember_mir::LocalId>>,
@@ -299,7 +301,7 @@ pub(crate) fn expand(
                     }
                 }
                 under.push(read.join(";"));
-                Form { body: symbol.and_then(|symbol| copies.remove(&symbol)), sites, guards: Default::default(), index: Default::default(), repoints: Default::default(), statics: Default::default(), callees: Default::default(), summaries: Default::default(), body_names: Default::default(), runs: Default::default(), std_bodies: Default::default(), wanted: Default::default() }
+                Form { body: symbol.and_then(|symbol| copies.remove(&symbol)), sites, guards: Default::default(), index: Default::default(), repoints: Default::default(), statics: Default::default(), callees: Default::default(), summaries: Default::default(), body_names: Default::default(), runs: Default::default(), std_bodies: Default::default(), wanted: Default::default(), repoints_plain: Default::default() }
             })
             .collect();
         under.sort();
