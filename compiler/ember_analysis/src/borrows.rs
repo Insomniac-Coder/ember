@@ -158,6 +158,9 @@ pub struct BorrowFacts {
     /// call may run in each form it was checked in (`dyn_kinds::Expansion::checked_under`). A kept
     /// body is checked again when the program now gives it others, or when its record keeps none.
     pub kinds: HashMap<String, Vec<String>>,
+    /// `[EFF-24]` (M6a) — each function's summary by symbol, as this build's checks read them: handed
+    /// to the passes after the checks (`positions`); not kept in an incremental record yet.
+    pub summaries: Option<std::sync::Arc<HashMap<String, crate::summaries::Summary>>>,
 }
 
 /// `[DIA-8]` — one loan as the checker holds it (`[BCK-1]`): the place it borrows, whether mutably,
@@ -279,6 +282,12 @@ fn run_checks(
         |func: &FuncRef| stores::with_stores(contract_for(func, &summaries, &signatures), func, &store_summaries);
     let names: HashMap<String, String> =
         bodies.iter().map(|body| (body.symbol.clone(), body.name.clone())).collect();
+    // `[EFF-24]` (M6a step 1) — each function's summary, worked out once for the build.
+    let flow: std::sync::Arc<HashMap<String, crate::summaries::Summary>> = std::sync::Arc::new(
+        bodies.iter().zip(crate::summaries::summarize_flow(bodies, types)).map(|(body, summary)| (body.symbol.clone(), summary)).collect(),
+    );
+    let body_names: std::sync::Arc<Vec<String>> =
+        std::sync::Arc::new(bodies.iter().map(|body| body.name.rsplit('.').next().unwrap_or(&body.name).to_string()).collect());
     // `[BRW-5]` — each function's written name and its parameters' names.
     let callees: std::sync::Arc<HashMap<String, (String, Vec<String>)>> = std::sync::Arc::new(
         bodies
@@ -345,6 +354,8 @@ fn run_checks(
         let start = sink.mark();
         for (at, form) in forms.iter().enumerate() {
             let _ = form.callees.set(callees.clone());
+            let _ = form.summaries.set(flow.clone());
+            let _ = form.body_names.set(body_names.clone());
             let checked = form.body.as_ref().unwrap_or(body);
             let capture_paths = capture_borrow_paths(checked, &capture_contracts);
             let mut own = Sink::new();
@@ -408,7 +419,7 @@ fn run_checks(
             })
         })
         .collect();
-    (ranges, BorrowFacts { stores: store_summaries, kinds }, guards)
+    (ranges, BorrowFacts { stores: store_summaries, kinds, summaries: Some(flow) }, guards)
 }
 
 /// `[LT-48]` — each check of a `runtime` parameter's kind the borrow checks asked for, before the
@@ -4887,7 +4898,7 @@ fn check_point(
                     point.block,
                     point.index,
                     loan.borrower,
-                    form.repoints.get_or_init(|| crate::positions::repoints(body, types)),
+                    form.repoints.get_or_init(|| crate::positions::repoints(body, types, form.summaries.get().map(|summaries| &**summaries))),
                 )
                 && {
                     let at = Point { block: call, index: body.blocks[call].stmts.len() };
@@ -5159,7 +5170,7 @@ fn check_point(
             // virtual call gives may be checked while running (`[LT-48]`): each keeps its own path.
             let reshaped = !matches!(access, Access::Move)
                 && !loan.arena_scope
-                && reshapes_at(body, types, point, place, *access, loan_place)
+                && reshapes_at(body, types, form, point, place, *access, loan_place)
                 && !loan_held_by_for_iterator(body, regions, loan, point)
                 && !crate::dyn_kinds::held_by_a_dyn_call(body, &form.sites, loan.borrower);
             // `[BRW-16]` — a position (a name for a list element made by indexing) is ended by what may
@@ -5175,7 +5186,7 @@ fn check_point(
                 // another name still holds its borrow there: that name (a view made from the position,
                 // `other = boss`) is not made again and keeps the old buffer's address.
                 let kept_by = (position && matches!(access, Access::Borrow { mutable: true }))
-                    .then(|| crate::positions::repointed_add_at(body, point.block, point.index, loan.borrower, form.repoints.get_or_init(|| crate::positions::repoints(body, types))))
+                    .then(|| crate::positions::repointed_add_at(body, point.block, point.index, loan.borrower, form.repoints.get_or_init(|| crate::positions::repoints(body, types, form.summaries.get().map(|summaries| &**summaries)))))
                     .flatten()
                     .and_then(|call| {
                         let at = Point { block: call, index: body.blocks[call].stmts.len() };
@@ -5225,7 +5236,11 @@ fn check_point(
                                 matches!(func, FuncRef::Builtin { which: Builtin::ArrayClear | Builtin::ArrayTruncate | Builtin::ArrayPop { .. } | Builtin::ArrayDrain, .. })
                                     || matches!(func, FuncRef::Builtin { which: Builtin::SoA { op: SoAOp::Clear | SoAOp::TakeLast | SoAOp::Truncate | SoAOp::DropAt | SoAOp::SetLen, .. }, .. })
                             });
-                        let adds = call_given_borrow_at(body, point).is_some_and(|(func, _)| crate::positions::only_adds(func));
+                        // An add: a built-in that only adds, or a written function whose summary only adds to
+                        // what the argument points at (`[EFF-24]`).
+                        let adds = call_given_borrow_at(body, point).is_some_and(|(func, _)| {
+                            crate::positions::only_adds(func) || written_only_adds(body, form, point, func)
+                        });
                         let change = if matches!(access, Access::Write) { ember_diag::line_code_mark(span) } else { ember_diag::text_mark(span) };
                         let what = if adds {
                             format!("may move the {noun} `{view}` names to a new place")
@@ -5343,7 +5358,7 @@ fn check_point(
                 if walks.iter().any(|other| other.span.start > loan.span.start) {
                     continue;
                 }
-                let (message, help) = walk_change_message(body, types, loan, loan_place, place, *access, point, span, &name, walks.len() > 1);
+                let (message, help) = walk_change_message(body, types, form, loan, loan_place, place, *access, point, span, &name, walks.len() > 1);
                 walk_help = Some(help);
                 (codes::E3020, message)
             } else {
@@ -5902,7 +5917,7 @@ fn through_indirection(body: &Body, types: &TypeTable, place: &Place) -> bool {
 /// what its first argument points at (both, for `mem.swap`), or a write of a whole value that owns
 /// memory over a place the view points inside (`xs = [9]` while a view reads `xs[0]`). A write of
 /// the viewed place itself is a change, not a reshape (`[BRW-1]`).
-fn reshapes_at(body: &Body, types: &TypeTable, point: Point, place: &Place, access: Access, loan_place: &Place) -> bool {
+fn reshapes_at(body: &Body, types: &TypeTable, form: &crate::dyn_kinds::Form, point: Point, place: &Place, access: Access, loan_place: &Place) -> bool {
     match access {
         // The `ref mut` a reshaping built-in is given, where it is taken: the call that receives it
         // as the argument it reshapes.
@@ -5916,14 +5931,21 @@ fn reshapes_at(body: &Body, types: &TypeTable, point: Point, place: &Place, acce
             if !taken.projection.is_empty() {
                 return false;
             }
+            let given = |arg: &Operand| matches!(arg, Operand::Copy(given) | Operand::Move(given) if given.local == taken.local && given.projection.is_empty());
             body.blocks.iter().any(|block| match &block.terminator {
                 // An arena's `reset` reuses what it made: `E3021` (`[ALC-5]`), not a reshape of a view's place.
                 Terminator::Call { func: FuncRef::Builtin { which, .. }, args, .. }
                     if crate::summaries::reshaping_builtin(types, which) && !matches!(which, ember_mir::Builtin::ArenaReset) =>
                 {
                     let reshaped = if matches!(which, ember_mir::Builtin::MemSwap { .. }) { 2 } else { 1 };
-                    args.iter().take(reshaped).any(|arg| {
-                        matches!(arg, Operand::Copy(given) | Operand::Move(given) if given.local == taken.local && given.projection.is_empty())
+                    args.iter().take(reshaped).any(given)
+                }
+                // `[EFF-24]`, `[BRW-17]` (M6a) — a written function whose summary reshapes what the
+                // argument points at itself, its elements added, removed or reordered (`xs.retain(keep)`,
+                // `wipe(ref mut xs)`); a change deeper inside an element is a change, not a reshape of it.
+                Terminator::Call { func: FuncRef::Direct { symbol, .. }, args, .. } => {
+                    args.iter().position(given).is_some_and(|param| {
+                        form.summaries.get().and_then(|summaries| summaries.get(symbol)).is_some_and(|summary| summary.reshapes.iter().any(|fact| fact.reach.root == crate::summaries::Root::Param(param) && fact.reach.path == [crate::summaries::Step::Deref]))
                     })
                 }
                 _ => false,
@@ -5949,6 +5971,7 @@ fn reshapes_at(body: &Body, types: &TypeTable, point: Point, place: &Place, acce
 fn walk_change_message(
     body: &Body,
     types: &TypeTable,
+    form: &crate::dyn_kinds::Form,
     loan: &Loan,
     loan_place: &Place,
     place: &Place,
@@ -6014,6 +6037,24 @@ fn walk_change_message(
     };
     let mark = |part| ember_diag::walk_fix_mark(part, change, nested, loan.span, span, &collection, [&kinds[0], &kinds[1]]);
     let walks = if map { "whose keys this loop walks" } else { "which this loop walks" };
+    // `[EFF-1]`, `[BRW-18]` (M6a) — a change a written function makes: what its summary says it does
+    // to the argument, and through which function and line ("`tick()` (line 13) adds to `LOG`
+    // (through `note`, line 4) while this loop walks `LOG` (line 11)").
+    if change == WalkChange::Other
+        && let Some((func, _)) = call
+        && let Some((verb, through)) = walk_change_through(body, form, point, func)
+    {
+        return (
+            format!(
+                "`{}` (line {}) {verb} `{collection}` (through {through}) while this loop walks `{collection}` (line {}); {}",
+                ember_diag::line_code_mark(span),
+                ember_diag::line_mark(span),
+                mark(WalkPart::LoopLine),
+                mark(WalkPart::Fix)
+            ),
+            mark(WalkPart::Help),
+        );
+    }
     (
         format!(
             "`{}` (line {}) {verb} `{collection}`, {walks} (line {}); {}",
@@ -6040,18 +6081,23 @@ fn call_pair_message(body: &Body, types: &TypeTable, form: &crate::dyn_kinds::Fo
         return None;
     }
     let position = |args: &[Operand], local: LocalId| args.iter().position(|arg| matches!(arg, Operand::Copy(given) | Operand::Move(given) if given.local == local && given.projection.is_empty()));
-    let (symbol, first, second) = body.blocks.iter().find_map(|block| match &block.terminator {
-        Terminator::Call { func: FuncRef::Direct { symbol, .. }, args, .. } => Some((symbol, position(args, loan.borrower)?, position(args, taken.local)?)),
-        _ => None,
-    })?;
-    let (callee, params) = form.callees.get()?.get(symbol)?;
-    let (a, b) = (params.get(first)?, params.get(second)?);
     let list = Place { local: place.local, projection: place.projection[..at_place].to_vec() };
     let list = place_name(body, types, &list);
     if list.contains('…') {
         return None;
     }
     let noun = viewed_noun(types, place_ty(body, types, place));
+    let call = body.blocks.iter().find_map(|block| match &block.terminator {
+        Terminator::Call { func: FuncRef::Direct { symbol, .. }, args, .. } => Some((symbol, position(args, loan.borrower)?, position(args, taken.local)?)),
+        _ => None,
+    });
+    let Some((symbol, first, second)) = call else {
+        // Two names the program wrote for elements of one list (`a = ref mut v[0]`, `b = ref mut v[0]`).
+        let (first, second) = (body.local(loan.borrower).name.clone()?, body.local(taken.local).name.clone()?);
+        return Some(format!("`{second}` and `{first}` would both change an element of `{list}`, {}", ember_diag::pair_mark(&list, &noun, loan.span, span)));
+    };
+    let (callee, params) = form.callees.get()?.get(symbol)?;
+    let (a, b) = (params.get(first)?, params.get(second)?);
     let plural = if let Some(stem) = noun.strip_suffix('y').filter(|stem| !stem.ends_with(['a', 'e', 'i', 'o', 'u'])) {
         format!("{stem}ies")
     } else if noun.ends_with(['s', 'x']) || noun.ends_with("ch") || noun.ends_with("sh") {
@@ -6111,6 +6157,50 @@ fn soa_add_given_borrow_at(body: &Body, point: Point) -> Option<usize> {
             Some(block)
         }
         _ => None,
+    })
+}
+
+/// `[EFF-1]`, `[BRW-18]` (M6a) — what the written function `func`, given the `ref mut` taken at `point`,
+/// does to what that argument points at, by its summary ("adds to", "changes"), and the function and
+/// line that do it ("`note`, line 4").
+fn walk_change_through(body: &Body, form: &crate::dyn_kinds::Form, point: Point, func: &FuncRef) -> Option<(&'static str, String)> {
+    let FuncRef::Direct { symbol, .. } = func else { return None };
+    let Some(StmtKind::Assign { place: taken, .. }) = body.blocks[point.block].stmts.get(point.index).map(|stmt| &stmt.kind) else { return None };
+    let summary = form.summaries.get()?.get(symbol)?;
+    let names = form.body_names.get()?;
+    let param = body.blocks.iter().find_map(|block| match &block.terminator {
+        Terminator::Call { func: FuncRef::Direct { symbol: called, .. }, args, .. } if called == symbol => {
+            args.iter().position(|arg| matches!(arg, Operand::Copy(given) | Operand::Move(given) if given.local == taken.local && given.projection.is_empty()))
+        }
+        _ => None,
+    })?;
+    let reach = crate::summaries::Reach { root: crate::summaries::Root::Param(param), path: vec![crate::summaries::Step::Deref] };
+    let on_it = |fact: &&crate::summaries::Fact| fact.reach.root == reach.root && !fact.at.is_dummy();
+    let (verb, fact) = if summary.only_adds(&reach) {
+        ("adds to", summary.adds.iter().find(on_it)?)
+    } else {
+        ("changes", summary.reshapes.iter().chain(&summary.changes).find(on_it)?)
+    };
+    // The function that does it: the chain's last callee, or the called function itself.
+    let who = match fact.chain.last() {
+        Some(&(callee, _)) => names.get(callee)?.clone(),
+        None => form.callees.get()?.get(symbol)?.0.clone(),
+    };
+    Some((verb, format!("`{who}`, line {}", ember_diag::line_mark(fact.at))))
+}
+
+/// `[EFF-24]` — whether `func`, given the `ref mut` taken at `point`, is a written function whose summary
+/// only adds to what that argument points at.
+fn written_only_adds(body: &Body, form: &crate::dyn_kinds::Form, point: Point, func: &FuncRef) -> bool {
+    let FuncRef::Direct { symbol, .. } = func else { return false };
+    let Some(StmtKind::Assign { place: taken, .. }) = body.blocks[point.block].stmts.get(point.index).map(|stmt| &stmt.kind) else { return false };
+    let Some(summary) = form.summaries.get().and_then(|summaries| summaries.get(symbol)) else { return false };
+    body.blocks.iter().any(|block| match &block.terminator {
+        Terminator::Call { func: FuncRef::Direct { symbol: called, .. }, args, .. } if called == symbol => args
+            .iter()
+            .position(|arg| matches!(arg, Operand::Copy(given) | Operand::Move(given) if given.local == taken.local && given.projection.is_empty()))
+            .is_some_and(|param| summary.only_adds(&crate::summaries::Reach { root: crate::summaries::Root::Param(param), path: vec![crate::summaries::Step::Deref] })),
+        _ => false,
     })
 }
 

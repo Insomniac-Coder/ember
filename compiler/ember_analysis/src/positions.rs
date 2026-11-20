@@ -18,9 +18,15 @@ use ember_mir::{
 };
 use ember_types::{TyKind, TypeTable};
 
-pub fn repoint_positions_all(bodies: &mut [Body], types: &TypeTable) {
+/// Each function's summary by symbol (`[EFF-24]`): what a written function only adds to.
+pub type Summaries = HashMap<String, crate::summaries::Summary>;
+
+/// Makes the positions of every body again after their adds, by the summaries the borrow check read
+/// (`BorrowFacts::summaries`), so the rule is the one it checked. A body made so already (a bridge's
+/// making comes before any read of the name) is left as it is.
+pub fn repoint_positions_all(bodies: &mut [Body], types: &TypeTable, summaries: Option<&Summaries>) {
     for body in bodies {
-        repoint_positions(body, types);
+        repoint_positions(body, types, summaries);
     }
 }
 
@@ -148,7 +154,7 @@ fn predecessors(body: &Body) -> Vec<Vec<usize>> {
 }
 
 /// Each add a position is made again after: the call's block, the name, and the making to make again.
-fn plan(body: &Body, types: &TypeTable) -> Vec<(usize, LocalId, Making)> {
+fn plan(body: &Body, types: &TypeTable, summaries: Option<&Summaries>) -> Vec<(usize, LocalId, Making)> {
     let writes = writes(body, types);
     let mut repoints = Vec::new();
     if writes.is_empty() {
@@ -158,20 +164,27 @@ fn plan(body: &Body, types: &TypeTable) -> Vec<(usize, LocalId, Making)> {
     let mut names: Vec<LocalId> = writes.keys().copied().collect();
     names.sort();
     for (block, data) in body.blocks.iter().enumerate() {
-        let Terminator::Call { func, args, next, .. } = &data.terminator else { continue };
-        if !only_adds(func) {
-            continue;
-        }
-        let Some(Operand::Copy(given) | Operand::Move(given)) = args.first() else { continue };
-        if !given.projection.is_empty() {
-            continue;
-        }
-        let Some(list) = borrowed_place(body, given.local) else { continue };
-        for &name in &names {
-            if let Some(making) = reaching_making(&writes[&name], &predecessors, block, data.stmts.len(), &list)
-                && used_again(body, name, next.0 as usize)
-            {
-                repoints.push((block, name, making));
+        let Terminator::Call { func, args, next, dest } = &data.terminator else { continue };
+        for argument in added_arguments(func, args, summaries) {
+            let Some(Operand::Copy(given) | Operand::Move(given)) = args.get(argument) else { continue };
+            if !given.projection.is_empty() {
+                continue;
+            }
+            let Some(list) = borrowed_place(body, given.local) else { continue };
+            for &name in &names {
+                // The name is not given to the call nor written by it (`spawn(ref mut es, boss)`,
+                // `boss = pick(ref mut es)`, `boss.x = f(ref mut es)`): the callee would use, or the result
+                // be written through, the address the add may move; the call meets the borrow there.
+                let named = |place: &Place| place.local == name;
+                if named(dest) || args.iter().any(|arg| matches!(arg, Operand::Copy(place) | Operand::Move(place) if named(place))) {
+                    continue;
+                }
+                if let Some(making) = reaching_making(&writes[&name], &predecessors, block, data.stmts.len(), &list)
+                    && used_again(body, name, next.0 as usize)
+                    && !repoints.iter().any(|(at, other, _): &(usize, LocalId, Making)| *at == block && *other == name)
+                {
+                    repoints.push((block, name, making));
+                }
             }
         }
     }
@@ -180,8 +193,21 @@ fn plan(body: &Body, types: &TypeTable) -> Vec<(usize, LocalId, Making)> {
 
 /// The adds a position is made again after: each `(the call's block, the name)`, where the call only
 /// adds to the name's list, the name holds a position of it on every way there, and is used again.
-pub(crate) fn repoints(body: &Body, types: &TypeTable) -> HashSet<(usize, LocalId)> {
-    plan(body, types).into_iter().map(|(block, name, _)| (block, name)).collect()
+pub(crate) fn repoints(body: &Body, types: &TypeTable, summaries: Option<&Summaries>) -> HashSet<(usize, LocalId)> {
+    plan(body, types, summaries).into_iter().map(|(block, name, _)| (block, name)).collect()
+}
+
+/// `[EFF-24]` — the arguments a call only adds to what they point at: a built-in that only adds, its
+/// first; a written function, each its summary only adds to.
+fn added_arguments(func: &FuncRef, args: &[Operand], summaries: Option<&Summaries>) -> Vec<usize> {
+    if only_adds(func) {
+        return vec![0];
+    }
+    let (FuncRef::Direct { symbol, .. }, Some(summaries)) = (func, summaries) else { return Vec::new() };
+    let Some(summary) = summaries.get(symbol) else { return Vec::new() };
+    (0..args.len())
+        .filter(|&param| summary.only_adds(&crate::summaries::Reach { root: crate::summaries::Root::Param(param), path: vec![crate::summaries::Step::Deref] }))
+        .collect()
 }
 
 /// Whether the access at `(block, index)` is the `ref mut` of its list that an add in `repoints`
@@ -197,7 +223,7 @@ pub(crate) fn repointed_add_at(body: &Body, block: usize, index: usize, borrower
     }
     body.blocks.iter().enumerate().find_map(|(call, data)| match &data.terminator {
         Terminator::Call { args, .. }
-            if matches!(args.first(), Some(Operand::Copy(given) | Operand::Move(given)) if given.local == taken.local && given.projection.is_empty())
+            if args.iter().any(|arg| matches!(arg, Operand::Copy(given) | Operand::Move(given) if given.local == taken.local && given.projection.is_empty()))
                 && repoints.contains(&(call, borrower)) =>
         {
             Some(call)
@@ -220,8 +246,8 @@ pub(crate) fn only_adds(func: &FuncRef) -> bool {
     }
 }
 
-fn repoint_positions(body: &mut Body, types: &TypeTable) {
-    let repoints = plan(body, types);
+fn repoint_positions(body: &mut Body, types: &TypeTable, summaries: Option<&Summaries>) {
+    let repoints = plan(body, types, summaries);
     if repoints.is_empty() {
         return;
     }

@@ -61,6 +61,9 @@ pub struct Reach {
 pub struct Fact {
     pub reach: Reach,
     pub chain: Vec<(usize, Span)>,
+    /// The line that does it, in the last function of the chain (the function's own line when the
+    /// chain is empty): what a message names ("through `note`, line 4").
+    pub at: Span,
 }
 
 /// `[EFF-24]` — what a function may change, read, reshape and end.
@@ -211,6 +214,96 @@ pub fn summarize(bodies: &[Body], types: &TypeTable) -> Vec<Summary> {
         }
     }
     summaries
+}
+
+/// `[EFF-24]` (M6a step 1) — every body's summary from its own code and its callees', with no region
+/// facts (`used_after`, `read_while`, `changed_while` stay empty: they need the borrow check's regions):
+/// what the checks of a build read. Each body is walked once, and again only when a callee's summary
+/// grew (a worklist over the callers), not every body every round as [`summarize`] does.
+pub fn summarize_flow(bodies: &[Body], types: &TypeTable) -> Vec<Summary> {
+    let targets = Targets::new(bodies, types);
+    let index: HashMap<&str, usize> = bodies.iter().enumerate().map(|(at, body)| (body.symbol.as_str(), at)).collect();
+    let pointers: Vec<HashMap<LocalId, HashSet<Target>>> = bodies.iter().map(|body| pointers_of(body, types)).collect();
+    // Who calls whom, as `body_facts` resolves its calls: a body is walked again when one grew.
+    let mut callers: Vec<Vec<usize>> = vec![Vec::new(); bodies.len()];
+    for (at, body) in bodies.iter().enumerate() {
+        for callee in callees_of(at, body, bodies, types, &index, &targets) {
+            if !callers[callee].contains(&at) {
+                callers[callee].push(at);
+            }
+        }
+    }
+    let mut summaries: Vec<Summary> = vec![Summary::default(); bodies.len()];
+    let mut known: Vec<HashSet<(What, Reach)>> = vec![HashSet::new(); bodies.len()];
+    let mut queued = vec![true; bodies.len()];
+    let mut work: std::collections::VecDeque<usize> = (0..bodies.len()).rev().collect();
+    while let Some(at) = work.pop_front() {
+        queued[at] = false;
+        let found = body_facts(at, &bodies[at], bodies, types, &index, &targets, &pointers[at], None, &summaries);
+        let mut grew = false;
+        for (what, fact) in found {
+            if known[at].insert((what, fact.reach.clone())) {
+                grew = true;
+                let summary = &mut summaries[at];
+                match what {
+                    What::Change => summary.changes.push(fact),
+                    What::Read => summary.reads.push(fact),
+                    What::Reshape => summary.reshapes.push(fact),
+                    What::Add => summary.adds.push(fact),
+                    What::Remove => summary.removes.push(fact),
+                    What::End => summary.ends.push(fact),
+                    What::LetsThisOut => summary.lets_this_out.push(fact),
+                    What::UsedAfter(_) | What::ReadWhile(_) | What::ChangedWhile(_) => {}
+                }
+            }
+        }
+        if grew {
+            for &caller in &callers[at] {
+                if !queued[caller] {
+                    queued[caller] = true;
+                    work.push_back(caller);
+                }
+            }
+        }
+    }
+    for summary in &mut summaries {
+        for list in [&mut summary.changes, &mut summary.reads, &mut summary.reshapes, &mut summary.adds, &mut summary.removes, &mut summary.ends] {
+            list.sort_by(|a, b| a.reach.cmp(&b.reach));
+        }
+    }
+    summaries
+}
+
+/// The bodies `body`'s calls may run, as `body_facts` resolves them: direct calls, calls through a
+/// function value, `virtual` and `dyn` methods, and the functions a built-in runs itself.
+fn callees_of(at: usize, body: &Body, bodies: &[Body], types: &TypeTable, index: &HashMap<&str, usize>, targets: &Targets) -> Vec<usize> {
+    let mut out = Vec::new();
+    for block in &body.blocks {
+        let Terminator::Call { func, args, .. } = &block.terminator else { continue };
+        match func {
+            FuncRef::Direct { symbol, .. } => out.extend(index.get(symbol.as_str()).copied()),
+            FuncRef::Indirect { operand, ty, .. } => out.extend(targets.of_call(at, body, operand, *ty, types)),
+            FuncRef::Virtual { owner, slot, .. } => out.extend(
+                bodies
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, candidate)| candidate.class_virtual_slot == Some(*slot) && candidate.class_owner.is_some_and(|class| below(types, class, *owner)))
+                    .map(|(callee, _)| callee),
+            ),
+            FuncRef::Interface { interfaces, slot, .. } => out.extend(targets.of_dyn(interfaces, *slot).iter().copied()),
+            FuncRef::Builtin { .. } => {
+                for operand in args {
+                    if let Operand::Const(Const::Fn(symbol)) = operand {
+                        out.extend(index.get(symbol.as_str()).copied());
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    out.sort_unstable();
+    out.dedup();
+    out
 }
 
 /// The steps of a place. MIR reaches a class object's field straight through its handle (`n.next`
@@ -436,10 +529,12 @@ fn body_facts(
     summaries: &[Summary],
 ) -> Vec<(What, Fact)> {
     let mut found = Vec::new();
+    // The line being read: each of its own facts is made there.
+    let line = std::cell::Cell::new(Span::DUMMY);
     let mut own = |what: What, place: &Place, found: &mut Vec<(What, Fact)>| {
         let mut out = Vec::new();
         reaches(body, pointers, &Spot { local: place.local, steps: steps_of(body, types, place) }, 0, &mut out);
-        found.extend(out.into_iter().map(|reach| (what, Fact { reach, chain: Vec::new() })));
+        found.extend(out.into_iter().map(|reach| (what, Fact { reach, chain: Vec::new(), at: line.get() })));
     };
     let read = |operand: &Operand, own: &mut dyn FnMut(What, &Place, &mut Vec<(What, Fact)>), found: &mut Vec<(What, Fact)>| {
         if let Operand::Copy(place) | Operand::Move(place) = operand {
@@ -451,7 +546,7 @@ fn body_facts(
     // `[CLS-2]` — the locals holding `this` as a whole, and an operand that is one of them.
     let aliases = this_aliases(body);
     let whole = |operand: &Operand| matches!(operand, Operand::Copy(place) | Operand::Move(place) if whole_place(&aliases, place));
-    let let_out = Fact { reach: Reach { root: Root::Param(0), path: Vec::new() }, chain: Vec::new() };
+    let let_out = Fact { reach: Reach { root: Root::Param(0), path: Vec::new() }, chain: Vec::new(), at: Span::DUMMY };
     let views: Vec<usize> = match regions {
         Some(regions) => (0..body.arg_count).filter(|&param| !regions.local_regions(LocalId(param as u32 + 1)).is_empty()).collect(),
         None => Vec::new(),
@@ -487,6 +582,7 @@ fn body_facts(
     for (at_block, block) in body.blocks.iter().enumerate() {
         for (at_stmt, stmt) in block.stmts.iter().enumerate() {
             let start = found.len();
+            line.set(stmt.span);
             match &stmt.kind {
                 StmtKind::Assign { place, rvalue } => {
                     own(What::Change, place, &mut found);
@@ -540,6 +636,7 @@ fn body_facts(
         let Terminator::Call { func, args, next, .. } = &block.terminator else { continue };
         let start = found.len();
         let span = block.terminator_span;
+        line.set(block.call_span.unwrap_or(span));
         let callees: Vec<usize> = match func {
             FuncRef::Direct { symbol, .. } => match index.get(symbol.as_str()) {
                 Some(&callee) => vec![callee],
@@ -631,7 +728,7 @@ fn body_facts(
                 if let Some(fact) = summaries[callee].lets_this_out.first() {
                     let mut chain = vec![(callee, span)];
                     chain.extend_from_slice(&fact.chain);
-                    found.push((What::LetsThisOut, Fact { reach: let_out.reach.clone(), chain }));
+                    found.push((What::LetsThisOut, Fact { reach: let_out.reach.clone(), chain, at: fact.at }));
                 }
             }
         }
@@ -694,14 +791,14 @@ fn mapped(body: &Body, types: &TypeTable, pointers: &HashMap<LocalId, HashSet<Ta
     };
     let param = match &fact.reach.root {
         Root::Param(param) => *param,
-        Root::Static(..) => return vec![Fact { reach: fact.reach.clone(), chain: chain() }],
+        Root::Static(..) => return vec![Fact { reach: fact.reach.clone(), chain: chain(), at: fact.at }],
     };
     let Some(Operand::Copy(place) | Operand::Move(place)) = args.get(param) else { return Vec::new() };
     let mut steps = steps_of(body, types, place);
     steps.extend_from_slice(&fact.reach.path);
     let mut out = Vec::new();
     reaches(body, pointers, &Spot { local: place.local, steps }, 0, &mut out);
-    out.into_iter().map(|reach| Fact { reach, chain: chain() }).collect()
+    out.into_iter().map(|reach| Fact { reach, chain: chain(), at: fact.at }).collect()
 }
 
 /// A fact of a function a built-in runs (`task`), from the call: its captured state is the call's
@@ -751,7 +848,7 @@ fn task_mapped(body: &Body, types: &TypeTable, pointers: &HashMap<LocalId, HashS
     }
     let mut chain = vec![(task, span)];
     chain.extend_from_slice(&fact.chain);
-    out.into_iter().map(|reach| Fact { reach, chain: chain.clone() }).collect()
+    out.into_iter().map(|reach| Fact { reach, chain: chain.clone(), at: fact.at }).collect()
 }
 
 /// The operands a closure's environment held in `place` was built from, field by field: the struct

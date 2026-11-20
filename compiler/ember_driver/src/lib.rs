@@ -5815,10 +5815,6 @@ fn compile_once(input: &Path, command: &str, options: &Options, attempts: &mut i
     if sink.has_errors() {
         return Ok(finish(&sink, &map, options));
     }
-    // `[BRW-16]` — a position is made again from its kept index after an add to its list, where the
-    // borrow check let the add meet its borrow (`positions::repoints`); a kept body was made so when
-    // it was checked.
-    mir.pass("positions", &mut types, |bodies, types| ember_analysis::positions::repoint_positions_all(&mut bodies[..fresh], types));
     let interface_cache = interface_cache.expect("a program without errors prepares its interface artifacts");
     // `[BLD-1]` — the checked forms: those the clean modules were kept against must still hold; each
     // module checked here is kept for the next build; and what the clean ones reported is reported.
@@ -5840,6 +5836,11 @@ fn compile_once(input: &Path, command: &str, options: &Options, attempts: &mut i
     } else {
         verify_callable_regions_or_panic(mir.bodies(), &types);
     }
+    // `[BRW-16]` — a position is made again from its kept index after an add to its list, where the
+    // borrow check let the add meet its borrow (`positions::repoints`). After the bodies are kept, and
+    // over every body: a kept body's record is the MIR its checks read, which a later build may check
+    // again (a callee that now removes is then seen).
+    mir.pass("positions", &mut types, |bodies, types| ember_analysis::positions::repoint_positions_all(bodies, types, borrow_facts.summaries.as_deref()));
     // `[BLD-1]` — from here on the bodies are in one order whichever were kept: by module, then
     // where each is written, then by symbol (a generic's instances share their generic's place).
     // What the passes below make, and the C, are then the same as a build that kept nothing makes.

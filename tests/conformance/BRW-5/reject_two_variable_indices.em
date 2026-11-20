@@ -12,7 +12,7 @@ fn main():
     i: usize = 0
     j: usize = 1
     a: ref mut i32 = ref mut v[i]
-    b: ref mut i32 = ref mut v[j]     #$ error[E3022]: `v[…]` is already mutably borrowed
+    b: ref mut i32 = ref mut v[j]     #$ error[E3022]: `b` and `a` would both change an element of `v`, and `v[i]` and `v[j]` are the same number when `i == j`; write `if i != j:` above this line and indent it under it
     a = 10
     b = 20
     println(3)

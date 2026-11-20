@@ -36,6 +36,20 @@ this row: its `RefCell` part is M6b's, and the run-time access machinery goes wi
 | regions through calls (LT-35 accept `E3060`; LT-47 accept is A2-8's callee side) | 2 | 15 |
 | other milestones: capture words (CLO-18 x3, M8), Q8's `this.handlers[i](…)` and `E2103` (CLS-7 x2), `sharedref mut` (EXC-17.2, M5's A2-8), `assert_disjoint` (DIA-11, M6c), a cascade `E3021` (DIA-25.2) | 8 | 16, later |
 
+## Progress (the lead)
+
+- **Step 1, lean (2026-11-20):** `summaries::summarize_flow`, stage 1 with no region facts, a worklist over the
+  callers (a body walked again only when a callee's summary grew), worked out once per build in `run_checks` and
+  given to each `Form` (`Form::summaries`); each fact keeps the line that does it (`Fact::at`). Not yet: the
+  strongly connected groups, bounded facts, keeping in `BorrowFacts`, `[VERIFY-3]`, and the measurement
+  (`tools/compile_budgets.py`, `tools/memory_curve.py`) before it reaches main. `positions` works them out a
+  second time in the driver (a `ponytail:` note).
+- **First consumers (parameters only; statics wait for step 0):** a `ref mut` given to a written function whose
+  summary reshapes what it points at is a reshape (`reshapes_at`: `E3060` at a view's later use, `wipe(ref mut
+  xs)`, `xs.retain(keep)`), "may move" when it only adds; a position survives a written function that only adds
+  (`positions::added_arguments`, any argument); `E3020` through a written function names its verb and chain:
+  "`note(ref mut xs)` (line 16) adds to `xs` (through `grow`, line 8) while this loop walks `xs` (line 15)".
+
 ## 1. The summary
 
 What each function's summary carries (`summaries.rs`; stage 1 needs no regions, stage 2 does):
