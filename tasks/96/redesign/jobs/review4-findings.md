@@ -460,3 +460,12 @@ has none of these. The rule for each: an analysis that cannot follow something c
 9. **Ends of a function value** (statics 8, a wrong refusal): the targets of the place, not of the type.
 10. **Messages** (statics 9, 11): a scope exit's end gets DRP-8's E3020; no mangled names, temporaries or
     standard-library lines in a chain.
+11. **The argument's own view** (found while fixing, p03c): 207ee285 let a call's caused accesses skip the loans of
+    views whose last use is an argument, trusting the call check (E3031) that step 6 builds; until then that
+    skip accepts `walk(LOG)` whose callee walks its parameter and pushes to LOG. Reverted: the accesses meet the
+    arguments' loans too. Seven accepting files wait for step 6 in `ahead/M6a` again: BRW-8 (2), BRW-17, BRW-21
+    (3), MONO-10.
+
+Done 2026-11-20: 1 (views kept in a local aggregate are followed; one nothing records reaches anything), 2
+(E0900), 3, 4 (only for the built-ins that run what they are given), 7, 8, 11. Left: 5 (generators), 6 (scoped
+tasks racing on a module variable), 9, 10.

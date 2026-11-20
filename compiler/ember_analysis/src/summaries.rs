@@ -378,6 +378,38 @@ pub(crate) fn check_module_variables_on_threads(bodies: &[Body], types: &TypeTab
     }
 }
 
+/// `[LT-3]` (review 4) — a function whose result may hold a view into a `static mut` (`fn head() -> StrView:
+/// return LOG[0]`) is `E0900`: the summary does not yet record what a result points into, so a caller would
+/// keep no loan of the module variable (LT-3's rule, M5's part).
+pub(crate) fn check_views_of_module_variables_returned(bodies: &[Body], types: &TypeTable, sink: &mut ember_diag::Sink) {
+    for body in bodies {
+        let result = body.local(ember_mir::RETURN_LOCAL).ty;
+        if !types.may_be_view(result) || in_std(body) {
+            continue;
+        }
+        let pointers = pointers_of(body, types);
+        let mut out = Vec::new();
+        let steps = if points(types, result) { vec![Step::Deref] } else { vec![Step::Field(0), Step::Deref] };
+        reaches(body, &pointers, &Spot { local: ember_mir::RETURN_LOCAL, steps }, 0, &mut out);
+        let Some(name) = out.iter().find_map(|reach| match &reach.root {
+            Root::Static(name, _) if types.is_module_variable(ember_span::Symbol::intern(name)) => Some(name.rsplit('.').next().unwrap_or(name).to_string()),
+            _ => None,
+        }) else { continue };
+        let span = body.blocks.iter().flat_map(|block| &block.stmts).find_map(|stmt| match &stmt.kind {
+            StmtKind::Assign { place, .. } if place.local == ember_mir::RETURN_LOCAL => Some(stmt.span),
+            _ => None,
+        });
+        sink.emit(
+            ember_diag::Diagnostic::error(
+                ember_diag::codes::E0900,
+                span.or_else(|| body.blocks.first().map(|block| block.terminator_span)).unwrap_or(Span::DUMMY),
+                format!("a function returning a view of the module variable `{name}` is not built by this compiler yet"),
+            )
+            .note("what a function's result points into, a `static mut` among them, is recorded with it by [LT-3], which is not built; return a copy of what it views"),
+        );
+    }
+}
+
 /// `[DIA-27]` — the part of a fact's chain a message names: the program's own functions, up to its first call
 /// into the standard library (code the program did not write), and the line that does it, that call's line
 /// in the program or the fact's own.
@@ -608,7 +640,11 @@ fn builtin_runs(at: usize, body: &Body, func: &FuncRef, args: &[Operand], types:
     for operand in args {
         match operand {
             Operand::Const(Const::Fn(symbol)) => out.extend(index.get(symbol.as_str()).copied()),
-            Operand::Copy(place) | Operand::Move(place) => {
+            // A function value a built-in runs (a thread, a task, a job, a parallel loop's body); one it only
+            // stores (`hs.push(owns log_it)`) runs nothing here.
+            Operand::Copy(place) | Operand::Move(place)
+                if matches!(which, Builtin::ThreadSpawn | Builtin::ScopeSpawn { .. } | Builtin::JobSubmit { .. } | Builtin::JobScopeSubmit { .. } | Builtin::ParallelFor { .. }) =>
+            {
                 let ty = place_type(body, types, place);
                 if matches!(types.kind(ty), TyKind::Fn { .. }) {
                     out.extend(targets.of_call(at, body, operand, ty, types));
@@ -800,6 +836,30 @@ fn pointers_of(body: &Body, types: &TypeTable) -> HashMap<LocalId, HashSet<Targe
     for block in &body.blocks {
         for stmt in &block.stmts {
             let StmtKind::Assign { place, rvalue } = &stmt.kind else { continue };
+            // `[EFF-24]` (review 4) — a local holding views inside it (a struct, a tuple, an `Option`, a
+            // closure's state, made whole or a field at a time) points at what each of them points at,
+            // through any of its parts.
+            if !pointer(place.local) && (place.local.0 as usize) < body.locals.len() {
+                let held: Vec<&Operand> = match rvalue {
+                    Rvalue::Aggregate { operands, .. } if place.projection.is_empty() => operands.iter().collect(),
+                    Rvalue::Use(operand) | Rvalue::Cast { operand, .. } if !place.projection.is_empty() => vec![operand],
+                    _ => Vec::new(),
+                };
+                for operand in held {
+                    if let Operand::Copy(from) | Operand::Move(from) = operand
+                        && points(types, place_type(body, types, from))
+                    {
+                        let mut steps = steps_of(body, types, from);
+                        steps.push(Step::Deref);
+                        map.entry(place.local).or_default().insert(Target::At(Spot { local: from.local, steps }));
+                    }
+                }
+                if let Rvalue::Ref { place: lent, .. } = rvalue
+                    && !place.projection.is_empty()
+                {
+                    map.entry(place.local).or_default().insert(Target::At(Spot { local: lent.local, steps: steps_of(body, types, lent) }));
+                }
+            }
             if !place.projection.is_empty() || !pointer(place.local) {
                 continue;
             }
@@ -863,6 +923,32 @@ fn reaches(body: &Body, pointers: &HashMap<LocalId, HashSet<Target>>, spot: &Spo
             let mut path = spot.steps.clone();
             path.truncate(MAX_PATH);
             out.push(Reach { root: Root::Param(index - 1), path });
+        }
+        return;
+    }
+    // `[EFF-24]` (review 4) — through a view kept in a part of a local (`t.0`, `h.items`): what the local's
+    // views point at, past the first `Deref`; a place reached through one nothing records reaches anything.
+    if !matches!(spot.steps.first(), Some(Step::Deref)) {
+        let Some(at) = spot.steps.iter().position(|step| *step == Step::Deref) else { return };
+        match pointers.get(&spot.local) {
+            Some(held) if depth <= 16 => {
+                for target in held {
+                    match target {
+                        Target::At(inner) => {
+                            let mut steps = inner.steps.clone();
+                            steps.extend_from_slice(&spot.steps[at + 1..]);
+                            reaches(body, pointers, &Spot { local: inner.local, steps }, depth + 1, out);
+                        }
+                        Target::Static(name, ty) => {
+                            let mut path = spot.steps[at + 1..].to_vec();
+                            path.truncate(MAX_PATH);
+                            out.push(Reach { root: Root::Static(name.clone(), *ty), path });
+                        }
+                        Target::Anything => anything(body, out),
+                    }
+                }
+            }
+            _ => anything(body, out),
         }
         return;
     }

@@ -291,6 +291,7 @@ fn run_checks(
     // check only (not the borrow report's, nor the run-time kind checks' second look).
     if !only_runtime && reports.is_none() {
         crate::summaries::check_module_variables_on_threads(bodies, types, &flowed, &targets, sink);
+        crate::summaries::check_views_of_module_variables_returned(bodies, types, sink);
     }
     let flow: std::sync::Arc<HashMap<String, crate::summaries::Summary>> =
         std::sync::Arc::new(bodies.iter().zip(flowed).map(|(body, summary)| (body.symbol.clone(), summary)).collect());
@@ -3958,16 +3959,13 @@ fn check_body(
         match &block.terminator {
             Terminator::SwitchInt { discr, .. } => operand_read(discr, &mut accesses),
             Terminator::Call { func, args, dest, next } => {
-                // `[BRW-21]` — a view whose last use is an argument of the call does not live across it:
-                // the callee is held to its promise by the call check (`E3031`), not by these accesses,
-                // which meet only the loans still used after the call.
-                let after = Point { block: next.0 as usize, index: 0 };
-                let across: Vec<&Loan> = in_scope(&loans, point)
-                    .into_iter()
-                    .filter(|loan| {
-                        regions.holders(loan.capability.validity_interval.0).iter().any(|holder| regions.local_regions(*holder).iter().any(|slot| regions.contains(slot.region, after)))
-                    })
-                    .collect();
+                // `[BRW-21]` — a view whose last use is an argument of the call does not live across it, and
+                // the callee is held to its promise by the call check (`E3031`, M6a step 6). Until that is
+                // built, these accesses meet the arguments' loans too (review 4): a callee that changes the
+                // module variable its argument views is refused, not trusted.
+                // ponytail: once step 6 checks `used_after`, keep only the loans live after the call (`next`).
+                let _ = next;
+                let across: Vec<&Loan> = in_scope(&loans, point);
                 // `[EFF-24]`, `[EFF-1]`, `[BRW-18]` (M6a step 3) — what the call's callees do to module
                 // variables, by their summaries, meets this body's loans at the call; `[DRP-8]` — so do
                 // the `drop`s of the elements a built-in ends.
