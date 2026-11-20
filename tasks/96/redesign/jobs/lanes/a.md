@@ -67,3 +67,40 @@ The lead's lane. Read first by every job in it; updated last.
   pattern name whose type is `ref mut T` or `MutSpan` (`iter_mut()`, `chunks_mut`) is not refused as one that keeps
   its place yet. A `ref mut dst: MutSpan` parameter is still passed as the span itself, so giving it another span
   does not reach the caller's `d` (BRW-14.8, an ABI change).
+
+## M10 (H5, 2026-11-20): memory managers with `using` (A1-13, A7-11, A1-14 in part)
+
+- **Where the code is:** the parser: `parse_type` (`ember_parser/src/decls.rs`, `type := base_type ["using"
+  path_type]`) and `BP_USING` in `parse_postfix` (`body.rs`, `made := postfix_expr ["using" postfix_expr]`, row 18);
+  the AST `TypeKind::Using`, `ExprKind::Using` (printer, `ember_fmt`). The checker: `ember_typeck/src/managers.rs`
+  (new): `resolve_using_type` (E2040 not a manager, E2114 no memory of its own, E0900 for every heap type but `owns
+  T`), `manager_kind` (verdict 107's kinds, read from the program's source by `source_implementation`, since field
+  types are formed before implementations are collected), `owns_in` (std.mem's `OwnsIn`/`OwnsInOne`/`OwnsFound`/
+  `OwnsFreeNothing`, registered in `boxes`, shown `owns T using A`; `using Global` is `owns T`), `owned_block_in`
+  (the making line: a direct call of the manager's `allocate` through `pass_receiver_to`, a null check with ALC-6's
+  panic text, `PtrWrite` of the value handed over, the owner's struct literal), `other_manager` (TYP-46's E2020),
+  `using_change_message` (ALC-1's E3023, through `views.rs::parameter_change_message`). Hooks in `lib.rs`: the
+  `resolve_type` arm, the `synth_with_expectation` arm, the tops of `check_owned_value` and `synth_owns`, `coerce`
+  (`refuse_other_manager`), `instance_at` in `synth_mem_ownership_builtin`, `allocator_give_back` (ALC-2's E3100),
+  `check_pending_managers` after `implementations_known`, and an arena's interface methods (`from_interface`) called
+  as every implementation's are. std: `std/src/mem.em` (`Layout`'s checking `init`, `Allocator`'s `unsafe fn`s,
+  `FoundByAddress`, `PIECE`, the four owners and their `drop`s, `instance_at`, `unsafe extend Arena implements
+  Allocator`). MIR: `PtrWrite`'s value is moved when it needs drop (`spill_third`, `lower.rs`); the evaluator reads
+  and writes one level through a raw pointer (`pointee`, `ember_interp/src/builtin.rs`).
+- **Cost:** a value made `using` an instance is one direct call of the manager's `allocate` (the generated C calls
+  `em_10LevelArena8allocate(&current, &layout)`), one null test (ALC-6's stop) and the store; its end the payload's
+  clean-up and one direct call of `deallocate` (none for an `Arena`); `Layout(size, align)` in the `drop` folds to
+  constants. Two words only for a manager that may have several instances; one for `Global`, `System`, a manager
+  with no fields, an `Arena`, a `FoundByAddress` manager (mask and load).
+- **Done:** `[ALC-2]` credited (`tests/conformance/ALC-2`, `TYP-46`'s found-by-address and no-word tests,
+  `package.rs`'s global allocator).
+- **Not done (the next M10 job):** `Array[T] using A`, `[a, b] using m`, `Array.new_in(inst)` (growth through
+  `reallocate`), `String`/`Map`/`Set`/`Deque`/`SoA`/`SmallArray` `using A`, a class `using A` (a type of its own),
+  `shares`/`thread_shared`/`weakref` `using A`: all E0900 today. `FixedArena` implements `Allocator`: its fields are
+  private to the compiler module and it has no byte allocation (`try_alloc_uninit`, ARN-3). E3063 (a value outliving
+  its instance) and ALC-5 are `borrows.rs` (A1-15). A manager that is a generic instance (`unsafe extend[T]
+  Pool[T] implements Allocator`) is not seen by `source_implementation` (it skips generic extends).
+- **Traps:** a Python `write_text` on Windows writes CRLF: pass `newline='\n'`. `mem.drop(owns x)` is E0900 here;
+  `mem.drop(x)` ends `x`. A plain parameter of a type that is not `Copy` (`Layout`) is passed by address: a compiler
+  call builds `borrow_argument`. `std.arena` is not loaded unless imported (`std.core`, `std.collections`,
+  `std.mem` are), so `Arena`'s `Allocator` lives in `mem.em`. A `cat > file` with no heredoc waits for input.
