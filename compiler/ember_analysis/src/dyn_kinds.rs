@@ -113,6 +113,8 @@ pub(crate) struct Form {
     pub body: Option<Body>,
     pub sites: DynSites,
     pub guards: std::sync::Mutex<Vec<Guard>>,
+    /// `[BRW-5]` — the indexes the checked body proves different, read once when first asked.
+    pub index: std::sync::OnceLock<crate::index_proofs::IndexProofs>,
 }
 
 /// What [`expand`] finds.
@@ -279,7 +281,7 @@ pub(crate) fn expand(
                     }
                 }
                 under.push(read.join(";"));
-                Form { body: symbol.and_then(|symbol| copies.remove(&symbol)), sites, guards: Default::default() }
+                Form { body: symbol.and_then(|symbol| copies.remove(&symbol)), sites, guards: Default::default(), index: Default::default() }
             })
             .collect();
         under.sort();

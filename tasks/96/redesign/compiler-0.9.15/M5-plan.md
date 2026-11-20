@@ -19,6 +19,12 @@ to `tests/conformance/<RULE>/` when it is built.
   write `boss = ref mut enemies[0]` and change it through `boss`: `boss.hp = 1`" (`ember_diag::line_code_mark`
   quotes a line's code). A view a call made (a temporary borrower) keeps the old text. Left: one mistake given two
   `E3021`s (`xs[0] = 9` while `m = xs.as_mut_span()` is used: a read and a write of `xs`, `[DIA-26]`).
+- **A2-4c, index proofs, done** (2026-11-20, `ember_analysis/src/index_proofs.rs`): two element places of one list
+  are two places when the code proves their indexes differ: two different constants (literals and `const` items,
+  read through the compiler's temporaries; a local set to a constant is a local, area 2 Q2), `j` from `i + 1..`
+  (every write of `j` adds a positive constant to a stable `i` or to `j`), the line inside `if i != j:` (blocks the
+  arm dominates and only it enters, `i` and `j` unchanged). Used where a loan meets an access (`check_point`).
+  Left: E3022's texts for two arguments of one call and for one place twice (A2-4b).
 - **A2-3 mostly done** (round 7's H4, `lanes/a.md`): part names are views, re-pointing, names that keep their place,
   `const ref mut`, BRW-13 credited. Left: the `Cell` refusal (BRW-15.1), a `ref mut dst: MutSpan` parameter by
   address (BRW-14.8), BRW-1's `E3021` text for a part name, a part of a `packed` struct.

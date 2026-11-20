@@ -4859,6 +4859,11 @@ fn check_point(
             if !overlaps(loan_place, place) {
                 continue;
             }
+            // `[BRW-5]`, `[BRW-1]` — two elements the code proves different are two places, where
+            // the loan is made and where it meets the access.
+            if index_apart(body, types, form, loan_place, place, &[loan.created_at.block, point.block]) {
+                continue;
+            }
             // The borrower itself is not a conflicting access.
             if place.local == loan.borrower {
                 continue;
@@ -5525,6 +5530,26 @@ fn borrowed_through_reference(body: &Body, types: &TypeTable, written: &Place, l
 /// Two places overlap when one is a prefix of the other (§4.7 step 5).
 /// `Index` projections are assumed to overlap unless both are constant and
 /// different — `[BRW-5]`, "indices are not disjoint".
+/// `[BRW-5]` — whether `a` and `b` are elements of one list (or deeper parts of two) whose indexes
+/// the body proves different in the blocks `at` (`index_proofs`).
+fn index_apart(body: &Body, types: &TypeTable, form: &crate::dyn_kinds::Form, a: &Place, b: &Place, at: &[usize]) -> bool {
+    if a.local != b.local {
+        return false;
+    }
+    let mut proofs = None;
+    for (pa, pb) in a.projection.iter().zip(&b.projection) {
+        match (pa, pb) {
+            (Projection::Index(_) | Projection::ConstIndex(_), Projection::Index(_) | Projection::ConstIndex(_)) if pa != pb => {
+                let proofs = proofs.get_or_insert_with(|| form.index.get_or_init(|| crate::index_proofs::IndexProofs::new(body, types)));
+                return proofs.apart(pa, pb, at);
+            }
+            _ if pa == pb => {}
+            _ => return false,
+        }
+    }
+    false
+}
+
 fn overlaps(a: &Place, b: &Place) -> bool {
     if a.local != b.local {
         return false;

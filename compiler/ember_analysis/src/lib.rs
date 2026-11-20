@@ -26,6 +26,7 @@ pub mod definite_init;
 pub mod drops;
 pub mod facts;
 pub mod inline;
+mod index_proofs;
 pub mod loop_access;
 pub mod loop_version;
 pub mod progress_reduction;
