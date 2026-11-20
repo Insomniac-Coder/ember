@@ -43,16 +43,24 @@ impl Checker<'_> {
     /// `[CT-1a]` — a `static mut` named in what compile time evaluates: the program's value of it
     /// exists only while it runs. A static's own initialiser that names one is not evaluated while
     /// compiling (it runs on first access, `[STA-3]`); `comptime(e)` and a `const` are `E6010`.
+    // ponytail: the direct use only; a function compile time runs that reaches one (`comptime(f())`)
+    // needs the summaries (`[EFF-24]`, M6a step 1).
     pub(crate) fn module_variable_at_compile_time(&mut self, name: Symbol, span: Span) -> Option<Expr> {
         if self.comptime_outer_names.is_none() || !self.native_statics.get(&name).copied().unwrap_or(false) {
             return None;
         }
+        Some(self.refuse_module_variable_at_compile_time(name, span))
+    }
+
+    /// `E6010` for a `static mut` named where compile time evaluates (a `const`'s initialiser reaches
+    /// one before statics are settled).
+    pub(crate) fn refuse_module_variable_at_compile_time(&mut self, name: Symbol, span: Span) -> Expr {
         let shown = name.as_str().rsplit('.').next().unwrap_or(name.as_str()).to_string();
         self.sink.emit(
             Diagnostic::error(codes::E6010, span, format!("`{shown}` is a `static mut`, and a value made when compiling cannot see what the program will hold while running"))
                 .help("pass the value in, or make it a `static` if it never changes")
                 .note("what compile time evaluates reaches no module variable that lives at run time [CT-1a]"),
         );
-        Some(Expr { ty: self.common.error, kind: ExprKind::Error, span })
+        Expr { ty: self.common.error, kind: ExprKind::Error, span }
     }
 }

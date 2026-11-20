@@ -8788,6 +8788,8 @@ impl<'a> Checker<'a> {
                     if entry.ok
                         && self.sink.error_count() == errors
                         && let Some(folded) = &entry.folded
+                        // ponytail: "owns heap memory" read as needs-drop: a plain struct with a
+                        // `drop` of its own is built on first access too (never dropped either way).
                         && !self.types.needs_drop(item.ty)
                         && self.constant_static_placeable(item.ty)
                     {
@@ -40713,6 +40715,11 @@ impl<'a> Checker<'a> {
                 }
                 if let Some(&value) = self.lazy_statics.get(&qualified) {
                     return self.lazy_static_use(qualified, value, span);
+                }
+                // `[CT-1a]` — a `static mut` not settled yet is named by what compile time evaluates
+                // first (a `const`'s initialiser).
+                if self.native_statics.get(&qualified) == Some(&true) {
+                    return self.refuse_module_variable_at_compile_time(qualified, span);
                 }
                 if self.expr_consts.contains_key(&qualified) {
                     return match self.settle_const(ConstKey::Item(qualified), span) {
