@@ -4,7 +4,7 @@
 #$ rules: FFI-52, FFI-33, BCK-3
 # The export `log_line` adds to `LOG`; `host_poll`, a C function with no mark, may run it. The
 # message's tail names an overlay this test does not have (`host.overlay.em`): the claim stops
-# before it. "exported, line N" is read as the attribute's line.
+# before it. "exported, line N" is read as the attribute's line (Q5).
 
 static mut LOG: Array[String] = []
 
