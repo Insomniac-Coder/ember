@@ -3758,7 +3758,7 @@ impl<'a> Builder<'a> {
                     .iter()
                     .enumerate()
                     .map(|(index, a)| {
-                        if (spill_first && index == 0) || (spill_second && index == 1) || (spill_third && index == 2) {
+                        if (spill_first && index == 0) || (spill_second && index == 1) || (spill_third && index == 2 && self.types.needs_drop(a.ty)) {
                             match self.lower_operand(a) {
                                 Operand::Const(_) => self.lower_into_temp(a),
                                 // D-200 — `Box`, `Shared` and a list literal

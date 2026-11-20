@@ -379,3 +379,31 @@ unsafe fn instance_at(p: *mut A) -> ref mut A:
 [T]
 pub fn offset_of(field: StrView) -> usize:
     return 0
+
+## `[ARN-2]`, `[ALC-2]` — an `Arena` is a memory manager: a value made `using frame` (`owns T using
+## frame`) takes its block from the arena's memory, a pointer bump aligned up to what it asks, and
+## gives nothing back one by one (`deallocate` does nothing, so the value keeps no instance word,
+## `[ALC-1]`); the arena frees it all when it is reset or ends.
+# SAFETY: an arena's bytes are valid and reached through nothing else until it is reset or ends,
+# and each block is aligned up to the alignment asked for here.
+unsafe extend Arena implements Allocator:
+    ## A block of the arena's memory; it allocates when the arena grows (`[ARN-4]`).
+    fn allocate(layout: Layout) -> *mut u8:
+        bytes = this.alloc_uninit[u8](layout.size + layout.align - 1)
+        # SAFETY: the address aligned up stays inside the bytes just taken, `align - 1` past their start
+        # at most.
+        unsafe:
+            at = bytes.as_mut_ptr() as usize
+            return ((at + layout.align - 1) & ~(layout.align - 1)) as *mut u8
+
+    ## Nothing: the arena frees its memory together when it is reset or ends.
+    @safety("`p` came from this arena's `allocate` with `layout`")
+    unsafe fn deallocate(p: *mut u8, layout: Layout):
+        pass
+
+    ## A new block holding the first bytes of `p`; it allocates when the arena grows.
+    @safety("`p` came from this arena's `allocate` with `old`, and only the result is used after")
+    unsafe fn reallocate(p: *mut u8, old: Layout, new_size: usize) -> *mut u8:
+        q = this.allocate(Layout(new_size, old.align))
+        copy_nonoverlapping(p as *u8, q, old.size if old.size < new_size else new_size)
+        return q

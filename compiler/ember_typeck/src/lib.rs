@@ -3602,6 +3602,9 @@ struct Checker<'a> {
     manager_kinds: HashMap<Ty, managers::ManagerKind>,
     /// `[TYP-46]` — managers named before the implementations were collected, checked after.
     pending_managers: Vec<(Ty, Span)>,
+    /// `[ALC-1]` — each `using x` of a making line, by `x`'s span: the manager's `allocate`, and
+    /// the manager.
+    using_receivers: HashMap<Span, (DefId, Ty)>,
     /// `[STR-5]` (ODR-237) — the types whose derived `Clone` is being settled, taken as `Clone`
     /// while their fields are checked, so a recursive one (`Node(Box[Tree])`) derives it.
     assumed_cloneable: HashSet<Ty>,
@@ -4402,6 +4405,7 @@ impl<'a> Checker<'a> {
             managed_owners: HashMap::new(),
             manager_kinds: HashMap::new(),
             pending_managers: Vec::new(),
+            using_receivers: HashMap::new(),
             assumed_cloneable: HashSet::new(),
             gather_items: Vec::new(),
             lent_callable_args: HashSet::new(),
@@ -51864,10 +51868,13 @@ impl<'a> Checker<'a> {
             }
             return self.synth_unsafe_cell_method(receiver, inner, name, args, span);
         }
-        if self.is_arena(receiver.ty) {
+        // `[ALC-2]` — an arena's methods are the compiler's, but for those an interface it implements
+        // declares (`Allocator`'s), which are called as every implementation's are.
+        let from_interface = self.methods.get(&(receiver.ty, name.name)).is_some_and(|entry| entry.from_interface.is_some());
+        if self.is_arena(receiver.ty) && !from_interface {
             return self.synth_arena_method(receiver, name, args, &explicit, expected, span);
         }
-        if self.is_fixed_arena(receiver.ty) {
+        if self.is_fixed_arena(receiver.ty) && !from_interface {
             return self.synth_fixed_arena_method(receiver, name, args, &explicit, expected, span);
         }
         if self.is_scoped_arena(receiver.ty) {

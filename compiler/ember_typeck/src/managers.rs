@@ -36,8 +36,12 @@ impl Checker<'_> {
             return self.common.error;
         }
         // A field's type is resolved before any implementation is known: checked once they are.
+        // Before they are, the program's source says whether an `unsafe extend` makes it one.
         if !self.implementations_known {
-            self.pending_managers.push((kind, manager.span));
+            if self.source_implementation(kind, "Allocator").is_none() {
+                self.pending_managers.push((kind, manager.span));
+                return self.common.error;
+            }
         } else if !self.check_manager(kind, manager.span) {
             return self.common.error;
         }
@@ -61,7 +65,8 @@ impl Checker<'_> {
             );
             return held;
         }
-        self.refuse_no_memory_of_its_own(held, kind, span);
+        let written = self.written_line(inner.span);
+        self.refuse_no_memory_of_its_own(held, written, kind, span);
         self.common.error
     }
 
@@ -87,8 +92,8 @@ impl Checker<'_> {
 
     /// `[TYP-46]` — `E2114` ("an `int` has no memory of its own to take from `LevelArena`; remove
     /// `using`").
-    fn refuse_no_memory_of_its_own(&mut self, held: Ty, manager: Ty, span: Span) {
-        let shown = self.types.display(held);
+    fn refuse_no_memory_of_its_own(&mut self, held: Ty, written: Option<String>, manager: Ty, span: Span) {
+        let shown = written.unwrap_or_else(|| self.types.display(held));
         let article = if shown.starts_with(['a', 'e', 'i', 'o', 'u', 'A', 'E', 'I', 'O', 'U']) { "an" } else { "a" };
         let manager = self.types.display(manager);
         self.sink.emit(
@@ -263,7 +268,7 @@ impl Checker<'_> {
             );
             return error;
         }
-        self.refuse_no_memory_of_its_own(made.ty, manager, span);
+        self.refuse_no_memory_of_its_own(made.ty, None, manager, span);
         error
     }
 
@@ -328,8 +333,13 @@ impl Checker<'_> {
             let place_kind = wanted;
             let found_global = kind == ManagerKind::Global;
             let wanted_global = self.manager_kind(place_kind) == ManagerKind::Global;
-            if place_kind != manager && !(found_global && wanted_global) && (place.is_some() || self.manager_kind(place_kind) != ManagerKind::One) {
+            if place_kind != manager && !(found_global && wanted_global) {
                 self.other_manager(made.ty, place_kind, place.as_ref().map(|_| manager), value.span, span);
+                return error;
+            }
+            // Made with no `using`: only a manager with one instance needs none named.
+            if place.is_none() && !matches!(kind, ManagerKind::One | ManagerKind::Global) {
+                self.other_manager(made.ty, place_kind, None, value.span, span);
                 return error;
             }
         }
@@ -357,7 +367,10 @@ impl Checker<'_> {
             }
         };
         let mode = self.methods.get(&(manager, Symbol::intern("allocate"))).map_or(Mode::Borrow, |entry| entry.receiver);
-        let receiver = self.pass_receiver_to(receiver, mode, allocate, instance.map_or(span, |instance| instance.span));
+        let at = instance.map_or(span, |instance| instance.span);
+        // `[ALC-1]` — through a plain parameter, where `allocate` changes the instance, `E3023` says so.
+        self.using_receivers.insert(at, (allocate, manager));
+        let receiver = self.pass_receiver_to(receiver, mode, allocate, at);
         let byte_ptr = self.types.intern(TyKind::Ptr { mutable: true, inner: self.common.u8 });
         let call = Expr {
             ty: byte_ptr,
@@ -394,8 +407,9 @@ impl Checker<'_> {
         let mut fields = vec![address];
         if kind == ManagerKind::Word {
             let Some(place) = place else { return error };
-            let reference = self.types.intern(TyKind::Ref { mutable: true, inner: manager });
-            let reached = Expr { ty: reference, kind: ExprKind::Ref { place: Box::new(place), mutable: true }, span };
+            // Only its address: what changes the instance is the calls, each checked where it is made.
+            let reference = self.types.intern(TyKind::Ref { mutable: false, inner: manager });
+            let reached = Expr { ty: reference, kind: ExprKind::Ref { place: Box::new(place), mutable: false }, span };
             let instance_ptr = self.types.intern(TyKind::Ptr { mutable: true, inner: manager });
             fields.push(Expr { ty: instance_ptr, kind: ExprKind::Cast { expr: Box::new(reached), to: instance_ptr }, span });
         }
@@ -434,6 +448,19 @@ impl Checker<'_> {
             (None, true) => format!("this place takes its memory from the built-in manager (`owns {shown_inner}`), and this `{shown_inner}` comes from {comes}; make it in the built-in manager: `{made}`"),
         };
         self.error(codes::E2020, span, message);
+    }
+
+    /// `[ALC-1]` — `E3023` for `using x` through a plain parameter where `allocate` changes the
+    /// instance: "`allocate` changes the arena (`LevelArena.allocate`, its line 4), and `current` only
+    /// reads it; write `fn fill(ref mut current: LevelArena)`".
+    pub(crate) fn using_change_message(&self, write: Span, name: &str, first: &str) -> Option<String> {
+        let &(allocate, manager) = self.using_receivers.get(&write)?;
+        let shown = self.types.display(manager);
+        let noun = Self::common_noun(&shown);
+        let noun = noun.rsplit(' ').next().unwrap_or("manager");
+        let line = self.line_of(self.signatures[allocate.0 as usize].decl).map_or_else(String::new, |line| format!(", its line {line}"));
+        let first = first.strip_suffix(':').unwrap_or(first);
+        Some(format!("`allocate` changes the {noun} (`{shown}.allocate`{line}), and `{name}` only reads it; write `{first}`"))
     }
 
     /// The name of a local in scope that is an instance of `manager` (or a view of one), for a help.
