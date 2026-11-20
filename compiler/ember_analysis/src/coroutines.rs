@@ -61,6 +61,11 @@ struct Generator {
     points: Vec<Point>,
 }
 
+/// Whether `body` is a generator's (it takes its frame).
+pub(crate) fn is_generator(body: &Body, types: &TypeTable) -> bool {
+    frame_param(body, types).is_some()
+}
+
 fn find_generators(bodies: &[Body], types: &TypeTable) -> Vec<Generator> {
     let mut found = Vec::new();
     for (index, body) in bodies.iter().enumerate() {

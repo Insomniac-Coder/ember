@@ -378,6 +378,48 @@ pub(crate) fn check_module_variables_on_threads(bodies: &[Body], types: &TypeTab
     }
 }
 
+/// The first module variable a summary reaches (changed, reshaped, ended or read), by its name, and the line.
+fn module_variable_reached(summary: &Summary, types: &TypeTable) -> Option<(String, Span)> {
+    summary.changes.iter().chain(&summary.reshapes).chain(&summary.ends).chain(&summary.reads).find_map(|fact| match &fact.reach.root {
+        Root::Static(name, _) if types.is_module_variable(ember_span::Symbol::intern(name)) => Some((name.rsplit('.').next().unwrap_or(name).to_string(), fact.at)),
+        _ => None,
+    })
+}
+
+/// `[THR-11]`, `[THR-20]`, `[EFF-1]` (review 4) — what is not followed yet is refused, not trusted: a generator that
+/// reaches a module variable (the summaries do not yet count a generator's `next` as running its body), and a
+/// scoped task or job that does (`[THR-11]`'s check of a module variable a scope's tasks reach is M9's).
+pub(crate) fn check_module_variables_not_followed(bodies: &[Body], types: &TypeTable, summaries: &[Summary], targets: &Targets, sink: &mut ember_diag::Sink) {
+    let index: HashMap<&str, usize> = bodies.iter().enumerate().map(|(at, body)| (body.symbol.as_str(), at)).collect();
+    for (at, body) in bodies.iter().enumerate() {
+        if in_std(body) {
+            continue;
+        }
+        if crate::coroutines::is_generator(body, types)
+            && let Some((name, line)) = module_variable_reached(&summaries[at], types)
+        {
+            sink.emit(
+                ember_diag::Diagnostic::error(ember_diag::codes::E0900, line, format!("a generator that reaches the module variable `{name}` is not built by this compiler yet"))
+                    .note("each `next` runs the generator's body ([EFF-1]), which the checks of a module variable do not follow yet; read or change it outside the generator"),
+            );
+        }
+        for block in &body.blocks {
+            let Terminator::Call { func: func @ FuncRef::Builtin { which: Builtin::ScopeSpawn { .. } | Builtin::JobScopeSubmit { .. }, .. }, args, .. } = &block.terminator else { continue };
+            let reached = builtin_runs(at, body, func, args, types, &index, targets).into_iter().find_map(|run| module_variable_reached(&summaries[run], types));
+            if let Some((name, _)) = reached {
+                sink.emit(
+                    ember_diag::Diagnostic::error(
+                        ember_diag::codes::E0900,
+                        block.call_span.unwrap_or(block.terminator_span),
+                        format!("a task of a scope that reaches the module variable `{name}` is not built by this compiler yet"),
+                    )
+                    .note("a module variable the tasks of a scope reach is checked as any other place ([THR-20], [THR-11]), which is not built for module variables yet"),
+                );
+            }
+        }
+    }
+}
+
 /// `[LT-3]` (review 4) — a function whose result may hold a view into a `static mut` (`fn head() -> StrView:
 /// return LOG[0]`) is `E0900`: the summary does not yet record what a result points into, so a caller would
 /// keep no loan of the module variable (LT-3's rule, M5's part).

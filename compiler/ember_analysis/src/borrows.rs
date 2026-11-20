@@ -292,6 +292,7 @@ fn run_checks(
     if !only_runtime && reports.is_none() {
         crate::summaries::check_module_variables_on_threads(bodies, types, &flowed, &targets, sink);
         crate::summaries::check_views_of_module_variables_returned(bodies, types, sink);
+        crate::summaries::check_module_variables_not_followed(bodies, types, &flowed, &targets, sink);
     }
     let flow: std::sync::Arc<HashMap<String, crate::summaries::Summary>> =
         std::sync::Arc::new(bodies.iter().zip(flowed).map(|(body, summary)| (body.symbol.clone(), summary)).collect());

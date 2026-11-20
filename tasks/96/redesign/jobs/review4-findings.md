@@ -467,5 +467,5 @@ has none of these. The rule for each: an analysis that cannot follow something c
     (3), MONO-10.
 
 Done 2026-11-20: 1 (views kept in a local aggregate are followed; one nothing records reaches anything), 2
-(E0900), 3, 4 (only for the built-ins that run what they are given), 7, 8, 11. Left: 5 (generators), 6 (scoped
-tasks racing on a module variable), 9, 10.
+(E0900), 3, 4 (only for the built-ins that run what they are given), 7, 8, 11. Then 5 and 6, interim (E0900 for a generator, or a scoped task or job, that reaches a module variable).
+Left: 9 (a wrong refusal: a function value's end counts every lambda of its type), 10 (messages).
