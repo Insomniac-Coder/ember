@@ -81,6 +81,16 @@ this row: its `RefCell` part is M6b's, and the run-time access machinery goes wi
   summaries the checks asked for plus those its candidates in every body (kept ones too) need, so it decides as
   the checks did. The effects build their `Graph` once for both their checks (`check_effects_all`,
   `check_layers_all`), and not at all for layers when no package declares any. Measured again before main.
+- **Built (4917a191, f3fa1189):** the summaries on demand. Each form is checked first without them; a check that
+  would read one marks the form wanted and only those are checked again; the targets, the summaries, the drop walk
+  and the chain names are made on first need; runs only for a form naming a static; the whole-program checks only
+  with a module variable; the positions pass gets them where a kept body may keep a position across a written
+  function. bigpkg: borrow checks 241 -> 243 ms cold (were 349).
+- **Step 6 and the demand:** stage 2 needs regions for the bodies it summarizes. A view argument is in nearly every
+  program, so E3031 must not want the summaries for every call: only where the argument's view points into a
+  place the callee could reach by another route, a static the caller names, another argument of the same call
+  (`f(xs[0], ref mut xs)`), or the object of a method that changes it; and stage 2's regions only for the closure
+  of the wanted callees (the per-body lazy closure), not every body.
 - **Step 6's plan (the lead, 2026-11-20):** the call check reads stage 2 (`used_after`, `read_while`,
   `changed_while`), which needs every body's regions (`summaries::summarize` already makes them with
   `borrows::regions_all`). `regions_all` builds again the contracts, capture contracts and store summaries
