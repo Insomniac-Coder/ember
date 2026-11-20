@@ -29,8 +29,27 @@ to `tests/conformance/<RULE>/` when it is built.
   loop over a changeable view, `check_for_indexed`); a `Map` with two names (`m.items()`), `for k, ref mut v in m:`
   (std's `__items_mut`, the compiler's, as `__nested` is); `for v in xs.iter_mut():` is 0.9.10's spelling of a loop
   over `xs` (a place), so `v += 1` is `E3023` with the help `for ref mut v in xs:`, and E3023's method help gives
-  `for ref mut p in players:`. std.ecs, 9 tests and 5 first-week helped copies follow the migration. Left: E3020's
-  texts (the spec's two-line messages), a counting loop's refusal of a removal, generators.
+  `for ref mut p in players:`. std.ecs, 9 tests and 5 first-week helped copies follow the migration. A counting
+  loop's removal is `E3020` ("`xs.pop()` shortens `xs`, whose length this loop read once on line 3; ...").
+- **A2-6, E3020's texts, done for a change through the collection's own name** (2026-11-20): the message names the
+  line, the loop's line and the lines to write (`walk_change_message` in `borrows.rs`; `ember_diag::walk_fix_mark`
+  quotes and rewrites the program's lines): an element written goes through the loop's own handle ("`xs[0] = 5`
+  (line 3) writes an element of `xs`, which this loop walks (line 2); to change the element the loop is on, write
+  `for ref mut x in xs:` in place of line 2 and `x = 5` in place of line 3"), a map's value the same way (`index_mut`,
+  `index_set`), a push collects in a list of your own extended after the loop, anything else moves below the loop.
+  `Array.extend(owns items)` takes an iterable of `T` over (`[STD-15]`, std's `extend_owned`), so the message's fix
+  compiles. Left: the chain a call's change goes through ("(through `note`, line 4)", M6a's summaries), a map's
+  insert collected in a list of your own (needs the summaries' add-only fact for written functions), generators.
+- **A2-5, positions, done for a list reached through what owns it** (2026-11-20, `ember_analysis/src/positions.rs`):
+  a name the program wrote for an element made by indexing (`boss = ref mut enemies[i]`, `boss = enemies[0]`) of
+  an `Array` reached through locals, a `ref`/`ref mut` parameter, `this` and fields keeps the index it was made
+  with (a saved copy), and where a built-in that only adds (`push`, `extend`, `reserve`) returns and the name is
+  used again, the name is made again from it, on the call's own edge, before the borrow check. So a push ends no
+  borrow it holds, both backends find the element through the new buffer, and a removal, insert, reorder, clear
+  or replacement ends it: `E3060` at the later use with `[BRW-16]`'s text (`borrows.rs`, `positions::is_position`).
+  `Array.insert(i, owns v)` takes its value over (`[STD-15]`). Left: `xs.get(i).unwrap()`, `static mut` lists
+  (A1-17), SoA proxies (A2-7), written functions that add or remove (`extend(owns …)` routed to std, `retain`,
+  M6a's summaries), other containers' addresses ended by an add (`m.insert`, a type's own `index`, M6a).
 - **A2-3 mostly done** (round 7's H4, `lanes/a.md`): part names are views, re-pointing, names that keep their place,
   `const ref mut`, BRW-13 credited. Left: the `Cell` refusal (BRW-15.1), a `ref mut dst: MutSpan` parameter by
   address (BRW-14.8), BRW-1's `E3021` text for a part name, a part of a `packed` struct.

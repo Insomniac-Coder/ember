@@ -2149,7 +2149,7 @@ fn access_active(access: &SharedAccess, regions: &Regions, point: Point) -> bool
     point == access.created_at || access.regions.iter().any(|&region| regions.contains(region, point))
 }
 
-fn access_successors(terminator: &Terminator) -> Vec<BasicBlockId> {
+pub(crate) fn access_successors(terminator: &Terminator) -> Vec<BasicBlockId> {
     match terminator {
         Terminator::Goto(target) => vec![*target],
         Terminator::SwitchInt { targets, otherwise, .. } => {
@@ -5099,12 +5099,45 @@ fn check_point(
                 && reshapes_at(body, types, point, place, *access, loan_place)
                 && !loan_held_by_for_iterator(body, regions, loan, point)
                 && !crate::dyn_kinds::held_by_a_dyn_call(body, &form.sites, loan.borrower);
+            // `[BRW-16]` — a position (a name for a list element made by indexing) is ended by what may
+            // remove, insert, reorder, clear or replace its list, a `ref mut` one too; an add makes it
+            // again (`positions.rs`).
+            let position = reshaped && crate::positions::is_position(body, types, loan_place, loan.borrower);
             if (matches!(access, Access::Move) || reshaped)
-                && !loan.capability.is_mut()
+                && (!loan.capability.is_mut() || position)
                 && let Some(later) = later
             {
                 if !repeated {
-                    let diagnostic = if reshaped {
+                    let diagnostic = if position {
+                        let view = body.local(loan.borrower).name.clone().unwrap_or_default();
+                        let noun = viewed_noun(types, place_ty(body, types, loan_place));
+                        let ends = matches!(access, Access::Write)
+                            || call_given_borrow_at(body, point).is_some_and(|(func, _)| {
+                                matches!(func, FuncRef::Builtin { which: Builtin::ArrayClear | Builtin::ArrayTruncate | Builtin::ArrayPop { .. } | Builtin::ArrayDrain, .. })
+                            });
+                        let change = if matches!(access, Access::Write) { ember_diag::line_code_mark(span) } else { ember_diag::text_mark(span) };
+                        let what = if ends {
+                            format!("may end the {noun} `{view}` names")
+                        } else {
+                            format!("may put another {noun} in the place `{view}` names")
+                        };
+                        Diagnostic::error(
+                            codes::E3060,
+                            later,
+                            format!(
+                                "`{change}` (line {}) {what} (line {}), and `{view}` is used on line {}; use `{view}` before line {}, or name the {noun} again after it: `{}`",
+                                ember_diag::line_mark(span),
+                                ember_diag::line_mark(loan.span),
+                                ember_diag::line_mark(later),
+                                ember_diag::line_mark(span),
+                                ember_diag::line_code_mark(loan.span)
+                            ),
+                        )
+                        .primary_label(format!("`{view}` is used here"))
+                        .secondary(span, "this may move what the list holds")
+                        .secondary(loan.span, format!("`{view}` names its element here"))
+                        .help(format!("use `{view}` before that line, or name the {noun} again after it"))
+                    } else if reshaped {
                         Diagnostic::error(
                             codes::E3060,
                             later,
@@ -5181,13 +5214,15 @@ fn check_point(
             let iteration_borrow =
                 matches!(access, Access::Write | Access::Borrow { mutable: true })
                     && loan_held_by_for_iterator(body, regions, loan, point);
+            let mut walk_help = None;
             let (code, message) = if loan.arena_scope {
                 (codes::E3096, format!("{name} is scoped here"))
             } else if iteration_borrow {
-                (
-                    codes::E3020,
-                    format!("cannot mutate {name} while it is borrowed by this loop"),
-                )
+                {
+                let (message, help) = walk_change_message(body, types, loan, loan_place, place, *access, point, span, &name);
+                walk_help = Some(help);
+                (codes::E3020, message)
+            }
             } else {
                 (code, message)
             };
@@ -5242,14 +5277,14 @@ fn check_point(
             let runtime_help = explained.as_ref().and_then(|explained| explained.site.help.as_deref());
             let mut diagnostic = Diagnostic::error(code, span, message)
                 .primary_label(if iteration_borrow {
-                    "mutable borrow here"
+                    "this changes what the loop walks"
                 } else {
                     "conflicting access here"
                 })
                 .secondary(
                     loan.span,
                     if iteration_borrow {
-                        format!("{name} borrowed here for the whole loop")
+                        format!("this loop walks {name}")
                     } else {
                         format!("{kind}borrow of {name} starts here")
                     },
@@ -5261,28 +5296,11 @@ fn check_point(
                 if repeated {
                     continue;
                 }
-                // `[DIA-7a]` shape B2, `[DIA-10]`, `[DIA-25]` — the lines to write, with the program's own
-                // statement and the line it is on: the call moved below the loop, a list of your own
-                // added after the loop, `retain` after the loop; a change of an element through the
-                // loop's own handle, `for ref mut x in {owner}:`.
-                let statement = ember_diag::text_mark(span);
-                let line = ember_diag::line_mark(span);
-                let moved = format!("move line {line}, `{statement}`, below the loop");
-                let bare = name.trim_matches('`');
-                if matches!(access, Access::Write) {
-                    diagnostic = diagnostic
-                        .help(format!("{moved}, or change the elements through the loop's own handle: `for ref mut x in {bare}:`, and `x` where it reads an element"));
-                } else {
-                    diagnostic = diagnostic
-                        .help(moved)
-                        .help(format!(
-                            "or keep a list of your own (`added = []`), push what the loop adds to `added` inside the loop, and add its items to {name} after the loop"
-                        ))
-                        .help(format!("or, to drop items, call `{bare}.retain(owns fn(item) => keep(item))` after the loop"));
-                }
-                sink.emit_classified(
-                    diagnostic.note("a `for` loop borrows the iterable until the loop ends (CTL-2)"),
-                );
+                // `[DIA-7a]` shape B2: the message gives the lines to write (`walk_change_message`), the
+                // help the fix by the shape's name.
+                sink.emit_classified(diagnostic.help(walk_help.unwrap_or_default()).note(
+                    "while a loop walks a collection, nothing changes it but the loop's own handle on the item it is on; items are added or removed after the loop (CTL-2)",
+                ));
                 continue;
             }
             sink.emit_classified(
@@ -5796,6 +5814,119 @@ fn reshapes_at(body: &Body, types: &TypeTable, point: Point, place: &Place, acce
         }
         _ => false,
     }
+}
+
+/// `[CTL-2]`, `[BRW-18]`, `[DIA-25]` — `E3020`'s message for a change of the collection a loop walks
+/// (`loan_place`, the loop's header at `loan.span`), made at `span` by `access` to `place`, with the
+/// lines that fix it: an element written goes through the loop's own handle ("`xs[0] = 5` (line 3)
+/// writes an element of `xs`, which this loop walks (line 2); to change the element the loop is on,
+/// write `for ref mut x in xs:` in place of line 2 and `x = 5` in place of line 3"), a map's value
+/// the same way (`for k, ref mut v in counts:`), a push collects in a list of the program's own,
+/// extended after the loop; anything else moves below the loop.
+#[allow(clippy::too_many_arguments)]
+fn walk_change_message(
+    body: &Body,
+    types: &TypeTable,
+    loan: &Loan,
+    loan_place: &Place,
+    place: &Place,
+    access: Access,
+    point: Point,
+    span: Span,
+    name: &str,
+) -> (String, String) {
+    let mut walked = place_ty(body, types, loan_place);
+    while let TyKind::Ref { inner, .. } = *types.kind(walked) {
+        walked = inner;
+    }
+    let map = matches!(*types.kind(walked), TyKind::Struct(id)
+        if types.struct_def(id).origin.as_ref().is_some_and(|(origin, _)| origin.as_str() == "std.collections.Map"));
+    let collection = name.trim_matches('`');
+    let changed = ember_diag::line_code_mark(span);
+    let line = ember_diag::line_mark(span);
+    let header = ember_diag::line_mark(loan.span);
+    let walks = if map {
+        format!("whose keys this loop walks (line {header})")
+    } else {
+        format!("which this loop walks (line {header})")
+    };
+    let fix = |which| ember_diag::walk_fix_mark(which, map, loan.span, span, collection);
+    // The fixes rewrite the line through the collection's own name: a change through another
+    // name (a view of it, a call) moves below the loop.
+    let own_name = place.local == loan_place.local && !collection.contains('…') && body.local(place.local).name.is_some();
+    let past = place.projection.get(loan_place.projection.len());
+    let element = own_name
+        && !map
+        && matches!(access, Access::Write | Access::Borrow { mutable: true })
+        && place.projection.starts_with(&loan_place.projection)
+        && matches!(past, Some(Projection::Index(_) | Projection::ConstIndex(_)));
+    let call = matches!(access, Access::Borrow { mutable: true }).then(|| call_given_borrow_at(body, point)).flatten();
+    // A map's `counts[k]` is a call given the map that returns a `ref mut` of a value (`index_mut`),
+    // or, written to, its `index_set` (`[STD-17]`).
+    let value = own_name
+        && map
+        && call.is_some_and(|(func, dest)| {
+            matches!(*types.kind(place_ty(body, types, dest)), TyKind::Ref { mutable: true, .. })
+                || matches!(func, FuncRef::Direct { symbol, .. } if ember_branding::demangle(symbol)
+                    .is_some_and(|found| found.components == ["std", "collections", "Map", "index_set"]))
+        });
+    let added = own_name
+        && !map
+        && call.is_some_and(|(func, _)| matches!(func, FuncRef::Builtin { which: Builtin::ArrayPush | Builtin::ArrayExtend, .. }));
+    if element {
+        (
+            format!(
+                "`{changed}` (line {line}) writes an element of `{collection}`, {walks}; to change the element the loop is on, write `{}` in place of line {header} and `{}` in place of line {line}",
+                fix(ember_diag::WalkFix::Header),
+                fix(ember_diag::WalkFix::Element)
+            ),
+            format!("the loop's own handle changes the element it is on: `{}`", fix(ember_diag::WalkFix::Header)),
+        )
+    } else if value {
+        (
+            format!(
+                "`{changed}` (line {line}) changes `{collection}`, {walks}; change each value through the loop's own handle: write `{}` in place of line {header} and `{}` in place of line {line}",
+                fix(ember_diag::WalkFix::Header),
+                fix(ember_diag::WalkFix::Element)
+            ),
+            format!("the loop's own handle changes the value it is on: `{}`", fix(ember_diag::WalkFix::Header)),
+        )
+    } else if added {
+        (
+            format!(
+                "`{changed}` (line {line}) adds to `{collection}`, {walks}; collect what it adds in a list of your own: write `added: {} = []` before the loop, `{}` in place of line {line}, and `{collection}.extend(owns added)` after the loop",
+                types.display(walked),
+                fix(ember_diag::WalkFix::Added)
+            ),
+            format!("a list of your own, added after the loop: `{collection}.extend(owns added)`; to drop items, `{collection}.retain(owns fn(item) => keep(item))` after the loop"),
+        )
+    } else {
+        (
+            format!("`{changed}` (line {line}) changes `{collection}`, {walks}; change it after the loop: move line {line}, `{changed}`, below the loop"),
+            format!("the change moved below the loop: line {line}"),
+        )
+    }
+}
+
+/// The call given the `ref mut` taken at `point` (`t = ref mut xs` before `push(t, …)`), and where
+/// its result goes.
+fn call_given_borrow_at(body: &Body, point: Point) -> Option<(&FuncRef, &Place)> {
+    let Some(StmtKind::Assign { place: taken, rvalue: Rvalue::Ref { mutable: true, .. } }) =
+        body.blocks[point.block].stmts.get(point.index).map(|stmt| &stmt.kind)
+    else {
+        return None;
+    };
+    if !taken.projection.is_empty() {
+        return None;
+    }
+    body.blocks.iter().find_map(|block| match &block.terminator {
+        Terminator::Call { func, args, dest, .. }
+            if args.iter().any(|arg| matches!(arg, Operand::Copy(given) | Operand::Move(given) if given.local == taken.local && given.projection.is_empty())) =>
+        {
+            Some((func, dest))
+        }
+        _ => None,
+    })
 }
 
 /// What a message calls a viewed value: "the enemy", "the list", "the number".

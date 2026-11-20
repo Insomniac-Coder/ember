@@ -14,7 +14,7 @@ class Square implements Shape:
         return this.s * this.s
 
 fn main():
-    shapes: Array[Shape] = []
+    shapes: Array[owns dyn Shape] = []
     for i in 0..1000000:
         if i % 2 == 0:
             shapes.push(owns Circle(1.0))

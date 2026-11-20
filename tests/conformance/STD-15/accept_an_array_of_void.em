@@ -19,7 +19,7 @@ fn unit():
 fn main():
     units: Array[void] = [(), (), ()]
     units.push(owns unit())
-    units.insert(0, ())
+    units.insert(0, owns ())
     println(len(units), units)
     n = 0
     for u in units:

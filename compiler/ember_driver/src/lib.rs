@@ -3406,6 +3406,7 @@ fn migrate_file(input: &Path, write: bool, json: bool, repository: bool, checker
         let mut map = SourceMap::new();
         let file = map.add(input, text.clone());
         let mut sink = Sink::new();
+        sink.migrating = checker;
         let lexed = ember_lexer::lex(file, &text, &mut sink);
         let tokens = lexed.tokens.clone();
         let module = ember_parser::parse(file, &text, lexed.tokens, &mut sink);
@@ -5747,6 +5748,9 @@ fn compile_once(input: &Path, command: &str, options: &Options, attempts: &mut i
     // `[OWN-3]`, Part XVIII §4.9 — moves are tracked, a use after a move is
     // `E3040`, and the drops lowering inserted are removed where the value was
     // moved away or made conditional on a drop flag where it may have been.
+    // `[BRW-16]` — a position is made again from its kept index after an add to its list, before the
+    // borrow check sees it.
+    mir.pass("positions", &mut types, |bodies, types| ember_analysis::positions::repoint_positions_all(&mut bodies[..fresh], types));
     mir.pass("drop elaboration", &mut types, |bodies, types| ember_analysis::elaborate_drops_all(&mut bodies[..fresh], types, &mut sink));
     mark("drop elaboration", "all modules");
     // `[LNT-3]` — `L1001`/`L1002` are emitted by `build` and `check`, not only

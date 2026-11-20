@@ -224,6 +224,11 @@ impl Diagnostic {
         Diagnostic { severity: Severity::Warning, ..Diagnostic::error(code, span, message) }
     }
 
+    /// A note with no code, for what only a tool reads (`Sink::migrating`).
+    pub fn note_only(span: Span, message: impl Into<String>) -> Diagnostic {
+        Diagnostic { severity: Severity::Note, code: None, ..Diagnostic::error(codes::E0900, span, message) }
+    }
+
     /// `[DIA-21]` — this diagnostic answers a Python habit (ODR-179).
     pub fn habit(mut self, habit: habits::Habit) -> Diagnostic {
         self.habit = Some(habit);
@@ -305,6 +310,9 @@ pub struct Sink {
     warning_count: usize,
     /// `-Dwarnings`: warnings are counted as errors for the exit code.
     pub deny_warnings: bool,
+    /// `[CLI-20]` — `ember fmt --migrate` is checking: a rewrite of an earlier version's form whose
+    /// meaning this one keeps (`for k, v in m:` to `m.items()`) comes as a note only it reads.
+    pub migrating: bool,
     /// `[DIA-7]` — ownership or borrow errors the classifier could not place.
     unclassified: Vec<String>,
 }
@@ -500,6 +508,100 @@ pub fn line_code_mark(span: Span) -> String {
     format!("\u{1}#{}:{}\u{2}", span.file.0, span.start)
 }
 
+/// `[CTL-2]` — what a walk's fix writes, quoted from the program's own lines, for a message written
+/// where the source is not at hand.
+#[derive(Clone, Copy)]
+pub enum WalkFix {
+    /// The loop's header naming its element so that it may change it: `for ref mut x in xs:`, a
+    /// map's `for k, ref mut v in counts:`.
+    Header,
+    /// The changing line through that name: `x = 5` for `xs[0] = 5`, `v *= 2` for `counts[k] *= 2`.
+    Element,
+    /// The changing line adding to a list of the program's own: `added.push(owns 3)` for `xs.push(owns 3)`.
+    Added,
+}
+
+/// The text a [`WalkFix`] writes for the loop whose header `header` is on, over `collection` (a map's
+/// when `map`), and the line `line` is on.
+pub fn walk_fix_mark(fix: WalkFix, map: bool, header: Span, line: Span, collection: &str) -> String {
+    let mode = match (fix, map) {
+        (WalkFix::Header, false) => 'h',
+        (WalkFix::Header, true) => 'H',
+        (WalkFix::Element, false) => 'e',
+        (WalkFix::Element, true) => 'E',
+        (WalkFix::Added, _) => 'a',
+    };
+    format!("\u{1}&{mode}{}:{}:{}:{collection}\u{2}", header.file.0, header.start, line.start)
+}
+
+/// A [`walk_fix_mark`]'s text: `fix` is the mark's body after `&`.
+fn walk_fix(fix: &str, map: &SourceMap) -> Option<String> {
+    let mode = fix.chars().next()?;
+    let mut parts = fix[1..].splitn(4, ':');
+    let file = map.get(FileId(parts.next()?.parse().ok()?))?;
+    let header: usize = parts.next()?.parse().ok()?;
+    let line: usize = parts.next()?.parse().ok()?;
+    let collection = parts.next()?;
+    let code_at = |at: usize| -> Option<&str> {
+        let start = file.text.get(..at)?.rfind('\n').map_or(0, |at| at + 1);
+        let end = file.text.get(at..)?.find('\n').map_or(file.text.len(), |n| at + n);
+        Some(code_of(file.text.get(start..end)?).trim())
+    };
+    // The loop's names, as `for k, v in counts:` writes them, without their words (`ref mut x`).
+    let header_code = code_at(header)?;
+    let pattern = header_code.split_once("for ").and_then(|(_, rest)| rest.split_once(" in ")).map_or("", |(names, _)| names);
+    let names: Vec<&str> = pattern
+        .split(',')
+        .map(|name| name.trim().trim_start_matches("ref mut ").trim_start_matches("ref ").trim_start_matches("owns ").trim())
+        .collect();
+    let usable = |name: &str| {
+        let name = name.trim_start_matches('_');
+        (!name.is_empty() && name.chars().all(|c| c.is_alphanumeric() || c == '_')).then(|| name.to_string())
+    };
+    // ponytail: a list loop with several names (`for i, x in xs.enumerate():`) gets its last one.
+    let key = names.first().and_then(|name| usable(name)).unwrap_or_else(|| "k".to_string());
+    let element = if mode.is_ascii_uppercase() {
+        names.get(1).and_then(|name| usable(name)).unwrap_or_else(|| if key == "v" { "value".to_string() } else { "v".to_string() })
+    } else {
+        names.last().and_then(|name| usable(name)).unwrap_or_else(|| "x".to_string())
+    };
+    let line_code = code_at(line)?;
+    // The first `collection` the line names as itself, not as the end of a longer name.
+    let named_at = |after: char| {
+        line_code.match_indices(collection).map(|(at, _)| at).find(|&at| {
+            let before = line_code[..at].chars().next_back();
+            !before.is_some_and(|c| c.is_alphanumeric() || c == '_' || c == '.') && line_code[at + collection.len()..].starts_with(after)
+        })
+    };
+    match mode {
+        'h' => Some(format!("for ref mut {element} in {collection}:")),
+        'H' => Some(format!("for {key}, ref mut {element} in {collection}:")),
+        'e' | 'E' => {
+            let at = named_at('[')?;
+            let mut depth = 0;
+            let end = line_code[at..].char_indices().find_map(|(n, c)| {
+                match c {
+                    '[' => depth += 1,
+                    ']' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            return Some(at + n + 1);
+                        }
+                    }
+                    _ => {}
+                }
+                None
+            })?;
+            Some(format!("{}{element}{}", &line_code[..at], &line_code[end..]))
+        }
+        'a' => {
+            let at = named_at('.')?;
+            Some(format!("{}added{}", &line_code[..at], &line_code[at + collection.len()..]))
+        }
+        _ => None,
+    }
+}
+
 /// A line's code: up to a `#` that is outside every string and character literal.
 fn code_of(text: &str) -> &str {
     let mut quote = None;
@@ -558,6 +660,11 @@ fn expand_marks(text: &str, map: &SourceMap) -> String {
         out.push_str(&rest[..open]);
         let after = &rest[open + 1..];
         let Some(close) = after.find('\u{2}') else { break };
+        if let Some(fix) = after[..close].strip_prefix('&') {
+            out.push_str(&walk_fix(fix, map).unwrap_or_else(|| "?".to_string()));
+            rest = &after[close + 1..];
+            continue;
+        }
         if let Some(at) = after[..close].strip_prefix('#') {
             let code = at.split_once(':').and_then(|(file, start)| {
                 let file = map.get(FileId(file.parse().ok()?))?;

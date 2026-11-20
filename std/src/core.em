@@ -2434,6 +2434,13 @@ extend[T] Array[T] implements IntoIterator:
         return ArrayIntoIter(rest)
 
 extend[T] Array[T]:
+    ## `[STD-15]` — `extend(owns items)`: each item of `items`, an iterable of `T`, taken over as
+    ## `push(owns value: T)` takes its value. The compiler routes `xs.extend(owns ys)` here.
+    [I: needs IntoIterator[Item = T]]
+    fn extend_owned(owns items: I):
+        for v in owns items:
+            this.push(owns v)
+
     ## Keeps the elements `keep` is true of, in their order.
     [F: needs fn(T) -> bool]
     pub fn retain(owns keep: F):

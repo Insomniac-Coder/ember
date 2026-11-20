@@ -12,7 +12,7 @@ fn main():
     for i in 0..100000:
         ps.push(owns Particle(i as float, 0.0, 1.0, 0.5))
     for step in 0..2000:
-        for p in ps.iter_mut():
+        for ref mut p in ps:
             p.x = p.x + p.vx
             p.y = p.y + p.vy
     total = 0.0

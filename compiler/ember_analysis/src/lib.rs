@@ -32,6 +32,7 @@ pub mod loop_version;
 pub mod progress_reduction;
 pub mod long_access_lint;
 pub mod packed;
+pub mod positions;
 /// `[BLD-7]` — the driver's threads (`ember_mir::parallel`, which lowering uses too).
 pub use ember_mir::parallel;
 pub mod range_facts;

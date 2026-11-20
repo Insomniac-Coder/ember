@@ -14,6 +14,6 @@ fn main():
     for k in 0..2:
         things.push(owns Thing())
     for i in 0..100000000:
-        t = things[i % 2]
+        t = ref mut things[i % 2]
         t.bump()
     println(things[0].count + things[1].count)

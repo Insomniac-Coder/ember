@@ -17,7 +17,7 @@ fn main():
     kept = ""
     for k in n.keys():
         kept = k
-        n.insert(owns "c", owns 3)    #$ error[E3020]: cannot mutate `n` while it is borrowed by this loop
+        n.insert(owns "c", owns 3)    #$ error[E3020]: `n.insert(owns "c", owns 3)` (line 20) changes `n`, whose keys this loop walks (line 18); change it after the loop: move line 20, `n.insert(owns "c", owns 3)`, below the loop
     println(kept)
     s: Set[String] = Set()
     s.add(owns "x")

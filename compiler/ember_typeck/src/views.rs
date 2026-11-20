@@ -526,8 +526,14 @@ impl Checker<'_> {
         let header = self.kept_header(local)?;
         let decl = &self.locals[local.0 as usize];
         let noun = self.value_noun(decl.ty);
-        let source = self.written_line(header.source).unwrap_or_else(|| "it".to_string());
-        let fix = self.line_with(decl.span, &format!("ref mut {name}"))?;
+        let mut source = self.written_line(header.source).unwrap_or_else(|| "it".to_string());
+        let mut fix = self.line_with(decl.span, &format!("ref mut {name}"))?;
+        // `[CTL-1]` — `for p in ps.iter_mut():` is 0.9.10's spelling of a loop over `ps`, whose own
+        // handle is `for ref mut p in ps:`.
+        if matches!(header.kind, KeptKind::Loop) && source.ends_with(".iter_mut()") {
+            source.truncate(source.len() - ".iter_mut()".len());
+            fix = fix.replacen(".iter_mut():", ":", 1);
+        }
         let message = format!(
             "`{change}` changes the {noun} in `{source}`, but `{name}` only reads it; to change that {noun} through `{name}`, write `{fix}`"
         );

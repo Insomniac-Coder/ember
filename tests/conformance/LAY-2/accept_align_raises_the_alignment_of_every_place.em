@@ -62,7 +62,7 @@ fn main():
     reserved.reserve(10)
     reserved.push(owns Line(a = 9, b = 9))
     literal = [Line(a = 1, b = 1), Line(a = 2, b = 2)]
-    literal.insert(1, Line(a = 3, b = 3))
+    literal.insert(1, owns Line(a = 3, b = 3))
     literal.extend(xs.as_span())
     drained = literal.drain(0..2)
     copy = copy of xs

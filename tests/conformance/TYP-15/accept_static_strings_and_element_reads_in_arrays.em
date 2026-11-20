@@ -10,7 +10,7 @@
 fn main():
     names = ["ann", "bob"]
     names.push(owns "cy")
-    names.insert(0, "zed")
+    names.insert(0, owns "zed")
     names[1] = "al"
     println(names)
     more = ["ann", "bo", "cy"]

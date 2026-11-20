@@ -10,5 +10,5 @@
 fn main():
     xs = [10, 20, 30]
     println(xs[2 as u128], xs[1 as i256], xs[2 as u256], xs[0 as i128])
-    xs.insert(1 as u128, 9)
+    xs.insert(1 as u128, owns 9)
     println(xs)

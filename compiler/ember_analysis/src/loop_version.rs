@@ -2422,7 +2422,7 @@ fn visit_operand(operand: &Operand, f: &mut dyn FnMut(&Place, bool, bool)) {
 }
 
 /// `visit_places` for one statement.
-fn visit_stmt(stmt: &Stmt, f: &mut dyn FnMut(&Place, bool, bool)) {
+pub(crate) fn visit_stmt(stmt: &Stmt, f: &mut dyn FnMut(&Place, bool, bool)) {
     let operand = visit_operand;
     match &stmt.kind {
         StmtKind::Assign { place, rvalue } => {
@@ -2460,7 +2460,7 @@ fn visit_stmt(stmt: &Stmt, f: &mut dyn FnMut(&Place, bool, bool)) {
 }
 
 /// `visit_places` for a terminator.
-fn visit_terminator(terminator: &Terminator, f: &mut dyn FnMut(&Place, bool, bool)) {
+pub(crate) fn visit_terminator(terminator: &Terminator, f: &mut dyn FnMut(&Place, bool, bool)) {
     let operand = visit_operand;
     match terminator {
         Terminator::SwitchInt { discr, .. } => operand(discr, f),

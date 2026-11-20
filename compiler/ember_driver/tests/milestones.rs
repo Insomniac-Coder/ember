@@ -5211,6 +5211,8 @@ fn std_panics_name_their_twins_and_allocations_are_documented() {
         ("mod", "normalize", "zero quaternion", "ODR-254: a normalisation's argument"),
         ("mod", "normalize", "plane with no normal", "ODR-254: a normalisation's argument"),
         ("string", "split", "separator is empty", "ODR-254: a splitting's argument"),
+        ("mem", "init", "not a power of two", "[ALC-2], ODR-254: a constructor's argument (`invalid Layout`)"),
+        ("mem", "init", "does not fit in an `isize`", "[ALC-2], ODR-254: a constructor's argument (`invalid Layout`)"),
     ];
     // Open: a caller's bug with no non-panicking twin in std yet. None since ODR-254.
     const OPEN: &[(&str, &str, &str)] = &[];
@@ -9330,7 +9332,6 @@ fn every_example_of_the_specification_checks() {
         ("V.7 Constants and statics", 1, WRITTEN_IN_0915),
         ("VI.5 Lambdas and function values", 1, WRITTEN_IN_0915),
         ("Views with several regions", 1, WRITTEN_IN_0915),
-        ("IX.3 Memory managers: `using` and `Allocator`", 1, WRITTEN_IN_0915),
         // `owns (…)` before an argument for an `owns` parameter, since 0.9.20_Hardened_3.
         ("IX.7 `Cell`, and changes checked when compiling", 1, WRITTEN_IN_0920),
         ("IX.8 Establishing disjointness", 1, WRITTEN_IN_0915),

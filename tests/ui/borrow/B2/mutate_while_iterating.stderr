@@ -1,14 +1,12 @@
-error[E3020]: cannot mutate `values` while it is borrowed by this loop
+error[E3020]: `values.push(owns 3)` (line 6) adds to `values`, which this loop walks (line 5); collect what it adds in a list of your own: write `added: Array[i32] = []` before the loop, `added.push(owns 3)` in place of line 6, and `values.extend(owns added)` after the loop
  --> tests/ui/borrow/B2/mutate_while_iterating.em:6:9
   |
 5 |     for value in values:
-  |                  ------ `values` borrowed here for the whole loop
+  |                  ------ this loop walks `values`
 6 |         values.push(owns 3)
-  |         ^^^^^^^^^^^^^^^^^^^ mutable borrow here
+  |         ^^^^^^^^^^^^^^^^^^^ this changes what the loop walks
   |
-  = help: move line 6, `values.push(owns 3)`, below the loop
-  = help: or keep a list of your own (`added = []`), push what the loop adds to `added` inside the loop, and add its items to `values` after the loop
-  = help: or, to drop items, call `values.retain(owns fn(item) => keep(item))` after the loop
-  = note: a `for` loop borrows the iterable until the loop ends (CTL-2)
+  = help: a list of your own, added after the loop: `values.extend(owns added)`; to drop items, `values.retain(owns fn(item) => keep(item))` after the loop
+  = note: while a loop walks a collection, nothing changes it but the loop's own handle on the item it is on; items are added or removed after the loop (CTL-2)
 
 error: could not compile due to 1 error(s)

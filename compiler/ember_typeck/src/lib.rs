@@ -36343,6 +36343,16 @@ impl<'a> Checker<'a> {
             self.error(codes::E2140, span, format!("`{method}` changes the array, so it needs an Array variable"));
             return error;
         }
+        // `[STD-15]` — `extend(owns items)` takes each item of an iterable of `T` over, as `push` takes
+        // its value: std's `extend_owned`, the compiler's own call.
+        if method == "extend" && matches!(args[0].value.kind, ast::ExprKind::Owned(_)) {
+            let routed = ast::Ident { name: Symbol::intern("extend_owned"), span: name.span };
+            let receiver_span = receiver.span;
+            let was = std::mem::replace(&mut self.routed_call, true);
+            let call = self.synth_registered_method(receiver, receiver_span, routed, args, Vec::new(), span);
+            self.routed_call = was;
+            return call;
+        }
         if method == "extend" && !self.implements(elem, Symbol::intern("std.core.Clone")) {
             let shown = self.types.display(elem);
             self.error(codes::E2040, span, format!("`{shown}` does not implement `Clone`, which `extend` needs"));
@@ -36538,7 +36548,11 @@ impl<'a> Checker<'a> {
                 // The borrow is bound once, read through for the length,
                 // then handed to the operation.
                 let Some(index) = self.check_index(&args[0].value, None, span) else { return error };
-                let value = (method == "insert").then(|| self.check_expr(&args[1].value, elem));
+                // `[STD-15]` — `insert(i, owns v)` takes its value over, as `push` does.
+                let value = (method == "insert").then(|| {
+                    let taken = self.taken_value(&args[1].value, "insert", " (its first line says `owns v: T`)", false);
+                    self.check_expr(taken, elem)
+                });
                 let borrow_ty = receiver.ty;
                 let borrow = self.declare(None, borrow_ty, span);
                 let at = self.declare(None, usize_ty, span);
@@ -38203,6 +38217,14 @@ impl<'a> Checker<'a> {
                 if items.len() == 2 && self.map_key_type(iterable.ty).is_some_and(|key| !matches!(self.types.kind(key), TyKind::Tuple(_))) =>
             {
                 let changes = matches!(items[1].kind, ast::PatternKind::Bind { by_ref: true, mutable: true, sub: None, .. });
+                // `[CLI-20]` — from 0.9.8, `for k, v in m:` over a `Map` to `for k, v in m.items():`,
+                // which means what the two names over the map mean here.
+                if self.sink.migrating && !changes {
+                    self.sink.emit(
+                        Diagnostic::note_only(iter.span, "a loop over a `Map` with two names")
+                            .migrate("`for k, v in m:` over a `Map` to `m.items()`", iter.span.shrink_to_end(), ".items()"),
+                    );
+                }
                 let method = ast::Ident { name: Symbol::intern(if changes { "__items_mut" } else { "items" }), span: iter.span };
                 let mut pair = pattern.clone();
                 if changes
