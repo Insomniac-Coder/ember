@@ -71,10 +71,11 @@ this row: its `RefCell` part is M6b's, and the run-time access machinery goes wi
   until step 7.
 - **Step 6's plan (the lead, 2026-11-20):** the call check reads stage 2 (`used_after`, `read_while`,
   `changed_while`), which needs every body's regions (`summaries::summarize` already makes them with
-  `borrows::regions_all`). In every build that is a second region inference per body (the borrow check makes its
-  own in `check_body`, per form): measure it (`tools/compile_budgets.py` B1/B3/B9) first; if it is beyond the
-  spread, `check_body` takes the precomputed regions for a body's plain form (no `dyn` call made direct, the
-  common case) and infers only for the other forms. `check_call_summary` after `check_call_activation`: each
+  `borrows::regions_all`). `regions_all` builds again the contracts, capture contracts and store summaries
+  `run_checks` already has; so `run_checks` infers each body's regions once, with its own `call_contract`, and
+  gives them to both the worklist (`summarize_flow_with` with regions: `body_facts` already takes them) and
+  `check_body` for a body's plain form (no `dyn` call made direct, the common case); only the other forms infer
+  their own. Measured with `tools/compile_budgets.py` (B1, B3, B9) before it lands. `check_call_summary` after `check_call_activation`: each
   argument's loans (`regions.holders` of its temporary) against the callee's `used_after(i)` (E3031 with
   BRW-21's three texts: a view, the method's object, a `ref mut` read by another name while used); DIA-28
   orders E3031 before E3021 on one line. Bank: BRW-21 (10), FN-9.1, EXC-15.1 (2), CLS-7.2, DIA-22 (after its

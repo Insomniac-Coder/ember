@@ -309,7 +309,16 @@ pub(crate) fn check_module_variables_on_threads(bodies: &[Body], types: &TypeTab
                 }
             }
             // `[THR-20]`, `[RC-4]` — what the thread is given ends there: the drops its value may run (a
-            // lambda's captured state, a count of a `thread_shared` object, which may be the last).
+            // lambda's captured state, a count of a `thread_shared` object, which may be the last); and its
+            // result, which ends there when no one joins it (`JoinHandle[T]`'s `T`).
+            if let Terminator::Call { dest, .. } = &block.terminator
+                && let TyKind::Struct(id) = types.kind(place_type(body, types, dest))
+                && let Some((_, results)) = &types.struct_def(*id).origin
+            {
+                for &result in results {
+                    runs.extend(drop_runs.of(result, targets).bodies.iter().map(|&(drop, _)| drop));
+                }
+            }
             for operand in args {
                 if let Operand::Copy(place) | Operand::Move(place) = operand {
                     runs.extend(drop_runs.of(place_type(body, types, place), targets).bodies.iter().map(|&(drop, _)| drop));
@@ -589,6 +598,70 @@ fn builtin_op(which: &Builtin) -> Option<&'static str> {
     })
 }
 
+/// `[EFF-1]`, `[STA-3]`, `[DRP-8]` (review 4) — the bodies a built-in call runs: each function it is given
+/// (a named one, or a function value's targets), a static's first-access initialiser, the `clone` a copy of a
+/// value runs (its type's, or its parts' where it has none), and the written `Debug` a format runs.
+#[allow(clippy::too_many_arguments)]
+fn builtin_runs(at: usize, body: &Body, func: &FuncRef, args: &[Operand], types: &TypeTable, index: &HashMap<&str, usize>, targets: &Targets) -> Vec<usize> {
+    let FuncRef::Builtin { which, arg_ty } = func else { return Vec::new() };
+    let mut out = Vec::new();
+    for operand in args {
+        match operand {
+            Operand::Const(Const::Fn(symbol)) => out.extend(index.get(symbol.as_str()).copied()),
+            Operand::Copy(place) | Operand::Move(place) => {
+                let ty = place_type(body, types, place);
+                if matches!(types.kind(ty), TyKind::Fn { .. }) {
+                    out.extend(targets.of_call(at, body, operand, ty, types));
+                }
+            }
+            _ => {}
+        }
+    }
+    match which {
+        Builtin::LazyStatic { init, .. } => out.extend(index.get(init.as_str()).copied()),
+        Builtin::Format | Builtin::FormatWith(_) | Builtin::Print | Builtin::EPrint | Builtin::PrintPiece { .. } => {
+            out.extend(types.debug_writers_reached(*arg_ty).into_iter().filter_map(|writer| index.get(writer.as_ref() as &str).copied()));
+        }
+        Builtin::ArrayClone { elem } | Builtin::CloneParts { ty: elem } => clone_runs(*elem, types, index, &mut HashSet::new(), &mut out),
+        _ => {}
+    }
+    out
+}
+
+/// The `clone` bodies a copy of a value of `ty` runs: its type's own, or, where it has none, its parts'.
+fn clone_runs(ty: Ty, types: &TypeTable, index: &HashMap<&str, usize>, seen: &mut HashSet<Ty>, out: &mut Vec<usize>) {
+    if !seen.insert(ty) {
+        return;
+    }
+    if matches!(types.kind(ty), TyKind::Struct(_) | TyKind::Enum(_))
+        && let Some(&clone) = index.get(types.method_symbol(ty, None, "clone", None).as_str())
+    {
+        out.push(clone);
+        return;
+    }
+    match types.kind(ty).clone() {
+        TyKind::Vec { elem, .. } | TyKind::Array { elem, .. } | TyKind::ArrayN { elem, .. } => clone_runs(elem, types, index, seen, out),
+        TyKind::Tuple(items) => items.into_iter().for_each(|item| clone_runs(item, types, index, seen, out)),
+        TyKind::Enum(id) => {
+            for field in types.enum_def(id).variants.iter().flat_map(|variant| &variant.fields) {
+                clone_runs(field.ty, types, index, seen, out);
+            }
+        }
+        TyKind::Struct(id) => {
+            let def = types.struct_def(id);
+            for field in &def.fields {
+                clone_runs(field.ty, types, index, seen, out);
+            }
+            if let Some((_, args)) = &def.origin {
+                for &arg in args {
+                    clone_runs(arg, types, index, seen, out);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
 /// The bodies one call may run, as `body_facts` resolves them.
 #[allow(clippy::too_many_arguments)]
 fn call_targets(at: usize, body: &Body, func: &FuncRef, args: &[Operand], bodies: &[Body], types: &TypeTable, index: &HashMap<&str, usize>, targets: &Targets) -> Vec<usize> {
@@ -609,13 +682,7 @@ fn call_targets(at: usize, body: &Body, func: &FuncRef, args: &[Operand], bodies
                     .map(|(callee, _)| callee),
             ),
             FuncRef::Interface { interfaces, slot, .. } => out.extend(targets.of_dyn(interfaces, *slot).iter().copied()),
-            FuncRef::Builtin { .. } => {
-                for operand in args {
-                    if let Operand::Const(Const::Fn(symbol)) = operand {
-                        out.extend(index.get(symbol.as_str()).copied());
-                    }
-                }
-            }
+            FuncRef::Builtin { .. } => out.extend(builtin_runs(at, body, func, args, types, index, targets)),
             _ => {}
         }
     }
@@ -1067,6 +1134,34 @@ fn body_facts(
         }
         // `[THR-11]`, `[PAR-4]`, `[JOB-1]` (verdict 30) — a function a built-in runs itself (a scoped or
         // pooled task, a `@parallel` loop's chunks and combiner) does what its body does, from here.
+        // `[EFF-1]` (review 4) — the code a built-in runs that the program wrote, with no call of its own (a
+        // static's first-access initialiser, a `clone` a copy runs, the `Debug` a format runs, a function given
+        // by value): what it does to a static, as it says; what it does through its parameters, to anything
+        // this function's parameters reach.
+        if matches!(func, FuncRef::Builtin { .. }) {
+            let tasks: Vec<&str> = args.iter().filter_map(|operand| match operand {
+                Operand::Const(Const::Fn(symbol)) => Some(symbol.as_str()),
+                _ => None,
+            }).collect();
+            for run in builtin_runs(at, body, func, args, types, index, targets) {
+                if tasks.contains(&bodies[run].symbol.as_str()) {
+                    continue;
+                }
+                let summary = &summaries[run];
+                for (what, facts) in [(What::Change, &summary.changes), (What::Read, &summary.reads), (What::Reshape, &summary.reshapes), (What::Add, &summary.adds), (What::Remove, &summary.removes), (What::End, &summary.ends)] {
+                    for fact in facts {
+                        let mut chain = vec![(run, span)];
+                        chain.extend_from_slice(&fact.chain);
+                        let mut out = Vec::new();
+                        match &fact.reach.root {
+                            Root::Static(..) => out.push(fact.reach.clone()),
+                            Root::Param(_) => anything(body, &mut out),
+                        }
+                        found.extend(out.into_iter().map(|reach| (what, Fact { reach, chain: chain.clone(), at: fact.at, op: fact.op })));
+                    }
+                }
+            }
+        }
         if matches!(func, FuncRef::Builtin { .. }) {
             for operand in args {
                 let Operand::Const(Const::Fn(symbol)) = operand else { continue };

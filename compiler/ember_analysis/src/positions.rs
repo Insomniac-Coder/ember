@@ -166,6 +166,9 @@ fn plan(body: &Body, types: &TypeTable, summaries: Option<&Summaries>) -> Vec<(u
     names.sort();
     for (block, data) in body.blocks.iter().enumerate() {
         let Terminator::Call { func, args, next, dest } = &data.terminator else { continue };
+        // `[BRW-16]` (review 4) — a written function whose result may hold a view (into the list it is given)
+        // keeps no position across it: the result would be a second name of the element.
+        let summaries = if matches!(func, FuncRef::Builtin { .. }) || !types.may_be_view(crate::regions::place_type(body, types, dest)) { summaries } else { None };
         for argument in added_arguments(func, args, summaries) {
             let Some(Operand::Copy(given) | Operand::Move(given)) = args.get(argument) else { continue };
             if !given.projection.is_empty() {

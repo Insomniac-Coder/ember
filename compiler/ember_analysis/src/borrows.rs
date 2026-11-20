@@ -6401,8 +6401,18 @@ fn summary_accesses(body: &Body, types: &TypeTable, form: &crate::dyn_kinds::For
     for (symbol, owner) in symbols {
         let Some(summary) = summaries.get(symbol) else { continue };
         let own = form.callees.get().and_then(|callees| callees.get(symbol)).map(|(name, _)| name.clone());
-        let writes = summary.changes.iter().chain(&summary.reshapes).chain(&summary.ends).chain(&summary.adds).chain(&summary.removes);
-        for (fact, access) in writes.map(|fact| (fact, Access::Write)).chain(summary.reads.iter().map(|fact| (fact, Access::Read))) {
+        // `[EFF-25]` — each place once, by the strongest thing done to it: a reshape or an end of it (a write,
+        // which may end or move what a view of it points into: `E3060` at the view's later use), a change
+        // inside it (as a `ref mut` would: `E3021` at the call for a read-only name of it), a read.
+        let reshaping = summary.reshapes.iter().chain(&summary.ends).chain(&summary.adds).chain(&summary.removes).map(|fact| (fact, Access::Write));
+        let changing = summary.changes.iter().map(|fact| (fact, Access::Borrow { mutable: true }));
+        let reading = summary.reads.iter().map(|fact| (fact, Access::Read));
+        let mut done: Vec<&crate::summaries::Reach> = Vec::new();
+        for (fact, access) in reshaping.chain(changing).chain(reading) {
+            if done.contains(&&fact.reach) {
+                continue;
+            }
+            done.push(&fact.reach);
             let crate::summaries::Root::Static(name, _) = &fact.reach.root else { continue };
             let Some(&root) = named.get(name.as_str()) else { continue };
             let mut projection = vec![Projection::Deref];
