@@ -745,3 +745,9 @@ Its questions, for the owner or Hardened_15: (1) a safe `fn deallocate` implemen
 a direct call of it E3100 too (reading (b), recommended: the reason holds for every give-back)? (2) ALC-6's "out of
 memory: ... (line 8)" against COST-6's "`out of memory`: ... on line 6": ALC-6's text followed. Accepted as built:
 the "delegates to `Global` recurses" clause covered by the package test; COST-6's caller-line text is COST-6's gap.
+
+D2's M11b bank (13 rules, 30 files, `ahead/M11b/INDEX.md`) is merged. Its seven questions (INDEX §3) stay open; two
+are where-reported questions the files leave open (E2117, E2050). Found on the way, for the next jobs: `super.init(name)`
+for an `owns` parameter is E3028 today, though `[CLS-3]` says that argument takes no word (a defect); three older
+tests the target contradicts (INDEX §2: ATT-1's `@static_safe` text, EFF-12's two `@static_safe` files, TYP-22's
+refusal of every generic method).
