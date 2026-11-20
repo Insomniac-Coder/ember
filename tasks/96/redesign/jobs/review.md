@@ -760,3 +760,11 @@ stand; GRM-17's one simple statement in a bracketed lambda against THR-21's and 
 `fn() copy of part: for x in part: total += x`; where WK-12's E7014 stands. Old tests the target contradicts:
 INDEX §2. Not written: A6-13 and A9-9 (C++ handle classes, the FFI milestone's harness), A6-14's run-time checks
 (a milestone test), THR-4, THR-13, RC-4's internal counting, PAR-2a, PAR-2b.
+
+D2's M8 bank (10 rules, 23 files, `ahead/M8/INDEX.md`) is merged. Its questions (INDEX §3) stay open: GRM-17
+against compound lambda bodies (M9's Q4); CLO-5, whether a plain `w: weakref Ui` parameter reads the caller's link
+with no word (`count_handlers(ui)`) or needs `weakref ui`; CLO-6, which program "this function gives `s` away"
+describes (a word capture given away, or the real `s` handed over inside the lambda). Old tests the target
+contradicts: INDEX §2 (CLO-1's two one-function-place refusals against ODR-278, CLO-10's three-word limit, GRM-42's
+E0120 text, CLO-6/6a texts, the removed CLO-13 and CLO-15). Not written: A6-7's C callbacks (the FFI harness),
+CLO-3's `extern "C" fn` conversion panic (no text in the spec).
