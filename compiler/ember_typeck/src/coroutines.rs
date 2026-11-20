@@ -403,6 +403,10 @@ impl Writer<'_> {
             | ast::ExprKind::Unary { operand: base, .. }
             | ast::ExprKind::RefOf { place: base, .. }
             | ast::ExprKind::CopyOf(base) | ast::ExprKind::Link { value: base, .. } => self.lift_expr(base, enclosing),
+            ast::ExprKind::Using { value, instance } => {
+                self.lift_expr(value, enclosing);
+                self.lift_expr(instance, enclosing);
+            }
             ast::ExprKind::IndexOrInstantiate { base, args } => {
                 self.lift_expr(base, enclosing);
                 for arg in args {
@@ -1220,6 +1224,10 @@ impl Rewriter<'_> {
             | ast::ExprKind::Unary { operand: base, .. }
             | ast::ExprKind::RefOf { place: base, .. }
             | ast::ExprKind::CopyOf(base) | ast::ExprKind::Link { value: base, .. } => self.expr(base, Place::Operand),
+            ast::ExprKind::Using { value, instance } => {
+                self.expr(value, Place::Operand);
+                self.expr(instance, Place::Operand);
+            }
             ast::ExprKind::IndexOrInstantiate { base, args } => {
                 self.expr(base, Place::Operand);
                 for arg in args {

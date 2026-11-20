@@ -308,6 +308,71 @@ fn global_deallocate_through(a: A, p: *mut u8, size: usize, align: usize):
     unsafe:
         a.deallocate(p, Layout(size, align))
 
+## `[ALC-1]`, `[TYP-46]` — what an `owns T using A` is. The compiler makes one wherever a program
+## writes `owns T using A` (`owns T using Global` is `owns T`), shows it as that, and reads it as its
+## `T`, as every `owns T`. The line that makes the value takes its block from the instance it names,
+## `owns Mesh(points=[0.0]) using current`, by calling `current.allocate(...)` directly, and writes
+## the value into it; the end runs `T`'s clean-up and gives the block back through the manager's
+## `deallocate`. What it keeps besides the value's address follows the manager (verdict 107):
+## - `OwnsIn` (a manager that may have several instances): the instance's address, one word more;
+## - `OwnsInOne` (a manager with no fields, so one instance: `System`, any such type): nothing;
+## - `OwnsFound` (a manager implementing `FoundByAddress`): nothing, the instance read from the
+##   start of the value's piece, one mask and one load;
+## - `OwnsFreeNothing` (a manager whose `deallocate` does nothing, an `Arena`): nothing, and its end
+##   gives nothing back.
+## These calls are the compiler's own, made for the program, so they need no `unsafe:` of its.
+[T, A: needs Allocator]
+struct OwnsIn:
+    value: *mut T
+    instance: *mut A
+
+    fn drop():
+        # SAFETY: `value` came from this instance's `allocate` with `T`'s layout, the instance lives
+        # longer than the value (`[LT-4]`), and the value is not used after its end.
+        unsafe:
+            drop(this.value.read())
+            instance_at(this.instance).deallocate(this.value as *mut u8, Layout(size_of[T](), align_of[T]()))
+
+[T, A: needs Allocator]
+struct OwnsInOne:
+    value: *mut T
+
+    fn drop():
+        # SAFETY: as `OwnsIn`'s; a manager with no fields has one instance, of no bytes, so any
+        # aligned address is it.
+        unsafe:
+            drop(this.value.read())
+            instance_at(align_of[A]() as *mut A).deallocate(this.value as *mut u8, Layout(size_of[T](), align_of[T]()))
+
+[T, A: needs (Allocator, FoundByAddress)]
+struct OwnsFound:
+    value: *mut T
+
+    fn drop():
+        # SAFETY: as `OwnsIn`'s; the manager promises that the piece holding the block starts at a
+        # multiple of `PIECE` and holds the instance's address in its first word.
+        unsafe:
+            drop(this.value.read())
+            piece = ((this.value as usize) & ~(PIECE - 1)) as *mut *mut A
+            instance_at(piece.read()).deallocate(this.value as *mut u8, Layout(size_of[T](), align_of[T]()))
+
+[T, A: needs Allocator]
+struct OwnsFreeNothing:
+    value: *mut T
+
+    fn drop():
+        # SAFETY: `value` came from the instance's `allocate`, and is not used after its end; the
+        # manager frees nothing one by one, so nothing is given back.
+        unsafe:
+            drop(this.value.read())
+
+## `[ALC-1]` — compiler-known: the instance of a manager at the address `p` a value made in it
+## keeps (`OwnsIn`), reached as a place, so that the compiler's call of its methods changes it.
+@safety("`p` is the address of a live instance of `A`")
+[A]
+unsafe fn instance_at(p: *mut A) -> ref mut A:
+    pass
+
 ## `[LAY-2]` — the byte offset of a field of struct `T`, named as written:
 ## `offset_of[Header](length)`. The compiler reads the name; this declaration
 ## makes the path real.

@@ -27,6 +27,7 @@ mod views;
 mod ffi;
 mod packs;
 mod infinite_size;
+mod managers;
 
 pub use comptime::{ComptimeAnswer, ComptimeAnswers, ComptimeRequest};
 pub use derives::component_registry_key;
@@ -729,6 +730,7 @@ fn check_round(
     // `K: Hash` needs `String`'s); it is offered each one again. One whose
     // hidden arguments those implementations answer is filled in then.
     checker.implementations_known = true;
+    checker.check_pending_managers();
     checker.extend_early_instances();
     checker.complete_early_instances();
     checker.class_methods_recorded = true;
@@ -3594,6 +3596,12 @@ struct Checker<'a> {
     /// pointer. This table supplies the ownership-aware constructor,
     /// auto-deref and drop semantics without making raw access public.
     boxes: HashMap<StructId, Ty>,
+    /// `[ALC-1]` — each `owns T using A` (std.mem's owners) with its manager `A`.
+    managed_owners: HashMap<StructId, Ty>,
+    /// `[ALC-1]` (verdict 107) — what a value made in each manager keeps of its instance.
+    manager_kinds: HashMap<Ty, managers::ManagerKind>,
+    /// `[TYP-46]` — managers named before the implementations were collected, checked after.
+    pending_managers: Vec<(Ty, Span)>,
     /// `[STR-5]` (ODR-237) — the types whose derived `Clone` is being settled, taken as `Clone`
     /// while their fields are checked, so a recursive one (`Node(Box[Tree])`) derives it.
     assumed_cloneable: HashSet<Ty>,
@@ -4391,6 +4399,9 @@ impl<'a> Checker<'a> {
             validated_classes: false,
             cells: HashMap::new(),
             boxes: HashMap::new(),
+            managed_owners: HashMap::new(),
+            manager_kinds: HashMap::new(),
+            pending_managers: Vec::new(),
             assumed_cloneable: HashSet::new(),
             gather_items: Vec::new(),
             lent_callable_args: HashSet::new(),
@@ -5598,6 +5609,7 @@ impl<'a> Checker<'a> {
             ast::TypeKind::Ref { inner, .. } | ast::TypeKind::Ptr { inner, .. } | ast::TypeKind::Owns(inner) | ast::TypeKind::Link { inner, .. } => {
                 self.alias_body_is_resolvable(inner)
             }
+            ast::TypeKind::Using { inner, manager } => self.alias_body_is_resolvable(inner) && self.alias_body_is_resolvable(manager),
             ast::TypeKind::Tuple(items) => {
                 items.iter().all(|t| self.alias_body_is_resolvable(t))
             }
@@ -15917,6 +15929,8 @@ impl<'a> Checker<'a> {
                 let inner = self.resolve_type(owned);
                 self.owns_type(inner, owned.span, ty.span)
             }
+            // `[TYP-46]`, `[ALC-1]` — `T using A`.
+            ast::TypeKind::Using { inner, manager } => self.resolve_using_type(inner, manager, ty.span),
             // `[TYP-45]`, `[RC-1]`, `[WK-11]` — M4 slice A: owners and links on one thread
             // (`M4-plan.md`), of a class object or of a value in a block of its own (D4, D5).
             ast::TypeKind::Link { kind, inner } => {
@@ -17725,6 +17739,16 @@ impl<'a> Checker<'a> {
             return Some(self.refuse_mem_forget(args, span));
         } else if resolved.is("std.mem.drop") {
             "drop"
+        } else if resolved.is("std.mem.instance_at") {
+            // `[ALC-1]` — the instance at the address a value made in it keeps, as a place.
+            let pointer = args.first().map(|arg| self.synth_committed(&arg.value))?;
+            let TyKind::Ptr { inner, .. } = *self.types.kind(pointer.ty) else { return Some(Expr { ty: self.common.error, kind: ExprKind::Error, span }) };
+            if !self.unsafe_context() {
+                self.error(codes::E3100, span, "`instance_at` requires an `unsafe` block");
+            }
+            let place = Expr { ty: inner, kind: ExprKind::Deref(Box::new(pointer)), span };
+            let ty = self.types.intern(TyKind::Ref { mutable: true, inner });
+            return Some(Expr { ty, kind: ExprKind::Ref { place: Box::new(place), mutable: true }, span });
         } else {
             return None;
         };
@@ -21250,6 +21274,14 @@ impl<'a> Checker<'a> {
     /// hands the value over, and the value is checked for the place.
     fn check_owned_value(&mut self, inner: &ast::Expr, expected: Ty, span: Span) -> Expr {
         let Some(target) = self.box_inner(expected) else { return self.check_expr(inner, expected) };
+        // `[ALC-1]`, `[OWN-10]` — `owns e using inst`, and a block for a place whose manager is not
+        // the built-in one: made in the manager's instance.
+        if let ast::ExprKind::Using { value, instance } = &inner.kind {
+            return self.owned_block_in(value, Some(instance), Some(expected), span);
+        }
+        if self.owner_manager(expected).is_some() && self.foreign_object_name(target).is_none() {
+            return self.owned_block_in(inner, None, Some(expected), span);
+        }
         // `[TYP-45]` — `owns Box(v)`: `Box` is not Ember, and the word before it already says that
         // the value has a block of its own.
         if let Some(boxed) = Self::box_call_argument(inner) {
@@ -27401,6 +27433,7 @@ impl<'a> Checker<'a> {
             | ast::ExprKind::CopyOf(operand) | ast::ExprKind::Link { value: operand, .. }
             | ast::ExprKind::Paren(operand)
             | ast::ExprKind::Owned(operand) => Self::class_init_uses_whole_self(operand),
+            ast::ExprKind::Using { value, instance } => Self::class_init_uses_whole_self(value) || Self::class_init_uses_whole_self(instance),
             ast::ExprKind::Binary { lhs, rhs, .. }
             | ast::ExprKind::Logical { lhs, rhs, .. } => {
                 Self::class_init_uses_whole_self(lhs) || Self::class_init_uses_whole_self(rhs)
@@ -39121,6 +39154,10 @@ impl<'a> Checker<'a> {
         if expr.ty == expected || expected == self.common.error || expr.ty == self.common.error {
             return expr;
         }
+        // `[TYP-46]` — an `owns T` of one manager where another's is wanted.
+        if self.refuse_other_manager(&expr, expected) {
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span: expr.span };
+        }
         // `[RC-1]` — an owner where its object is wanted. A value in a block is read where it is: copied
         // when `=` copies it, borrowed where a view of it is wanted, and never moved out of its block.
         if let TyKind::Link { kind: ember_types::LinkKind::Shares | ember_types::LinkKind::SharesMut | ember_types::LinkKind::ThreadShared, target } = *self.types.kind(expr.ty) {
@@ -41812,6 +41849,8 @@ impl<'a> Checker<'a> {
                 Expr { ty: self.common.void, kind: ExprKind::Error, span }
             }
 
+            // `[GRM-43]` — `e using inst` that no `owns` holds.
+            ast::ExprKind::Using { value, instance } => self.synth_using(value, instance, expected, span),
             // `[IDE-3]` — what did not parse is a placeholder, reported where it was parsed.
             ast::ExprKind::Error => Expr { ty: self.common.error, kind: ExprKind::Error, span },
             _ => {
@@ -45627,6 +45666,10 @@ impl<'a> Checker<'a> {
                 }
             }
             ast::TypeKind::Ref { inner, .. } | ast::TypeKind::Ptr { inner, .. } | ast::TypeKind::Owns(inner) | ast::TypeKind::Link { inner, .. } => self.induced_projections(inner, out),
+            ast::TypeKind::Using { inner, manager } => {
+                self.induced_projections(inner, out);
+                self.induced_projections(manager, out);
+            }
             ast::TypeKind::Tuple(items) | ast::TypeKind::Dyn(items) => {
                 items.iter().for_each(|item| self.induced_projections(item, out))
             }
@@ -45778,6 +45821,10 @@ impl<'a> Checker<'a> {
                     }
                 }
                 ast::TypeKind::Ref { inner, .. } | ast::TypeKind::Ptr { inner, .. } | ast::TypeKind::Owns(inner) | ast::TypeKind::Link { inner, .. } => uses(inner, out),
+                ast::TypeKind::Using { inner, manager } => {
+                    uses(inner, out);
+                    uses(manager, out);
+                }
                 ast::TypeKind::Tuple(items) | ast::TypeKind::Dyn(items) => items.iter().for_each(|item| uses(item, out)),
                 ast::TypeKind::Array { elem, .. } => uses(elem, out),
                 ast::TypeKind::Fn { params, ret, .. } => {
@@ -50762,6 +50809,10 @@ impl<'a> Checker<'a> {
     /// `owns fn` anywhere but an argument is `E0109` (verdict 158). Every other `owns` before a value
     /// is not built yet.
     fn synth_owns(&mut self, inner: &ast::Expr, span: Span) -> Expr {
+        // `[ALC-1]` — `owns e using inst`: the block taken from the instance.
+        if let ast::ExprKind::Using { value, instance } = &inner.kind {
+            return self.owned_block_in(value, Some(instance), None, span);
+        }
         if matches!(inner.kind, ast::ExprKind::Lambda(_)) {
             self.sink.emit(
                 Diagnostic::error(codes::E0109, span, "`owns` is not written before `fn`")
@@ -65435,6 +65486,10 @@ fn type_names(ty: &ast::TypeExpr, out: &mut HashSet<Symbol>) {
             }
         }
         ast::TypeKind::Ref { inner, .. } | ast::TypeKind::Ptr { inner, .. } | ast::TypeKind::Owns(inner) | ast::TypeKind::Link { inner, .. } => type_names(inner, out),
+        ast::TypeKind::Using { inner, manager } => {
+            type_names(inner, out);
+            type_names(manager, out);
+        }
         ast::TypeKind::Tuple(items) | ast::TypeKind::Dyn(items) => {
             for item in items {
                 type_names(item, out);
@@ -65859,6 +65914,10 @@ fn type_expr_names(ty: &ast::TypeExpr, out: &mut Vec<Symbol>) {
             }
         }
         ast::TypeKind::Ref { inner, .. } | ast::TypeKind::Ptr { inner, .. } | ast::TypeKind::Owns(inner) | ast::TypeKind::Link { inner, .. } => type_expr_names(inner, out),
+        ast::TypeKind::Using { inner, manager } => {
+            type_expr_names(inner, out);
+            type_expr_names(manager, out);
+        }
         ast::TypeKind::Tuple(items) | ast::TypeKind::Dyn(items) => {
             for item in items {
                 type_expr_names(item, out);
@@ -65934,6 +65993,10 @@ fn collect_projection_paths(ty: &ast::TypeExpr, out: &mut Vec<(Symbol, ast::Iden
             }
         }
         ast::TypeKind::Ref { inner, .. } | ast::TypeKind::Ptr { inner, .. } | ast::TypeKind::Owns(inner) | ast::TypeKind::Link { inner, .. } => collect_projection_paths(inner, out),
+        ast::TypeKind::Using { inner, manager } => {
+            collect_projection_paths(inner, out);
+            collect_projection_paths(manager, out);
+        }
         ast::TypeKind::Tuple(items) | ast::TypeKind::Dyn(items) => {
             items.iter().for_each(|item| collect_projection_paths(item, out))
         }
@@ -66357,6 +66420,10 @@ impl ShareWalk<'_> {
                 }
             }
             ast::TypeKind::Ref { inner, .. } | ast::TypeKind::Ptr { inner, .. } | ast::TypeKind::Owns(inner) | ast::TypeKind::Link { inner, .. } | ast::TypeKind::SomeType(inner) => self.ty(inner),
+            ast::TypeKind::Using { inner, manager } => {
+                self.ty(inner);
+                self.ty(manager);
+            }
             ast::TypeKind::Tuple(items) | ast::TypeKind::Dyn(items) => {
                 for item in items {
                     self.ty(item);
@@ -66467,6 +66534,10 @@ impl ShareWalk<'_> {
             }
             E::Try(inner) | E::Paren(inner) | E::Owned(inner) | E::Comptime(inner) | E::AssumeNoalloc(inner) => self.expr(inner),
             E::RefOf { place, .. } | E::CopyOf(place) | E::Link { value: place, .. } => self.expr(place),
+            E::Using { value, instance } => {
+                self.expr(value);
+                self.expr(instance);
+            }
             E::OptChain { base, generic_args, args, .. } => {
                 self.expr(base);
                 for arg in generic_args {

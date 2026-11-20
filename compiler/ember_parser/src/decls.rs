@@ -2000,7 +2000,21 @@ impl Parser<'_> {
             let span = self.span();
             return TypeExpr { id: self.next_id(), kind: TypeKind::Infer, span };
         }
-        let ty = self.parse_type_nested(suffix);
+        let mut ty = self.parse_type_nested(suffix);
+        // `[TYP-46]`, `[GRM-3]` — `type := base_type ["using" path_type]`: the manager after the whole
+        // type before it.
+        if self.at_kw(Kw::Using) {
+            self.bump();
+            let manager = self.parse_type_nested(false);
+            if !matches!(manager.kind, TypeKind::Path { .. }) {
+                self.report(
+                    Diagnostic::error(codes::E0100, manager.span, "`using` names a memory manager's type: a type's name, as `using LevelArena`")
+                        .note("the type after `using` is a type implementing `std.mem.Allocator` [TYP-46]"),
+                );
+            }
+            let span = ty.span.to(manager.span);
+            ty = TypeExpr { id: self.next_id(), kind: TypeKind::Using { inner: Box::new(ty), manager: Box::new(manager) }, span };
+        }
         self.leave_nesting();
         ty
     }

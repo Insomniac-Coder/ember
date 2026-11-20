@@ -1157,6 +1157,7 @@ impl Printer<'_> {
             // arm. It must have a rule of its own: the catch-all copies text
             // through with each line trimmed and would flatten a nested block.
             ast::ExprKind::Owned(inner) => format!("owns {}", self.expr_pure(inner)),
+            ast::ExprKind::Using { value, instance } => format!("{} using {}", self.expr_pure(value), self.expr_pure(instance)),
             ast::ExprKind::CopyOf(inner) => format!("copy of {}", self.expr_pure(inner)),
             ast::ExprKind::Link { kind, value: inner } => format!("{} {}", kind.word(), self.expr_pure(inner)),
             ast::ExprKind::Comptime(inner) => format!("comptime({})", self.expr_pure(inner)),
@@ -1408,6 +1409,7 @@ impl Printer<'_> {
                 format!("{kind}{}", self.type_expr(inner))
             }
             ast::TypeKind::Owns(inner) => format!("owns {}", self.type_expr(inner)),
+            ast::TypeKind::Using { inner, manager } => format!("{} using {}", self.type_expr(inner), self.type_expr(manager)),
             ast::TypeKind::Link { kind, inner } => format!("{} {}", kind.word(), self.type_expr(inner)),
             ast::TypeKind::Tuple(items) => {
                 let items: Vec<String> = items.iter().map(|t| self.type_expr(t)).collect();

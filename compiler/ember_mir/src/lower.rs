@@ -3742,6 +3742,9 @@ impl<'a> Builder<'a> {
                         | hir::Builtin::ScopedArenaAlloc { .. }
                 );
                 let spill_second = spill_second || matches!(which, hir::Builtin::SoA { op: hir::SoAOp::Push, .. });
+                // `[UNS-1]`, `[ALC-1]` — `p.write(v)` hands `v` over into `*p`: a move stays a move, so the
+                // value is not also ended where it was (the block of an `owns T using A` is written so).
+                let spill_third = matches!(which, hir::Builtin::PtrWrite);
                 let spill_first = matches!(
                     which,
                     hir::Builtin::BoxNew { .. }
@@ -3755,7 +3758,7 @@ impl<'a> Builder<'a> {
                     .iter()
                     .enumerate()
                     .map(|(index, a)| {
-                        if (spill_first && index == 0) || (spill_second && index == 1) {
+                        if (spill_first && index == 0) || (spill_second && index == 1) || (spill_third && index == 2) {
                             match self.lower_operand(a) {
                                 Operand::Const(_) => self.lower_into_temp(a),
                                 // D-200 — `Box`, `Shared` and a list literal
