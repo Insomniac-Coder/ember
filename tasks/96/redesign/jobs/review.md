@@ -823,3 +823,16 @@ comprehensions, nested walks, names an `exists as` or a `match` arm makes, lines
 several lines, labels) and in the smaller fixes (`TypeTable::written`, a shared `Span`'s `iter_mut()`, helps over
 `.iter()`, the effects names). All are fixed in the next commit: the chooser gives code only where the program's
 text makes it safe, and the plain sentence otherwise, never `?`.
+
+**BRW-5 is one question from its credit** (2026-11-20; the M5 bank's BRW-5 folder passes and moved). A plain
+pattern name over a part that is a `ref mut` view: `match xs.get_pair_mut(i, j): Some((a, b)): a = b`. The M5
+bank's INDEX (§2) reads `[BRW-14]` ("a loop, pattern or opened name views what it names and only reads it ... a
+`ref mut` one changes what it names") as making `a` read-only, so `a = b` is `E3023` and the fix is `Some((ref mut
+a, ref mut b))`. But `[ECS-3]`'s own example changes through plain loop names over `ref mut` items: `for total,
+count in q.iter_mut(): total.n += count.n`. Readings: (a) a name is a `ref mut` one when its value is a `ref mut`
+view, whatever it is written with (ECS-3 as written; today's compiler); (b) only a name written `ref mut` changes
+what it names (the INDEX; ECS-3's example then writes `for ref mut total, count in q.iter_mut():`). My
+recommendation: (a), since it is what both examples write and a `ref mut` value is already the right to change;
+`ref mut` before a pattern name over such a part then names that view (built). Until ruled, today's behaviour
+stays. Gap, not a question: a `MutSpan` a plain name holds is read-only (`E3023` on writes, built), but its borrow
+is still a changeable one, so a push while it is used is `E3022` at the push, not `[BRW-17]`'s `E3060` at the use.

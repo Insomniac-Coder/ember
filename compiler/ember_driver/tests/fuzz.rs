@@ -503,7 +503,7 @@ fn well_typed_programs_are_accepted_and_one_wrong_type_is_found_where_it_is() {
 enum Op {
     /// `vN: Span[int] = aK` — a shared loan of `aK`, held by `vN`.
     View { holder: usize, array: usize },
-    /// `mN: ref mut int = ref mut aK[0]` — a mutable loan of `aK`.
+    /// `mN: ref mut int = ref mut aK[0]` — a mutable loan of `aK`, a position (`[BRW-16]`): a push keeps it.
     Lend { holder: usize, array: usize },
     /// A read through the holder.
     Use { holder: usize },
@@ -523,14 +523,16 @@ const ARRAYS: usize = 3;
 /// at and the codes it has.
 fn verdict(ops: &[Op], at: usize) -> Option<(usize, &'static [&'static str])> {
     // `[BRW-17]`, `[OWN-3]` — a push or a hand-over while only read-only views of the array are live
-    // ends them: the error is `E3060`, at the first later use of one.
+    // ends them: the error is `E3060`, at the first later use of one. `[BRW-16]` — a push keeps a
+    // position (`mN = ref mut aK[0]`), so only a hand-over meets a live one.
     if let Op::Push { array } | Op::Move { array, .. } = ops[at] {
         let shared_use = ops[at + 1..].iter().position(|later| {
             matches!(*later, Op::Use { holder } if ops[..at].iter().any(|op| matches!(*op, Op::View { holder: h, array: a } if h == holder && a == array)))
         });
-        let lent = ops[..at].iter().any(|op| {
-            matches!(*op, Op::Lend { holder, array: a } if a == array && ops[at + 1..].iter().any(|later| matches!(later, Op::Use { holder: h } if *h == holder)))
-        });
+        let lent = matches!(ops[at], Op::Move { .. })
+            && ops[..at].iter().any(|op| {
+                matches!(*op, Op::Lend { holder, array: a } if a == array && ops[at + 1..].iter().any(|later| matches!(later, Op::Use { holder: h } if *h == holder)))
+            });
         if let Some(offset) = shared_use
             && !lent
             && !moved_before(ops, at, array)
@@ -586,9 +588,12 @@ fn verdict_here(ops: &[Op], at: usize) -> Option<&'static [&'static str]> {
         Op::Read { array } | Op::View { array, .. } => {
             if moved(array) { Some(MOVED) } else if live(array, true) { Some(CONFLICT) } else { None }
         }
-        Op::Lend { array, .. } | Op::Push { array } | Op::Move { array, .. } => {
+        Op::Lend { array, .. } | Op::Move { array, .. } => {
             if moved(array) { Some(MOVED) } else if live(array, false) { Some(CONFLICT) } else { None }
         }
+        // `[BRW-16]` — a push keeps a live position and finds its element again; a live view is ended,
+        // at its later use (`verdict`).
+        Op::Push { array } => moved(array).then_some(MOVED),
         Op::Assign { array } => live(array, false).then_some(CONFLICT),
     }
 }
