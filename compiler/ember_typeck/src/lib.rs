@@ -3985,6 +3985,9 @@ struct Checker<'a> {
     /// The loops currently open, innermost last, each with its label if it has
     /// one. `break`/`continue` index into this to find their target.
     loop_labels: Vec<Option<Symbol>>,
+    /// `[CTL-2]` — the lists the counting loops being checked count over (`for i in 0..xs.len():`), each
+    /// with the line of its header: a call in the body that shortens one is `E3020`.
+    counting_loops: Vec<((LocalId, Vec<usize>), Span)>,
     /// `[CTL-7]` — inside a `defer` block, where control may not leave.
     in_defer: bool,
     /// `[UNS-1]`, `[UNS-2]` — inside an `unsafe:` block, where the raw memory
@@ -4521,6 +4524,7 @@ impl<'a> Checker<'a> {
             noted_assoc: HashMap::new(),
             method_call_expected: None,
             loop_labels: Vec::new(),
+            counting_loops: Vec::new(),
             in_defer: false,
             in_unsafe: false,
             unsafe_fn: None,
@@ -32532,7 +32536,16 @@ impl<'a> Checker<'a> {
             Some((this.known_bounds(&start)?.0, last?))
         });
         self.loop_labels.push(label.map(|l| l.name));
+        // `[CTL-2]` — a range whose end reads `xs.len()` counts over `xs`: it may write its elements and
+        // add to it, and a call that shortens it is refused while the body is checked.
+        let counted = end.as_ref().and_then(counted_list);
+        if let Some(key) = counted.clone() {
+            self.counting_loops.push((key, span));
+        }
         let body = self.check_block(body);
+        if counted.is_some() {
+            self.counting_loops.pop();
+        }
         self.loop_labels.pop();
         self.scopes.pop();
 
@@ -36276,6 +36289,25 @@ impl<'a> Checker<'a> {
             return error;
         }
         let array_ty = receiver.ty;
+        // `[CTL-2]` — "`xs.pop()` shortens `xs`, whose length this loop read once on line 3; walk
+        // backwards, or collect the indices and remove after the loop".
+        if matches!(method, "truncate" | "drain" | "clear" | "pop" | "swap_remove" | "remove")
+            && let Some(key) = place_key(&receiver)
+            && let Some(&(_, header)) = self.counting_loops.iter().rev().find(|(counted, _)| *counted == key)
+        {
+            let call = self.written_line(span).unwrap_or_else(|| format!("{method}()"));
+            let list = self.written_line(receiver.span).unwrap_or_else(|| "the list".to_string());
+            let line = self.line_of(header).unwrap_or(0);
+            self.sink.emit(
+                Diagnostic::error(
+                    codes::E3020,
+                    span,
+                    format!("`{call}` shortens `{list}`, whose length this loop read once on line {line}; walk backwards, or collect the indices and remove after the loop"),
+                )
+                .secondary(header, "the loop's end is read here, once")
+                .note("a counting loop does not walk the list: it may write its elements and add to it, but not remove from it [CTL-2]"),
+            );
+        }
         let receiver = self.pass_receiver(receiver, Mode::Mut, span);
         let call = |which, args, ty| Expr { ty, kind: ExprKind::Builtin { which, args }, span };
         // The arguments are evaluated first, which may read the array, then
@@ -69170,4 +69202,30 @@ fn code_before_comment(line: &str) -> &str {
         }
     }
     line
+}
+
+/// `[CTL-2]` — the list a counting loop's end reads the length of (`0..xs.len()`), as a place key.
+fn counted_list(end: &Expr) -> Option<(LocalId, Vec<usize>)> {
+    let mut end = end;
+    loop {
+        match &end.kind {
+            ExprKind::Cast { expr, .. } => end = expr,
+            ExprKind::Builtin { which: Builtin::ArrayLen | Builtin::SpanLen, args } if args.len() == 1 => return place_key(&args[0]),
+            _ => return None,
+        }
+    }
+}
+
+/// A place as its root local and the fields below it, through views (`ref xs`, `*p`, `this.items`).
+fn place_key(expr: &Expr) -> Option<(LocalId, Vec<usize>)> {
+    match &expr.kind {
+        ExprKind::Local(local) => Some((*local, Vec::new())),
+        ExprKind::Field { base, index } => {
+            let (root, mut fields) = place_key(base)?;
+            fields.push(*index);
+            Some((root, fields))
+        }
+        ExprKind::Deref(inner) | ExprKind::Ref { place: inner, .. } => place_key(inner),
+        _ => None,
+    }
 }
