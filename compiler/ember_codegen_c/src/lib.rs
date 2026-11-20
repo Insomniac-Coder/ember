@@ -8962,6 +8962,22 @@ impl Emitter<'_> {
                     self.set_view_pointer(dest);
                 } else if self.is_void(dest_ty) {
                     self.line(&format!("    {call};"));
+                } else if self.for_msvc
+                    && matches!(func, FuncRef::Builtin { which: Builtin::SpanFrom { mutable: true }, .. })
+                    && dest.projection.is_empty()
+                    && body.for_iterators.contains(&dest.local)
+                {
+                    // `[SPN-1]`, `[CTL-1]` — for MSVC, the view a `for ref mut x in xs:` walk makes of a list
+                    // is made in two steps, from the list's header and then from that, as 0.9.10's
+                    // `xs.iter_mut()` made it (the list's view, then its reborrow): MSVC turns a loop nest
+                    // walking it inside an outer loop inside out (each element's fields kept in registers
+                    // for every outer turn, as it does for the C a person writes) only when the view was
+                    // made so. Measured on bench a05_structs: 82.65 ms against 117.8 ms, C 82.6 ms. A view
+                    // `iter_mut()` reborrows itself is made as before (bench s1_enumerate_xor).
+                    let dest_text = self.place_in(dest, body);
+                    let made = format!("_ember_view_{index}");
+                    self.line(&format!("    {{ {RT}mutspan {made} = {call}; {dest_text} = (({RT}mutspan){{ {made}.ptr, {made}.len }}); }}"));
+                    self.set_view_pointer(dest);
                 } else {
                     let dest_text = self.place_in(dest, body);
                     self.line(&format!("    {dest_text} = {call};"));
