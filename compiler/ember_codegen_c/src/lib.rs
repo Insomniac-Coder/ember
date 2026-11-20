@@ -12722,8 +12722,11 @@ impl Emitter<'_> {
         for (name, ty, value) in statics {
             let symbol = constant_static_symbol(name.as_str());
             let c_ty = self.c_type(ty);
+            // `[STA-1]` — a `static mut`'s value is the program's to change: writable data, a plain
+            // C global.
+            let constness = if self.types.is_writable_static(name) { "" } else { "const " };
             if self.unit.is_some() {
-                self.line(&format!("extern const {c_ty} {symbol};"));
+                self.line(&format!("extern {constness}{c_ty} {symbol};"));
                 continue;
             }
             let mut parts = Vec::new();
@@ -12734,7 +12737,7 @@ impl Emitter<'_> {
             for part in parts {
                 self.line(&part);
             }
-            self.line(&format!("const {c_ty} {symbol} = {initializer};"));
+            self.line(&format!("{constness}{c_ty} {symbol} = {initializer};"));
         }
         self.line("");
     }

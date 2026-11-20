@@ -127,6 +127,17 @@ is credited when all its clauses pass; most need several steps (INDEX §0 says w
    `static mut` reached by a function a non-scoped thread may run). Unblocks 57 bank files. Old: STA-1, STA-3, FN-8.
    The static's place must be one root the borrow check can compare (two temporaries from `LazyStatic(LOG)` are one
    place): say so in its design, since step 3 maps `Static` facts onto it.
+   **Built (A1-17, 2026-11-20), but for `E7012`.** A use of a static is `Deref` of a compiler temporary its
+   access fills (`_t = lazy_static()`, `constant_static()`, `foreign_static()`; each use makes one). The borrow
+   check maps every such temporary to the first one of the same static in the body
+   (`borrows::module_variable_roots`, kept per form in `Form::statics`, applied in `call_argument_place`), so
+   `(*_7)` and `(*_2)` are one root; `positions::list_of` takes the root too. Step 3 maps a callee's
+   `Root::Static(s)` fact onto the root of `s` in the caller's map (a caller that never names `s` holds no
+   loan of it). A `static mut` with no heap memory is the image's writable data (`TypeTable::
+   is_writable_static`, a plain C global, LLVM `internal global`); one that owns heap memory, or whose
+   initialiser reads a `static mut`, is built on first access. Not built: `E7012` (no spawn or job edges
+   exist yet; stage 1's), `guarded by` (M9), and a call that changes a module variable by its name while
+   the caller holds a view of it (steps 3 and 7).
 1. **The summaries in the pipeline (§1), with nothing read yet.** Stage 1 and 2 as §1, kept and verified. Tests: the
    `--emit mir` summary tests unchanged; a new incremental test (kept summaries equal a clean build's; `note`'s two
    lines swapped checks `main` again). **Measured before it lands:** `tools/compile_budgets.py` (B1, B3, B6, B9) and

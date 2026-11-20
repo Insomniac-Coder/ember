@@ -638,6 +638,9 @@ pub struct TypeTable {
     /// evaluator computed, placed in the image as constant data: each name,
     /// type and value (in the evaluator's text).
     constant_statics: Vec<(Symbol, Ty, String)>,
+    /// `[STA-1]`, `[STA-3]` — the constant statics that are `static mut`s: placed in the image's
+    /// writable data, since the program changes them.
+    writable_statics: HashSet<Symbol>,
     /// `[STA-3]`, `[HR-17a]` — each static folded into the code as a scalar constant, with its
     /// value (in the evaluator's text): a reload compares values, since the code holds no other.
     folded_statics: Vec<(Symbol, String)>,
@@ -782,6 +785,15 @@ impl TypeTable {
         &self.constant_statics
     }
 
+    /// `[STA-1]` — a constant static that is a `static mut`: its storage is written.
+    pub fn mark_writable_static(&mut self, name: Symbol) {
+        self.writable_statics.insert(name);
+    }
+
+    pub fn is_writable_static(&self, name: Symbol) -> bool {
+        self.writable_statics.contains(&name)
+    }
+
     /// `[STA-3]` — a static folded into the code as a scalar constant, with its value.
     pub fn add_folded_static(&mut self, name: Symbol, value: String) {
         self.folded_statics.push((name, value));
@@ -834,6 +846,7 @@ impl TypeTable {
             coroutine_frames: HashMap::new(),
             next_infer: 0,
             constant_statics: Vec::new(),
+            writable_statics: HashSet::new(),
             folded_statics: Vec::new(),
             class_reflections: HashMap::new(),
             export_tables: Vec::new(),

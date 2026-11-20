@@ -4059,13 +4059,18 @@ fn load_package_modules(
             // `E0100`, and the implicit `main` built from them is dropped.
             if !path.is_empty() {
                 if let Some(script) = module.script.take() {
+                    // `[STA-1]` — one that gives a module variable a value gets the declaration to write.
+                    let help = match &module.items[script.main].kind {
+                        ember_ast::ItemKind::Fn(main) => main.body.as_ref().and_then(|body| body.stmts.first()).and_then(module_variable_declaration),
+                        _ => None,
+                    };
                     sink.emit(
                         ember_diag::Diagnostic::error(
                             ember_diag::codes::E0100,
                             script.first,
                             "a statement at file scope outside the entry file",
                         )
-                        .help("move it into a function")
+                        .help(help.unwrap_or_else(|| "move it into a function".to_string()))
                         .note("only the file given to `ember run`/`ember build` is a script [GRM-2]"),
                     );
                     module.items.remove(script.main);
@@ -8086,4 +8091,33 @@ mod tests {
             assert_eq!(abnormal_end(&std::process::ExitStatus::from_raw(3 << 8)), None);
         }
     }
+}
+
+/// `[STA-1]` — for `FRAME = 0` at module level outside the entry file: "`FRAME = 0` is a statement,
+/// and a module holds declarations; for a module variable that may change write `static mut FRAME:
+/// int = 0`", where the value's type is the literal's own (`[LEX-16]`, `[LEX-17]`).
+fn module_variable_declaration(stmt: &ember_ast::Stmt) -> Option<String> {
+    let ember_ast::StmtKind::Assign { targets, op: None, value } = &stmt.kind else { return None };
+    let [target] = targets.as_slice() else { return None };
+    let ember_ast::ExprKind::Path { segments } = &target.kind else { return None };
+    let [name] = segments.as_slice() else { return None };
+    let literal = match &value.kind {
+        ember_ast::ExprKind::Unary { op: ember_ast::UnOp::Neg, operand } => operand.as_ref(),
+        _ => value,
+    };
+    let ember_ast::ExprKind::Lit(literal) = &literal.kind else { return None };
+    let ty = match literal {
+        ember_ast::Literal::Int { suffix: Some(suffix), .. } => format!("{suffix:?}").to_lowercase(),
+        ember_ast::Literal::Int { suffix: None, .. } => "int".to_string(),
+        ember_ast::Literal::Float { suffix: Some(suffix), .. } => format!("{suffix:?}").to_lowercase(),
+        ember_ast::Literal::Float { suffix: None, .. } => "float".to_string(),
+        ember_ast::Literal::Bool(_) => "bool".to_string(),
+        ember_ast::Literal::Char(_) => "char".to_string(),
+        _ => return None,
+    };
+    let (statement, written) = (ember_diag::line_code_mark(stmt.span), ember_diag::text_mark(value.span));
+    Some(format!(
+        "`{statement}` is a statement, and a module holds declarations; for a module variable that may change write `static mut {}: {ty} = {written}`",
+        name.name
+    ))
 }
