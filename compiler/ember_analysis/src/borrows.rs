@@ -3957,7 +3957,17 @@ fn check_body(
         let mut accesses = Vec::new();
         match &block.terminator {
             Terminator::SwitchInt { discr, .. } => operand_read(discr, &mut accesses),
-            Terminator::Call { func, args, dest, .. } => {
+            Terminator::Call { func, args, dest, next } => {
+                // `[BRW-21]` — a view whose last use is an argument of the call does not live across it:
+                // the callee is held to its promise by the call check (`E3031`), not by these accesses,
+                // which meet only the loans still used after the call.
+                let after = Point { block: next.0 as usize, index: 0 };
+                let across: Vec<&Loan> = in_scope(&loans, point)
+                    .into_iter()
+                    .filter(|loan| {
+                        regions.holders(loan.capability.validity_interval.0).iter().any(|holder| regions.local_regions(*holder).iter().any(|slot| regions.contains(slot.region, after)))
+                    })
+                    .collect();
                 // `[EFF-24]`, `[EFF-1]`, `[BRW-18]` (M6a step 3) — what the call's callees do to module
                 // variables, by their summaries, meets this body's loans at the call; `[DRP-8]` — so do
                 // the `drop`s of the elements a built-in ends.
@@ -3976,7 +3986,7 @@ fn check_body(
                     )
                     .collect();
                 for (place, access, cause) in caused {
-                    check_point_with(body, types, &in_scope(&loans, point), &regions, &reads, point, &[(place, access)], span, form, sink, &mut reported, Some(&cause));
+                    check_point_with(body, types, &across, &regions, &reads, point, &[(place, access)], span, form, sink, &mut reported, Some(&cause));
                 }
                 check_call_activation(
                     body,

@@ -17,5 +17,5 @@ struct Words:
 fn main():
     w = Words(["a", "bb"])
     for name in w.names:
-        w.bump() #$ error[E3020]: `w.bump()` (line 20) changes `w.names`, which this loop walks (line 19); change it after the loop: move line 20, `w.bump()`, below the loop
+        w.bump() #$ error[E3020]: `w.bump()` (line 20) changes `w.names` (through `rename`, line 11) while this loop walks `w.names` (line 19); change it after the loop: move line 20, `w.bump()`, below the loop
         print(name)

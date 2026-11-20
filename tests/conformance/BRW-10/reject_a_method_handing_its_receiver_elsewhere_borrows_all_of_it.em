@@ -16,5 +16,5 @@ fn touch(ref mut w: Words):
 fn main():
     w = Words(["a", "bb"])
     for name in w.names:
-        w.bump() #$ error[E3020]: `w.bump()` (line 19) changes `w.names`, which this loop walks (line 18); change it after the loop: move line 19, `w.bump()`, below the loop
+        w.bump() #$ error[E3020]: `w.bump()` (line 19) changes `w.names` (through `touch`, line 14) while this loop walks `w.names` (line 18); change it after the loop: move line 19, `w.bump()`, below the loop
         print(name)
