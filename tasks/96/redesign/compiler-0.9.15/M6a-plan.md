@@ -49,6 +49,26 @@ this row: its `RefCell` part is M6b's, and the run-time access machinery goes wi
   xs)`, `xs.retain(keep)`), "may move" when it only adds; a position survives a written function that only adds
   (`positions::added_arguments`, any argument); `E3020` through a written function names its verb and chain:
   "`note(ref mut xs)` (line 16) adds to `xs` (through `grow`, line 8) while this loop walks `xs` (line 15)".
+- **Step 0's `E7012` (2026-11-20):** `summaries::check_module_variables_on_threads`, at each `thread.spawn` and
+  `jobs.submit` outside a scope: the bodies the call runs (a named function, a function value's targets) and the
+  `drop`s what it is given may run (`drop_runs`), by their summaries; the spec's text, the declarations written by
+  `ember_diag::guarded_static_mark` from the program's own lines. A method is named by its type (`Ticket.drop`,
+  `TICKET_LOCK`), a lambda by the variable (`FRAME_LOCK`). Not yet: `guarded by` (M9), C's callbacks and
+  `export(threads=...)` (M12).
+- **Step 4, both halves (2026-11-20):** one walk of what ending a value runs (`drop_runs.rs`: a type's own `drop`,
+  its parts', a class's and those below it, a lambda's state's, what a `dyn` box or an interface handle was made
+  from, the object a counted link may end; `effects::drop_of` reads it too, so `Box[dyn I]`'s end is its values'
+  `drop`s, not `Effects::ALL`). A `StmtKind::Drop` and a clear, a truncation or an SoA element ended in place are a
+  call of each `drop` in the summaries (`ended_facts`: a `drop`'s facts on statics, and those leaving its object
+  through a pointer; what it does to its own object ends with it).
+- **Step 3, statics (2026-11-20):** `summaries::runs_of` (each checked form: its calls' bodies, its ends' `drop`s)
+  and `borrows::summary_accesses`: what they do to module variables is an access at the call or the end, met with
+  the body's loans (`check_point_with`, a `Cause` for the text): "`tick()` (line 19) adds to `LOG` (through
+  `note`, line 10) while this loop walks `LOG` (line 17); call `tick()` after the loop: move line 19 below the
+  loop", and DRP-8's "`enemies.clear()` (line 16) ends every `Enemy` in `enemies`, and an `Enemy`'s `drop` pushes
+  to `LOG` (its line 22), ...". Facts carry their built-in's verb (`Fact::op`). Parameters' facts still meet the
+  loans where the arguments are borrowed (`reshapes_at`); other conflicts than a walk's keep the generic texts
+  until step 7.
 
 ## 1. The summary
 

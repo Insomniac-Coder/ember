@@ -23,6 +23,7 @@ use ember_span::Span;
 use ember_types::{ClassId, LinkKind, OverflowPolicy, Ty, TyKind, TypeTable};
 
 use crate::regions::place_type;
+use crate::drop_runs::DropRuns;
 use crate::targets::Targets;
 
 /// Where an effect enters one body: an operation of its own, or a call into another body.
@@ -129,7 +130,7 @@ pub(crate) fn operation_effects(bodies: &[Body], types: &TypeTable) -> Operation
     let graph = Graph::new(bodies, types);
     let index: HashMap<&str, usize> =
         bodies.iter().enumerate().map(|(i, body)| (body.symbol.as_str(), i)).collect();
-    let mut builder = SiteBuilder { bodies, types, index: &index, ancestors: class_ancestors(types), drops: HashMap::new(), targets: Targets::new(bodies, types) };
+    let mut builder = SiteBuilder { bodies, types, index: &index, ancestors: class_ancestors(types), drop_runs: DropRuns::new(bodies, types, &index), targets: Targets::new(bodies, types) };
     let known = |sites: &[Site]| {
         sites.iter().fold(Effects::NONE, |all, site| match site.origin {
             Origin::Operation(_) if site.effects == Effects::ALL => all,
@@ -280,7 +281,7 @@ pub fn allocation_sites(
 ) -> Vec<AllocationSite> {
     let index: HashMap<&str, usize> =
         bodies.iter().enumerate().map(|(i, body)| (body.symbol.as_str(), i)).collect();
-    let mut builder = SiteBuilder { bodies, types, index: &index, ancestors: class_ancestors(types), drops: HashMap::new(), targets: Targets::new(bodies, types) };
+    let mut builder = SiteBuilder { bodies, types, index: &index, ancestors: class_ancestors(types), drop_runs: DropRuns::new(bodies, types, &index), targets: Targets::new(bodies, types) };
     // What each standard function allocates by itself: through its own operations and the
     // standard functions it calls, never through the program's functions it is given.
     let known: Vec<Vec<Site>> = bodies
@@ -941,7 +942,7 @@ impl<'a> Graph<'a> {
             types,
             index: &index,
             ancestors: class_ancestors(types),
-            drops: HashMap::new(),
+            drop_runs: DropRuns::new(bodies, types, &index),
             targets: Targets::new(bodies, types),
         };
         let sites: Vec<Vec<Site>> = bodies.iter().map(|body| builder.sites(body)).collect();
@@ -1086,8 +1087,8 @@ struct SiteBuilder<'a> {
     types: &'a TypeTable,
     index: &'a HashMap<&'a str, usize>,
     ancestors: HashMap<ClassId, Vec<ClassId>>,
-    /// What dropping a value of each type runs: its own effects and the `drop` bodies it calls.
-    drops: HashMap<Ty, (Effects, Vec<usize>)>,
+    /// `[DRP-8]` — what ending a value of each type runs (`crate::drop_runs`, which the summaries read too).
+    drop_runs: DropRuns<'a>,
     /// `[EFF-2]` (A4-1) — what a call through a function value or a `dyn` value may run.
     targets: Targets,
 }
@@ -1392,110 +1393,23 @@ impl SiteBuilder<'_> {
         }
     }
 
-    /// What dropping a value of `ty` runs (`[OWN-2]`, `[DRP-6]`): each `drop` method it reaches,
-    /// and `Sync` for the release of a `Sync` handle.
-    fn drop_of(&mut self, ty: Ty) -> (Effects, Vec<usize>) {
-        if let Some(known) = self.drops.get(&ty) {
-            return known.clone();
-        }
-        self.drops.insert(ty, (Effects::NONE, Vec::new()));
+    /// What dropping a value of `ty` runs (`[OWN-2]`, `[DRP-6]`, `[DRP-8]`): each `drop` method it reaches,
+    /// and `Sync` for a release that synchronises (`crate::drop_runs`, which the summaries read too).
+    fn drop_of(&self, ty: Ty) -> (Effects, Vec<usize>) {
+        let run = self.drop_runs.of(ty, &self.targets);
         let mut effects = Effects::NONE;
-        let mut callees = Vec::new();
-        let mut parts: Vec<Ty> = Vec::new();
-        match self.types.kind(ty).clone() {
-            // `[THR-5]`, `[JOB-2]` — a `Scope`'s end joins its threads, a `JobScope`'s waits for its jobs.
-            TyKind::Struct(id)
-                if self.types.struct_def(id).origin.as_ref().is_some_and(|(origin, _)| matches!(origin.as_str(), "std.thread.Scope" | "std.jobs.JobScope")) =>
-            {
-                effects |= Effects::SYNC | Effects::BLOCK;
-            }
-            // `[THR-3]` — a `MutexGuard`'s end releases its lock: a synchronising operation.
-            TyKind::Struct(id)
-                if self.types.struct_def(id).origin.as_ref().is_some_and(|(origin, _)| {
-                    matches!(
-                        origin.as_str(),
-                        "std.sync.MutexGuard" | "std.sync.RwLockReadGuard" | "std.sync.RwLockWriteGuard" | "std.thread.JoinHandle"
-                    )
-                }) =>
-            {
-                effects |= Effects::SYNC;
-            }
-            TyKind::Struct(id) => {
-                let def = self.types.struct_def(id);
-                if def.has_drop {
-                    self.push_drop_body(&self.types.method_symbol(ty, None, "drop", None), &mut callees);
-                }
-                parts.extend(def.fields.iter().map(|field| field.ty));
-                if let Some((_, args)) = &def.origin {
-                    parts.extend(args.iter().copied());
-                }
-            }
-            TyKind::Enum(id) => {
-                let def = self.types.enum_def(id);
-                if def.has_drop {
-                    self.push_drop_body(&self.types.method_symbol(ty, None, "drop", None), &mut callees);
-                }
-                parts.extend(def.variants.iter().flat_map(|variant| variant.fields.iter().map(|field| field.ty)));
-            }
-            TyKind::Tuple(items) => parts.extend(items),
-            TyKind::Array { elem, .. } | TyKind::ArrayN { elem, .. } | TyKind::Vec { elem, .. } => parts.push(elem),
-            TyKind::Class(id) => {
-                // The last handle's release drops the object, whose class may be any below `id`.
-                for (class, chain) in &self.ancestors {
-                    if !chain.contains(&id) {
-                        continue;
-                    }
-                    let def = self.types.class_def(*class);
-                    if def.is_sync {
-                        effects |= Effects::SYNC;
-                    }
-                    for link in chain {
-                        let link_def = self.types.class_def(*link);
-                        if link_def.has_drop {
-                            let symbol = self.types.class_method_symbol(*link, "drop");
-                            if let Some(&callee) = self.index.get(symbol.as_str()) {
-                                callees.push(callee);
-                            }
-                        }
-                        parts.extend(link_def.fields.iter().map(|field| field.ty));
-                    }
-                }
-            }
-            // A value that may own anything: its drop's effects are not known here.
-            TyKind::Dyn { .. } | TyKind::ClassInterface(_) => effects |= Effects::ALL,
-            // `[EFF-2]` (ODR 15.3) — a function value's drop is that of one of the functions stored into
-            // its type: none for a named function, its captured values' for a lambda.
-            TyKind::Fn { stateless: false, abi: None, .. } => {
-                for target in self.targets.of_value(ty, self.types) {
-                    if let Some(environment) = self.bodies[target].closure_environment {
-                        match self.types.find(&TyKind::Struct(environment)) {
-                            Some(captured) => parts.push(captured),
-                            None => effects |= Effects::ALL,
-                        }
-                    }
-                }
-            }
-            TyKind::Fn { stateless: false, .. } => effects |= Effects::ALL,
-            _ => {}
+        if run.sync {
+            effects |= Effects::SYNC;
         }
-        for part in parts {
-            if part != ty && self.types.needs_drop(part) {
-                let (more, bodies) = self.drop_of(part);
-                effects |= more;
-                callees.extend(bodies);
-            }
+        if run.block {
+            effects |= Effects::BLOCK;
         }
-        callees.sort_unstable();
+        if run.unknown {
+            effects |= Effects::ALL;
+        }
+        let mut callees: Vec<usize> = run.bodies.iter().map(|&(body, _)| body).collect();
         callees.dedup();
-        self.drops.insert(ty, (effects, callees.clone()));
         (effects, callees)
-    }
-
-    /// `[OWN-2]` — the body of a type's own `drop`, by its symbol.
-    fn push_drop_body(&self, symbol: &str, callees: &mut Vec<usize>) {
-        if let Some(&callee) = self.index.get(symbol) {
-            callees.push(callee);
-        }
     }
 }
 

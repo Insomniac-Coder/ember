@@ -11237,6 +11237,10 @@ impl<'a> Checker<'a> {
                         static_region,
                     );
                     self.native_statics.insert(self.qualified(decl.name.name), decl.is_mut);
+                    if decl.is_mut {
+                        let qualified = self.qualified(decl.name.name);
+                        self.types.mark_module_variable(qualified);
+                    }
                     // `[STA-3]` — anything but a literal is folded, or given a
                     // first-access initialiser, once every constant and
                     // signature is known (`settle_statics`). A `static mut` is a

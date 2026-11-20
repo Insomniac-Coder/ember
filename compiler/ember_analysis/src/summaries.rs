@@ -19,9 +19,10 @@ use std::collections::{HashMap, HashSet};
 
 use ember_mir::{Body, Builtin, Const, FuncRef, LocalId, Operand, Place, Projection, Rvalue, SoAOp, StmtKind, Terminator};
 use ember_span::Span;
-use ember_types::{TyKind, TypeTable};
+use ember_types::{Ty, TyKind, TypeTable};
 
 use crate::regions::{place_type, project_type, Origin, Point, Regions};
+use crate::drop_runs::DropRuns;
 use crate::targets::Targets;
 
 /// A path longer than this is cut to its first `MAX_PATH` steps, which cover it.
@@ -64,6 +65,8 @@ pub struct Fact {
     /// The line that does it, in the last function of the chain (the function's own line when the
     /// chain is empty): what a message names ("through `note`, line 4").
     pub at: Span,
+    /// `[DRP-8]` — what that line does, when it is a built-in a message names ("pushes to").
+    pub op: Option<&'static str>,
 }
 
 /// `[EFF-24]` — what a function may change, read, reshape and end.
@@ -174,6 +177,7 @@ pub fn summarize(bodies: &[Body], types: &TypeTable) -> Vec<Summary> {
     let pointers: Vec<HashMap<LocalId, HashSet<Target>>> = bodies.iter().map(|body| pointers_of(body, types)).collect();
     // `[BRW-21]` — where each view parameter is still used: the borrow check's own regions.
     let regions = crate::borrows::regions_all(bodies, types);
+    let drop_runs = DropRuns::new(bodies, types, &index);
     let mut summaries: Vec<Summary> = vec![Summary::default(); bodies.len()];
     let mut known: Vec<HashSet<(What, Reach)>> = vec![HashSet::new(); bodies.len()];
     // Each round reads what the last one found; facts only grow and are finitely many (paths are cut),
@@ -181,7 +185,7 @@ pub fn summarize(bodies: &[Body], types: &TypeTable) -> Vec<Summary> {
     loop {
         let mut grew = false;
         for (at, body) in bodies.iter().enumerate() {
-            let found = body_facts(at, body, bodies, types, &index, &targets, &pointers[at], regions[at].as_ref(), &summaries);
+            let found = body_facts(at, body, bodies, types, &index, &targets, &pointers[at], regions[at].as_ref(), &summaries, &drop_runs);
             for (what, fact) in found {
                 if known[at].insert((what, fact.reach.clone())) {
                     grew = true;
@@ -221,13 +225,19 @@ pub fn summarize(bodies: &[Body], types: &TypeTable) -> Vec<Summary> {
 /// what the checks of a build read. Each body is walked once, and again only when a callee's summary
 /// grew (a worklist over the callers), not every body every round as [`summarize`] does.
 pub fn summarize_flow(bodies: &[Body], types: &TypeTable) -> Vec<Summary> {
-    let targets = Targets::new(bodies, types);
+    summarize_flow_with(bodies, types, &Targets::new(bodies, types))
+}
+
+/// [`summarize_flow`] with the program's call targets already worked out.
+pub(crate) fn summarize_flow_with(bodies: &[Body], types: &TypeTable, targets: &Targets) -> Vec<Summary> {
+    let targets = targets;
     let index: HashMap<&str, usize> = bodies.iter().enumerate().map(|(at, body)| (body.symbol.as_str(), at)).collect();
     let pointers: Vec<HashMap<LocalId, HashSet<Target>>> = bodies.iter().map(|body| pointers_of(body, types)).collect();
+    let drop_runs = DropRuns::new(bodies, types, &index);
     // Who calls whom, as `body_facts` resolves its calls: a body is walked again when one grew.
     let mut callers: Vec<Vec<usize>> = vec![Vec::new(); bodies.len()];
     for (at, body) in bodies.iter().enumerate() {
-        for callee in callees_of(at, body, bodies, types, &index, &targets) {
+        for callee in callees_of(at, body, bodies, types, &index, &targets, &drop_runs) {
             if !callers[callee].contains(&at) {
                 callers[callee].push(at);
             }
@@ -239,7 +249,7 @@ pub fn summarize_flow(bodies: &[Body], types: &TypeTable) -> Vec<Summary> {
     let mut work: std::collections::VecDeque<usize> = (0..bodies.len()).rev().collect();
     while let Some(at) = work.pop_front() {
         queued[at] = false;
-        let found = body_facts(at, &bodies[at], bodies, types, &index, &targets, &pointers[at], None, &summaries);
+        let found = body_facts(at, &bodies[at], bodies, types, &index, &targets, &pointers[at], None, &summaries, &drop_runs);
         let mut grew = false;
         for (what, fact) in found {
             if known[at].insert((what, fact.reach.clone())) {
@@ -274,14 +284,322 @@ pub fn summarize_flow(bodies: &[Body], types: &TypeTable) -> Vec<Summary> {
     summaries
 }
 
+/// `[THR-20]`, `[STA-1]` — `E7012`: a function that may run on another thread (given to `thread.spawn`, or a
+/// job submitted outside a scope) and reads or changes a `static mut`, which only the main thread and the
+/// tasks and jobs of the scopes it opens reach. One error at each such call, naming the function that does
+/// it, by its summary's chain, and the module variables it reaches.
+// ponytail: no `guarded by` yet (M9): every module variable is unguarded. Callbacks C may run on another
+// thread and `@unsafe(export(..., threads=...))` functions are the C interface's (M12).
+pub(crate) fn check_module_variables_on_threads(bodies: &[Body], types: &TypeTable, summaries: &[Summary], targets: &Targets, sink: &mut ember_diag::Sink) {
+    let index: HashMap<&str, usize> = bodies.iter().enumerate().map(|(at, body)| (body.symbol.as_str(), at)).collect();
+    let drop_runs = DropRuns::new(bodies, types, &index);
+    for (at, body) in bodies.iter().enumerate() {
+        for block in &body.blocks {
+            let Terminator::Call { func: FuncRef::Builtin { which: which @ (Builtin::ThreadSpawn | Builtin::JobSubmit { .. }), .. }, args, .. } = &block.terminator else { continue };
+            let runner = if matches!(which, Builtin::JobSubmit { .. }) { "job" } else { "thread" };
+            let mut runs: Vec<usize> = Vec::new();
+            for operand in args {
+                match operand {
+                    Operand::Const(Const::Fn(symbol)) => runs.extend(index.get(symbol.as_str()).copied()),
+                    Operand::Copy(place) | Operand::Move(place) => {
+                        let ty = place_type(body, types, place);
+                        runs.extend(targets.of_call(at, body, operand, ty, types));
+                    }
+                    _ => {}
+                }
+            }
+            // `[THR-20]`, `[RC-4]` — what the thread is given ends there: the drops its value may run (a
+            // lambda's captured state, a count of a `thread_shared` object, which may be the last).
+            for operand in args {
+                if let Operand::Copy(place) | Operand::Move(place) = operand {
+                    runs.extend(drop_runs.of(place_type(body, types, place), targets).bodies.iter().map(|&(drop, _)| drop));
+                }
+            }
+            runs.sort_unstable();
+            runs.dedup();
+            // The first function that does it, and each module variable it reaches: changed, or read.
+            let mut who: Option<usize> = None;
+            let mut reached: Vec<(String, bool, ember_types::Ty)> = Vec::new();
+            for &task in &runs {
+                let summary = &summaries[task];
+                let changes = summary.changes.iter().chain(&summary.reshapes).chain(&summary.ends).map(|fact| (fact, true));
+                for (fact, changed) in changes.chain(summary.reads.iter().map(|fact| (fact, false))) {
+                    let Root::Static(name, ty) = &fact.reach.root else { continue };
+                    if !types.is_module_variable(ember_span::Symbol::intern(name)) {
+                        continue;
+                    }
+                    who.get_or_insert_with(|| program_chain(fact, |at| in_std(&bodies[at])).0.last().copied().unwrap_or(task));
+                    let shown = name.rsplit('.').next().unwrap_or(name).to_string();
+                    match reached.iter_mut().find(|(seen, _, _)| *seen == shown) {
+                        Some((_, was, _)) => *was |= changed,
+                        None => reached.push((shown, changed, *ty)),
+                    }
+                }
+            }
+            let Some(who) = who else { continue };
+            reached.sort_by(|a, b| a.0.cmp(&b.0));
+            let quoted: Vec<String> = reached.iter().map(|(name, _, _)| format!("`{name}`")).collect();
+            let names = match quoted.as_slice() {
+                [one] => one.clone(),
+                [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
+                [] => continue,
+            };
+            let verb = if reached.iter().any(|(_, changed, _)| *changed) { "changes" } else { "reads" };
+            let (them, kind) = match reached.len() {
+                1 => ("it", "a module variable"),
+                2 => ("both", "module variables"),
+                _ => ("them all", "module variables"),
+            };
+            let (subject, its_body, lock) = named_with_lock(&bodies[who], types, &reached[0].0);
+            let declared = reached
+                .iter()
+                .map(|(name, _, ty)| ember_diag::guarded_static_mark(name, &lock, &types.written(*ty)))
+                .collect::<Vec<_>>()
+                .join(" and ");
+            let span = block.call_span.unwrap_or(block.terminator_span);
+            sink.emit(
+                ember_diag::Diagnostic::error(
+                    ember_diag::codes::E7012,
+                    span,
+                    format!("{subject} {verb} {names}, {kind} of the main thread, and this {runner} runs beside it; guard {them} with one lock: write `from std.sync import Lock` at the top, `static {lock}: Lock = Lock()`, then {declared}, and put {its_body} inside `with {lock}:`"),
+                )
+                .note("a `static mut` is reached only by the main thread and the tasks and jobs of the scopes it opens, unless it is `guarded by` a lock [THR-20], [STA-1]"),
+            );
+        }
+    }
+}
+
+/// `[DIA-27]` — the part of a fact's chain a message names: the program's own functions, up to its first call
+/// into the standard library (code the program did not write), and the line that does it, that call's line
+/// in the program or the fact's own.
+pub(crate) fn program_chain(fact: &Fact, in_std: impl Fn(usize) -> bool) -> (Vec<usize>, Span) {
+    let mut chain = Vec::new();
+    for &(callee, call) in &fact.chain {
+        if in_std(callee) {
+            return (chain, call);
+        }
+        chain.push(callee);
+    }
+    (chain, fact.at)
+}
+
+/// Whether `body` is the standard library's.
+pub(crate) fn in_std(body: &Body) -> bool {
+    ember_branding::symbol_path_starts_with(&body.symbol, &[ember_branding::STD_PACKAGE])
+}
+
+/// `[THR-20]` — how `E7012` names the function that reaches a module variable, its body, and the lock it
+/// offers: a method by its type (`Ticket.drop`, `TICKET_LOCK`), a function by its name (`tick`,
+/// `TICK_LOCK`), a lambda by the module variable it reaches first (`FRAME_LOCK`).
+fn named_with_lock(body: &Body, types: &TypeTable, first: &str) -> (String, String, String) {
+    if body.is_lambda {
+        return ("the lambda this thread runs".to_string(), "the lambda's body".to_string(), format!("{}_LOCK", first.to_uppercase()));
+    }
+    let mut names = body.name.rsplit('.');
+    let name = names.next().unwrap_or(&body.name).to_string();
+    let owner = match body.class_owner {
+        Some(class) => Some(types.class_def(class).name.to_string()),
+        None if is_method(body) => names.next().map(str::to_string),
+        None => None,
+    };
+    let (shown, lock) = match owner {
+        Some(owner) => (format!("{owner}.{name}"), format!("{}_LOCK", owner.to_uppercase())),
+        None => (name.clone(), format!("{}_LOCK", name.to_uppercase())),
+    };
+    (format!("`{shown}`"), format!("`{shown}`'s body"), lock)
+}
+
+/// `[DRP-8]` — a built-in that ends elements of the list its first argument points at (a clear, a
+/// truncation, an element ended in place): the place the list is, and its type.
+fn ended_elements(body: &Body, types: &TypeTable, which: &Builtin, args: &[Operand]) -> Option<(Place, Ty)> {
+    if !matches!(which, Builtin::ArrayClear | Builtin::ArrayTruncate | Builtin::SoA { op: SoAOp::Clear | SoAOp::Truncate | SoAOp::DropAt, .. }) {
+        return None;
+    }
+    let Some(Operand::Copy(place) | Operand::Move(place)) = args.first() else { return None };
+    let ty = place_type(body, types, place);
+    match *types.kind(ty) {
+        TyKind::Ref { inner, .. } | TyKind::Ptr { inner, .. } => {
+            let mut through = place.clone();
+            through.projection.push(Projection::Deref);
+            Some((through, inner))
+        }
+        TyKind::Vec { .. } => Some((place.clone(), ty)),
+        _ => None,
+    }
+}
+
+/// `[DRP-8]` — ending the value in `place`, of type `ty`, at `span` makes the changes its `drop`s make
+/// outside its object: each fact of a `drop` it may run that is rooted at a static, or that leaves the
+/// object through something the object points at (a link, a view, a handle), as a call of that `drop`.
+/// What a `drop` does to its own object ends with the object.
+#[allow(clippy::too_many_arguments)]
+fn ended_facts(
+    body: &Body,
+    types: &TypeTable,
+    bodies: &[Body],
+    targets: &Targets,
+    pointers: &HashMap<LocalId, HashSet<Target>>,
+    summaries: &[Summary],
+    drop_runs: &DropRuns,
+    place: &Place,
+    ty: Ty,
+    span: Span,
+) -> Vec<(What, Fact)> {
+    let mut found = Vec::new();
+    for &(drop, own) in &drop_runs.of(ty, targets).bodies {
+        let summary = &summaries[drop];
+        // The `drop`'s object: through its `this` view (a struct's), or its handle (a class's).
+        let viewed = matches!(bodies[drop].locals.get(1).map(|local| types.kind(local.ty)), Some(TyKind::Ref { .. } | TyKind::Ptr { .. }));
+        for (what, facts) in [(What::Change, &summary.changes), (What::Read, &summary.reads), (What::Reshape, &summary.reshapes), (What::Add, &summary.adds), (What::Remove, &summary.removes), (What::End, &summary.ends)] {
+            for fact in facts {
+                let mut chain = vec![(drop, span)];
+                chain.extend_from_slice(&fact.chain);
+                let rest = match &fact.reach.root {
+                    Root::Static(..) => {
+                        found.push((what, Fact { reach: fact.reach.clone(), chain, at: fact.at, op: fact.op }));
+                        continue;
+                    }
+                    // Past its own object only through something the object points at.
+                    Root::Param(0) => match fact.reach.path.split_first() {
+                        Some((Step::Deref, rest)) if rest.contains(&Step::Deref) => rest,
+                        _ => continue,
+                    },
+                    Root::Param(_) => continue,
+                };
+                let mut steps = steps_of(body, types, place);
+                if own {
+                    if !viewed {
+                        steps.push(Step::Deref);
+                    }
+                    steps.extend_from_slice(rest);
+                } else {
+                    // A part's `drop`: somewhere the value points at.
+                    steps.push(Step::Deref);
+                }
+                let mut out = Vec::new();
+                reaches(body, pointers, &Spot { local: place.local, steps }, 0, &mut out);
+                found.extend(out.into_iter().map(|reach| (what, Fact { reach, chain: chain.clone(), at: fact.at, op: fact.op })));
+            }
+        }
+    }
+    found
+}
+
 /// The bodies `body`'s calls may run, as `body_facts` resolves them: direct calls, calls through a
 /// function value, `virtual` and `dyn` methods, and the functions a built-in runs itself.
-fn callees_of(at: usize, body: &Body, bodies: &[Body], types: &TypeTable, index: &HashMap<&str, usize>, targets: &Targets) -> Vec<usize> {
+fn callees_of(at: usize, body: &Body, bodies: &[Body], types: &TypeTable, index: &HashMap<&str, usize>, targets: &Targets, drop_runs: &DropRuns) -> Vec<usize> {
     let mut out = Vec::new();
     for block in &body.blocks {
+        // `[DRP-8]` — an end runs each `drop` it may reach: a call of it.
+        for stmt in &block.stmts {
+            if let StmtKind::Drop { place, .. } = &stmt.kind {
+                out.extend(drop_runs.of(place_type(body, types, place), targets).bodies.iter().map(|&(drop, _)| drop));
+            }
+        }
         let Terminator::Call { func, args, .. } = &block.terminator else { continue };
+        if let FuncRef::Builtin { which, .. } = func
+            && let Some((_, list)) = ended_elements(body, types, which, args)
+        {
+            out.extend(drop_runs.of(list, targets).bodies.iter().map(|&(drop, _)| drop));
+        }
+        out.extend(call_targets(at, body, func, args, bodies, types, index, targets));
+    }
+    out.sort_unstable();
+    out.dedup();
+    out
+}
+
+/// `[EFF-24]`, `[DRP-8]` (M6a) — what a checked body's calls and ends may run, by symbol: each call's
+/// bodies by its block (for a call through a value, a `dyn` or a virtual method, each one it may be; for a
+/// built-in, each function it is given), and each end's `drop`s by its point (a value ended, or the
+/// elements a built-in ends).
+#[derive(Default)]
+pub(crate) struct Runs {
+    /// Each call's bodies, by symbol and the type that declares them.
+    pub(crate) calls: HashMap<usize, Vec<(String, String)>>,
+    /// Each end's `drop`s, by symbol and the type whose `drop` each is.
+    pub(crate) ends: HashMap<(usize, usize), Vec<(String, String)>>,
+    /// Each module variable the body names, by its name: the one root of its places
+    /// (`borrows::module_variable_roots`).
+    pub(crate) statics: HashMap<String, LocalId>,
+}
+
+/// The [`Runs`] of `body`, body `at` of the program (a form of it, when its `dyn` calls are made direct).
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn runs_of(at: usize, body: &Body, bodies: &[Body], types: &TypeTable, index: &HashMap<&str, usize>, targets: &Targets, drop_runs: &DropRuns) -> Runs {
+    let symbols = |found: Vec<usize>| -> Vec<(String, String)> { found.into_iter().map(|at| (bodies[at].symbol.clone(), owner_of(&bodies[at], types).unwrap_or_default())).collect() };
+    let mut runs = Runs::default();
+    let roots = crate::borrows::module_variable_roots(body);
+    for block in &body.blocks {
+        if let Terminator::Call { func: FuncRef::Builtin { which: Builtin::LazyStatic { name, .. } | Builtin::ConstStatic { name, .. } | Builtin::ForeignStatic { symbol: name, .. }, .. }, dest, .. } = &block.terminator
+            && dest.projection.is_empty()
+        {
+            runs.statics.entry(name.as_str().to_string()).or_insert_with(|| roots.get(&dest.local).copied().unwrap_or(dest.local));
+        }
+    }
+    for (at_block, block) in body.blocks.iter().enumerate() {
+        for (at_stmt, stmt) in block.stmts.iter().enumerate() {
+            if let StmtKind::Drop { place, .. } = &stmt.kind {
+                let drops = symbols(drop_runs.of(place_type(body, types, place), targets).bodies.iter().map(|&(drop, _)| drop).collect());
+                if !drops.is_empty() {
+                    runs.ends.insert((at_block, at_stmt), drops);
+                }
+            }
+        }
+        let Terminator::Call { func, args, .. } = &block.terminator else { continue };
+        let called = symbols(call_targets(at, body, func, args, bodies, types, index, targets));
+        if !called.is_empty() {
+            runs.calls.insert(at_block, called);
+        }
+        if let FuncRef::Builtin { which, .. } = func
+            && let Some((_, list)) = ended_elements(body, types, which, args)
+        {
+            let drops = symbols(drop_runs.of(list, targets).bodies.iter().map(|&(drop, _)| drop).collect());
+            if !drops.is_empty() {
+                runs.ends.insert((at_block, block.stmts.len()), drops);
+            }
+        }
+    }
+    runs
+}
+
+/// The type a method belongs to, by its written name: a class's, or the type a method with `this` is
+/// declared in (`Ticket` for `Ticket.drop`).
+pub(crate) fn owner_of(body: &Body, types: &TypeTable) -> Option<String> {
+    match body.class_owner {
+        Some(class) => Some(types.class_def(class).name.to_string()),
+        None if is_method(body) => body.name.rsplit('.').nth(1).map(str::to_string),
+        None => None,
+    }
+}
+
+/// `[DRP-8]`, `[DIA-27]` — how a message names what a built-in does to the list or text it changes.
+fn builtin_op(which: &Builtin) -> Option<&'static str> {
+    Some(match which {
+        Builtin::ArrayPush | Builtin::StringPush | Builtin::StringPushChar => "pushes to",
+        Builtin::ArrayExtend => "extends",
+        Builtin::ArrayInsert | Builtin::StringInsert => "inserts into",
+        Builtin::ArrayPop { .. } => "pops from",
+        Builtin::ArrayRemove | Builtin::ArraySwapRemove | Builtin::StringRemove => "removes from",
+        Builtin::ArrayClear => "clears",
+        Builtin::ArrayTruncate | Builtin::StringTruncate => "truncates",
+        Builtin::ArraySort => "sorts",
+        Builtin::ArrayReverse => "reverses",
+        _ => return None,
+    })
+}
+
+/// The bodies one call may run, as `body_facts` resolves them.
+#[allow(clippy::too_many_arguments)]
+fn call_targets(at: usize, body: &Body, func: &FuncRef, args: &[Operand], bodies: &[Body], types: &TypeTable, index: &HashMap<&str, usize>, targets: &Targets) -> Vec<usize> {
+    let mut out = Vec::new();
+    {
         match func {
-            FuncRef::Direct { symbol, .. } => out.extend(index.get(symbol.as_str()).copied()),
+            // A call a form of its body made direct stands for the bodies it was made from.
+            FuncRef::Direct { symbol, .. } => match index.get(symbol.as_str()) {
+                Some(&callee) => out.push(callee),
+                None => out.extend(crate::dyn_kinds::formed_symbols(symbol).into_iter().flatten().filter_map(|symbol| index.get(symbol).copied())),
+            },
             FuncRef::Indirect { operand, ty, .. } => out.extend(targets.of_call(at, body, operand, *ty, types)),
             FuncRef::Virtual { owner, slot, .. } => out.extend(
                 bodies
@@ -527,14 +845,16 @@ fn body_facts(
     pointers: &HashMap<LocalId, HashSet<Target>>,
     regions: Option<&Regions>,
     summaries: &[Summary],
+    drop_runs: &DropRuns,
 ) -> Vec<(What, Fact)> {
     let mut found = Vec::new();
     // The line being read: each of its own facts is made there.
     let line = std::cell::Cell::new(Span::DUMMY);
+    let op: std::cell::Cell<Option<&'static str>> = std::cell::Cell::new(None);
     let mut own = |what: What, place: &Place, found: &mut Vec<(What, Fact)>| {
         let mut out = Vec::new();
         reaches(body, pointers, &Spot { local: place.local, steps: steps_of(body, types, place) }, 0, &mut out);
-        found.extend(out.into_iter().map(|reach| (what, Fact { reach, chain: Vec::new(), at: line.get() })));
+        found.extend(out.into_iter().map(|reach| (what, Fact { reach, chain: Vec::new(), at: line.get(), op: op.get() })));
     };
     let read = |operand: &Operand, own: &mut dyn FnMut(What, &Place, &mut Vec<(What, Fact)>), found: &mut Vec<(What, Fact)>| {
         if let Operand::Copy(place) | Operand::Move(place) = operand {
@@ -546,7 +866,7 @@ fn body_facts(
     // `[CLS-2]` — the locals holding `this` as a whole, and an operand that is one of them.
     let aliases = this_aliases(body);
     let whole = |operand: &Operand| matches!(operand, Operand::Copy(place) | Operand::Move(place) if whole_place(&aliases, place));
-    let let_out = Fact { reach: Reach { root: Root::Param(0), path: Vec::new() }, chain: Vec::new(), at: Span::DUMMY };
+    let let_out = Fact { reach: Reach { root: Root::Param(0), path: Vec::new() }, chain: Vec::new(), at: Span::DUMMY, op: None };
     let views: Vec<usize> = match regions {
         Some(regions) => (0..body.arg_count).filter(|&param| !regions.local_regions(LocalId(param as u32 + 1)).is_empty()).collect(),
         None => Vec::new(),
@@ -583,6 +903,7 @@ fn body_facts(
         for (at_stmt, stmt) in block.stmts.iter().enumerate() {
             let start = found.len();
             line.set(stmt.span);
+            op.set(None);
             match &stmt.kind {
                 StmtKind::Assign { place, rvalue } => {
                     own(What::Change, place, &mut found);
@@ -614,7 +935,11 @@ fn body_facts(
                     read(lhs, &mut own, &mut found);
                     read(rhs, &mut own, &mut found);
                 }
-                StmtKind::Drop { place, .. } => own(What::End, place, &mut found),
+                StmtKind::Drop { place, .. } => {
+                    own(What::End, place, &mut found);
+                    let ty = place_type(body, types, place);
+                    found.extend(ended_facts(body, types, bodies, targets, pointers, summaries, drop_runs, place, ty, stmt.span));
+                }
                 _ => {}
             }
             // `[CLS-2]` — `this` stored (into a field, an element, a struct or a closure's state) or
@@ -637,6 +962,10 @@ fn body_facts(
         let start = found.len();
         let span = block.terminator_span;
         line.set(block.call_span.unwrap_or(span));
+        op.set(match func {
+            FuncRef::Builtin { which, .. } => builtin_op(which),
+            _ => None,
+        });
         let callees: Vec<usize> = match func {
             FuncRef::Direct { symbol, .. } => match index.get(symbol.as_str()) {
                 Some(&callee) => vec![callee],
@@ -677,6 +1006,10 @@ fn body_facts(
                             own(if adding_builtin(which) { What::Add } else { What::Remove }, &through, &mut found);
                         }
                     }
+                }
+                // `[DRP-8]` — a built-in that ends elements runs their `drop`s.
+                if let Some((through, list)) = ended_elements(body, types, which, args) {
+                    found.extend(ended_facts(body, types, bodies, targets, pointers, summaries, drop_runs, &through, list, span));
                 }
                 for operand in args {
                     if let Operand::Copy(place) | Operand::Move(place) = operand {
@@ -728,7 +1061,7 @@ fn body_facts(
                 if let Some(fact) = summaries[callee].lets_this_out.first() {
                     let mut chain = vec![(callee, span)];
                     chain.extend_from_slice(&fact.chain);
-                    found.push((What::LetsThisOut, Fact { reach: let_out.reach.clone(), chain, at: fact.at }));
+                    found.push((What::LetsThisOut, Fact { reach: let_out.reach.clone(), chain, at: fact.at, op: None }));
                 }
             }
         }
@@ -791,14 +1124,14 @@ fn mapped(body: &Body, types: &TypeTable, pointers: &HashMap<LocalId, HashSet<Ta
     };
     let param = match &fact.reach.root {
         Root::Param(param) => *param,
-        Root::Static(..) => return vec![Fact { reach: fact.reach.clone(), chain: chain(), at: fact.at }],
+        Root::Static(..) => return vec![Fact { reach: fact.reach.clone(), chain: chain(), at: fact.at, op: fact.op }],
     };
     let Some(Operand::Copy(place) | Operand::Move(place)) = args.get(param) else { return Vec::new() };
     let mut steps = steps_of(body, types, place);
     steps.extend_from_slice(&fact.reach.path);
     let mut out = Vec::new();
     reaches(body, pointers, &Spot { local: place.local, steps }, 0, &mut out);
-    out.into_iter().map(|reach| Fact { reach, chain: chain(), at: fact.at }).collect()
+    out.into_iter().map(|reach| Fact { reach, chain: chain(), at: fact.at, op: fact.op }).collect()
 }
 
 /// A fact of a function a built-in runs (`task`), from the call: its captured state is the call's
@@ -848,7 +1181,7 @@ fn task_mapped(body: &Body, types: &TypeTable, pointers: &HashMap<LocalId, HashS
     }
     let mut chain = vec![(task, span)];
     chain.extend_from_slice(&fact.chain);
-    out.into_iter().map(|reach| Fact { reach, chain: chain.clone(), at: fact.at }).collect()
+    out.into_iter().map(|reach| Fact { reach, chain: chain.clone(), at: fact.at, op: fact.op }).collect()
 }
 
 /// The operands a closure's environment held in `place` was built from, field by field: the struct

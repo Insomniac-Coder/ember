@@ -283,11 +283,28 @@ fn run_checks(
     let names: HashMap<String, String> =
         bodies.iter().map(|body| (body.symbol.clone(), body.name.clone())).collect();
     // `[EFF-24]` (M6a step 1) — each function's summary, worked out once for the build.
-    let flow: std::sync::Arc<HashMap<String, crate::summaries::Summary>> = std::sync::Arc::new(
-        bodies.iter().zip(crate::summaries::summarize_flow(bodies, types)).map(|(body, summary)| (body.symbol.clone(), summary)).collect(),
+    let targets = crate::targets::Targets::new(bodies, types);
+    let flowed = crate::summaries::summarize_flow_with(bodies, types, &targets);
+    let symbols: HashMap<&str, usize> = bodies.iter().enumerate().map(|(at, body)| (body.symbol.as_str(), at)).collect();
+    let drop_runs = crate::drop_runs::DropRuns::new(bodies, types, &symbols);
+    // `[THR-20]` — a function another thread may run that reaches a `static mut`: in the program's own
+    // check only (not the borrow report's, nor the run-time kind checks' second look).
+    if !only_runtime && reports.is_none() {
+        crate::summaries::check_module_variables_on_threads(bodies, types, &flowed, &targets, sink);
+    }
+    let flow: std::sync::Arc<HashMap<String, crate::summaries::Summary>> =
+        std::sync::Arc::new(bodies.iter().zip(flowed).map(|(body, summary)| (body.symbol.clone(), summary)).collect());
+    let std_bodies: std::sync::Arc<Vec<bool>> = std::sync::Arc::new(bodies.iter().map(crate::summaries::in_std).collect());
+    // A method by its type (`Enemy.drop`), a function by its name.
+    let body_names: std::sync::Arc<Vec<String>> = std::sync::Arc::new(
+        bodies
+            .iter()
+            .map(|body| {
+                let short = body.name.rsplit('.').next().unwrap_or(&body.name);
+                crate::summaries::owner_of(body, types).map_or_else(|| short.to_string(), |owner| format!("{owner}.{short}"))
+            })
+            .collect(),
     );
-    let body_names: std::sync::Arc<Vec<String>> =
-        std::sync::Arc::new(bodies.iter().map(|body| body.name.rsplit('.').next().unwrap_or(&body.name).to_string()).collect());
     // `[BRW-5]` — each function's written name and its parameters' names.
     let callees: std::sync::Arc<HashMap<String, (String, Vec<String>)>> = std::sync::Arc::new(
         bodies
@@ -356,7 +373,9 @@ fn run_checks(
             let _ = form.callees.set(callees.clone());
             let _ = form.summaries.set(flow.clone());
             let _ = form.body_names.set(body_names.clone());
+            let _ = form.std_bodies.set(std_bodies.clone());
             let checked = form.body.as_ref().unwrap_or(body);
+            let _ = form.runs.set(crate::summaries::runs_of(index, checked, bodies, types, &symbols, &targets, &drop_runs));
             let capture_paths = capture_borrow_paths(checked, &capture_contracts);
             let mut own = Sink::new();
             // A kept body's diagnostics all go through `own`, its errors only on.
@@ -3922,6 +3941,13 @@ fn check_body(
                 sink,
                 &mut reported,
             );
+            // `[DRP-8]` (M6a step 4) — an end runs the `drop`s it may reach: what they do to module
+            // variables meets this body's loans, at the end.
+            if let Some(drops) = form.runs.get().and_then(|runs| runs.ends.get(&(block_index, index))) {
+                for (place, access, cause) in summary_accesses(body, types, form, drops, End::Statement(stmt)) {
+                    check_point_with(body, types, &in_scope(&loans, point), &regions, &reads, point, &[(place, access)], stmt.span, form, sink, &mut reported, Some(&cause));
+                }
+            }
         }
 
         let point = Point {
@@ -3931,7 +3957,27 @@ fn check_body(
         let mut accesses = Vec::new();
         match &block.terminator {
             Terminator::SwitchInt { discr, .. } => operand_read(discr, &mut accesses),
-            Terminator::Call { args, dest, .. } => {
+            Terminator::Call { func, args, dest, .. } => {
+                // `[EFF-24]`, `[EFF-1]`, `[BRW-18]` (M6a step 3) — what the call's callees do to module
+                // variables, by their summaries, meets this body's loans at the call; `[DRP-8]` — so do
+                // the `drop`s of the elements a built-in ends.
+                let span = block.call_span.unwrap_or(block.terminator_span);
+                let runs = form.runs.get();
+                let caused: Vec<(Place, Access, Cause)> = runs
+                    .and_then(|runs| runs.calls.get(&block_index))
+                    .map(|called| summary_accesses(body, types, form, called, End::Call))
+                    .into_iter()
+                    .flatten()
+                    .chain(
+                        runs.and_then(|runs| runs.ends.get(&(block_index, block.stmts.len())))
+                            .map(|drops| summary_accesses(body, types, form, drops, End::Elements(func, args)))
+                            .into_iter()
+                            .flatten(),
+                    )
+                    .collect();
+                for (place, access, cause) in caused {
+                    check_point_with(body, types, &in_scope(&loans, point), &regions, &reads, point, &[(place, access)], span, form, sink, &mut reported, Some(&cause));
+                }
                 check_call_activation(
                     body,
                     types,
@@ -4867,6 +4913,25 @@ fn check_point(
     sink: &mut Sink,
     reported: &mut HashSet<(usize, usize)>,
 ) {
+    check_point_with(body, types, scope, regions, reads, point, accesses, span, form, sink, reported, None);
+}
+
+/// [`check_point`], for accesses a call or an end makes through the functions it runs (`cause`).
+#[allow(clippy::too_many_arguments)]
+fn check_point_with(
+    body: &Body,
+    types: &TypeTable,
+    scope: &[&Loan],
+    regions: &Regions,
+    reads: &HashMap<LocalId, Vec<Span>>,
+    point: Point,
+    accesses: &[(Place, Access)],
+    span: Span,
+    form: &crate::dyn_kinds::Form,
+    sink: &mut Sink,
+    reported: &mut HashSet<(usize, usize)>,
+    cause: Option<&Cause>,
+) {
     if scope.is_empty() {
         return;
     }
@@ -5104,7 +5169,9 @@ fn check_point(
                 );
                 continue;
             }
-            let dropped_temporary = body.local(loan_place.local).name.is_none()
+            // An access the functions an end runs make (`cause`) is not that end itself.
+            let dropped_temporary = cause.is_none()
+                && body.local(loan_place.local).name.is_none()
                 && matches!(
                     body.blocks[point.block].stmts.get(point.index).map(|stmt| &stmt.kind),
                     Some(StmtKind::Drop { .. } | StmtKind::StorageDead(_))
@@ -5359,7 +5426,7 @@ fn check_point(
                 if walks.iter().any(|other| other.span.start > loan.span.start) {
                     continue;
                 }
-                let (message, help) = walk_change_message(body, types, form, loan, loan_place, place, *access, point, span, &name, walks.len() > 1);
+                let (message, help) = walk_change_message(body, types, form, loan, loan_place, place, *access, point, span, &name, walks.len() > 1, cause);
                 walk_help = Some(help);
                 (codes::E3020, message)
             } else {
@@ -6055,6 +6122,7 @@ fn walk_change_message(
     span: Span,
     name: &str,
     nested: bool,
+    cause: Option<&Cause>,
 ) -> (String, String) {
     let mut walked = place_ty(body, types, loan_place);
     while let TyKind::Ref { inner, .. } = *types.kind(walked) {
@@ -6112,7 +6180,47 @@ fn walk_change_message(
     } else {
         (WalkChange::Other, [String::new(), String::new()], "changes")
     };
+    // `[DIA-27]`, `[DRP-8]` — a call's change is moved as a call, a clear's as a clear.
+    let change = match cause {
+        Some(Cause::Call { .. }) if change == WalkChange::Other => WalkChange::Called,
+        Some(Cause::End { cleared: true, .. }) if change == WalkChange::Other => WalkChange::Cleared,
+        _ => change,
+    };
     let mark = |part| ember_diag::walk_fix_mark(part, change, nested, loan.span, span, &collection, [&kinds[0], &kinds[1]]);
+    // `[EFF-1]`, `[DIA-27]` (M6a) — a change the functions a call runs make: what the summary says it does,
+    // and the chain that does it ("`tick()` (line 13) adds to `LOG` (through `note`, line 4) while this
+    // loop walks `LOG` (line 11)"); `[DRP-8]` — one the `drop`s an end runs make ("`enemies.clear()`
+    // (line 16) ends every `Enemy` in `enemies`, and an `Enemy`'s `drop` pushes to `LOG` (its line 22),
+    // which this loop walks (line 14)").
+    match cause {
+        Some(Cause::Call { verb, through }) => {
+            return (
+                format!(
+                    "`{}` (line {}) {verb} `{collection}` (through {through}) while this loop walks `{collection}` (line {}); {}",
+                    ember_diag::line_code_mark(span),
+                    ember_diag::line_mark(span),
+                    mark(WalkPart::LoopLine),
+                    mark(WalkPart::Fix)
+                ),
+                mark(WalkPart::Help),
+            );
+        }
+        Some(Cause::End { ends, owner, verb, line, .. }) => {
+            return (
+                format!(
+                    "`{}` (line {}) {ends}, and {owner} `drop` {verb} `{collection}` (its line {}), {} (line {}); {}",
+                    ember_diag::line_code_mark(span),
+                    ember_diag::line_mark(span),
+                    ember_diag::line_mark(*line),
+                    if map { "whose keys this loop walks" } else { "which this loop walks" },
+                    mark(WalkPart::LoopLine),
+                    mark(WalkPart::Fix)
+                ),
+                mark(WalkPart::Help),
+            );
+        }
+        None => {}
+    }
     let walks = if map { "whose keys this loop walks" } else { "which this loop walks" };
     // `[EFF-1]`, `[BRW-18]` (M6a) — a change a written function makes: what its summary says it does
     // to the argument, and through which function and line ("`tick()` (line 13) adds to `LOG`
@@ -6237,6 +6345,126 @@ fn soa_add_given_borrow_at(body: &Body, point: Point) -> Option<usize> {
     })
 }
 
+/// `[EFF-1]`, `[BRW-18]`, `[DIA-27]`, `[DRP-8]` (M6a) — why a call or an end makes an access the program does
+/// not write itself.
+pub(crate) enum Cause {
+    /// A call: what its functions do to the place ("adds to", "changes", "reads") and the chain that does
+    /// it ("`tick` and `note`, line 12").
+    Call { verb: &'static str, through: String },
+    /// An end: what it ends ("ends every `Enemy` in `enemies`"), whose `drop` ("an `Enemy`'s"), what that
+    /// does ("pushes to"), its line, and whether a list was cleared.
+    End { ends: String, owner: String, verb: &'static str, line: Span, cleared: bool },
+}
+
+/// What makes the accesses [`summary_accesses`] finds.
+#[derive(Clone, Copy)]
+enum End<'a> {
+    /// A call, by its callees.
+    Call,
+    /// A statement that ends a value (`StmtKind::Drop`).
+    Statement(&'a ember_mir::Stmt),
+    /// A built-in that ends elements of the list its first argument points at.
+    Elements(&'a FuncRef, &'a [Operand]),
+}
+
+/// `[EFF-24]`, `[EFF-1]` (M6a steps 3 and 4) — what the functions `symbols` (a call's callees, an end's
+/// `drop`s) do to module variables, by their summaries, as accesses of this body's places: each static's
+/// one root here, and the path the fact names in it (up to an element: the list as a whole). A static this
+/// body never names holds no loan here. A callee's facts on its parameters meet this body's loans where the
+/// arguments are borrowed (`reshapes_at`, `walk_change_through`).
+fn summary_accesses(body: &Body, types: &TypeTable, form: &crate::dyn_kinds::Form, symbols: &[(String, String)], end: End<'_>) -> Vec<(Place, Access, Cause)> {
+    let (Some(summaries), Some(names), Some(runs)) = (form.summaries.get(), form.body_names.get(), form.runs.get()) else { return Vec::new() };
+    // Each static this body names, by its name: the root of its places.
+    let named = &runs.statics;
+    if named.is_empty() {
+        return Vec::new();
+    }
+    let quoted = |list: &[String]| -> String {
+        let list: Vec<String> = list.iter().map(|name| format!("`{name}`")).collect();
+        match list.as_slice() {
+            [] => String::new(),
+            [one] => one.clone(),
+            [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
+        }
+    };
+    let mut out = Vec::new();
+    for (symbol, owner) in symbols {
+        let Some(summary) = summaries.get(symbol) else { continue };
+        let own = form.callees.get().and_then(|callees| callees.get(symbol)).map(|(name, _)| name.clone());
+        let writes = summary.changes.iter().chain(&summary.reshapes).chain(&summary.ends).chain(&summary.adds).chain(&summary.removes);
+        for (fact, access) in writes.map(|fact| (fact, Access::Write)).chain(summary.reads.iter().map(|fact| (fact, Access::Read))) {
+            let crate::summaries::Root::Static(name, _) = &fact.reach.root else { continue };
+            let Some(&root) = named.get(name.as_str()) else { continue };
+            let mut projection = vec![Projection::Deref];
+            for step in &fact.reach.path {
+                projection.push(match step {
+                    crate::summaries::Step::Field(field) => Projection::Field(*field),
+                    crate::summaries::Step::Variant(variant) => Projection::Downcast(*variant),
+                    crate::summaries::Step::Column(column) => Projection::Column(*column),
+                    crate::summaries::Step::Deref => Projection::Deref,
+                    crate::summaries::Step::Elements => break,
+                });
+            }
+            let verb = if matches!(access, Access::Read) {
+                "reads"
+            } else if summary.only_adds(&fact.reach) {
+                "adds to"
+            } else {
+                "changes"
+            };
+            let cause = match end {
+                End::Call => {
+                    let std_bodies = form.std_bodies.get();
+                    let (chain, line) = crate::summaries::program_chain(fact, |at| std_bodies.is_some_and(|std| std.get(at).copied().unwrap_or(false)));
+                    let chain: Vec<String> = chain.into_iter().filter_map(|callee| names.get(callee).cloned()).collect();
+                    let who = if chain.is_empty() { own.clone().into_iter().collect() } else { chain };
+                    Cause::Call { verb, through: format!("{}, line {}", quoted(&who), ember_diag::line_mark(line)) }
+                }
+                End::Statement(_) | End::Elements(..) => {
+                    let owner_type = if owner.is_empty() { "value".to_string() } else { owner.clone() };
+                    let article = if owner_type.starts_with(['A', 'E', 'I', 'O', 'U', 'a', 'e', 'i', 'o', 'u']) { "an" } else { "a" };
+                    let (ends, cleared) = match end {
+                        End::Elements(FuncRef::Builtin { which, .. }, args) => {
+                            let list = match args.first() {
+                                Some(Operand::Copy(place) | Operand::Move(place)) => {
+                                    // The list the built-in is given a `ref mut` of, as the program names it.
+                                    let lent = place.projection.is_empty().then(|| {
+                                        body.blocks.iter().flat_map(|block| &block.stmts).find_map(|stmt| match &stmt.kind {
+                                            StmtKind::Assign { place: taken, rvalue: Rvalue::Ref { place: lent, .. } } if taken == place => Some(lent.clone()),
+                                            _ => None,
+                                        })
+                                    });
+                                    match lent.flatten() {
+                                        Some(lent) => quoted_place(body, types, &lent),
+                                        None => {
+                                            let mut list = place.clone();
+                                            if matches!(types.kind(place_ty(body, types, place)), TyKind::Ref { .. } | TyKind::Ptr { .. }) {
+                                                list.projection.push(Projection::Deref);
+                                            }
+                                            quoted_place(body, types, &list)
+                                        }
+                                    }
+                                }
+                                _ => "the list".to_string(),
+                            };
+                            let all = matches!(which, Builtin::ArrayClear | Builtin::SoA { op: SoAOp::Clear, .. });
+                            (if all { format!("ends every `{owner_type}` in {list}") } else { format!("may end `{owner_type}`s in {list}") }, all)
+                        }
+                        End::Statement(ember_mir::Stmt { kind: StmtKind::Drop { place, scope_end, .. }, .. }) => {
+                            let held = quoted_place(body, types, place);
+                            (if *scope_end { format!("ends {held}") } else { format!("replaces {held}, which ends its `{owner_type}`") }, false)
+                        }
+                        _ => (format!("ends `{owner_type}`"), false),
+                    };
+                    Cause::End { ends, owner: format!("{article} `{owner_type}`'s"), verb: fact.op.unwrap_or(verb), line: fact.at, cleared }
+                }
+            };
+            out.push((Place { local: root, projection }, access, cause));
+        }
+    }
+    out
+}
+
 /// `[EFF-1]`, `[BRW-18]` (M6a) — what the written function `func`, given the `ref mut` taken at `point`,
 /// does to what that argument points at, by its summary ("adds to", "changes"), and the function and
 /// line that do it ("`note`, line 4").
@@ -6258,12 +6486,20 @@ fn walk_change_through(body: &Body, form: &crate::dyn_kinds::Form, point: Point,
     } else {
         ("changes", summary.reshapes.iter().chain(&summary.changes).find(on_it)?)
     };
-    // The function that does it: the chain's last callee, or the called function itself.
-    let who = match fact.chain.last() {
-        Some(&(callee, _)) => names.get(callee)?.clone(),
-        None => form.callees.get()?.get(symbol)?.0.clone(),
+    // The function that does it: the chain's last callee of the program's own, or the called function
+    // itself; the line, that function's.
+    let std_bodies = form.std_bodies.get();
+    let (chain, line) = crate::summaries::program_chain(fact, |at| std_bodies.is_some_and(|std| std.get(at).copied().unwrap_or(false)));
+    let mut who: Vec<String> = chain.iter().map(|&callee| names.get(callee).map(|name| format!("`{name}`"))).collect::<Option<_>>()?;
+    if who.is_empty() {
+        who.push(format!("`{}`", form.callees.get()?.get(symbol)?.0));
+    }
+    let who = match who.as_slice() {
+        [one] => one.clone(),
+        [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
+        [] => return None,
     };
-    Some((verb, format!("`{who}`, line {}", ember_diag::line_mark(fact.at))))
+    Some((verb, format!("{who}, line {}", ember_diag::line_mark(line))))
 }
 
 /// `[EFF-24]` — whether `func`, given the `ref mut` taken at `point`, is a written function whose summary

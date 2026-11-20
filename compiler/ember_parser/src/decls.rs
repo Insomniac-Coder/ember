@@ -1166,9 +1166,18 @@ impl Parser<'_> {
                 self.bump();
             }
             let kept = self.src.get(fn_start as usize..at.start as usize).unwrap_or("fn f()").trim_end().to_string();
+            let clause_span = at.to(self.prev_span());
+            let clause = self.src.get(clause_span.start as usize..clause_span.end as usize).unwrap_or("").trim().to_string();
+            let verb = clause.split_whitespace().next().unwrap_or("changes").to_string();
+            // `[EFF-24]`'s text: "`changes FRAME` is not Ember: the compiler works out what `tick` changes from
+            // its body; write `fn tick():`".
             self.report(
-                Diagnostic::error(codes::E0100, at.to(self.prev_span()), "nothing follows a function's brackets that says what it changes or reads: the compiler works out what every function changes and reads from its code")
-                    .help(format!("write `{kept}:`")),
+                Diagnostic::error(
+                    codes::E0100,
+                    clause_span,
+                    format!("`{clause}` is not Ember: the compiler works out what `{}` {verb} from its body; write `{kept}:`", name.name),
+                )
+                .note("what a function changes, reads and ends is worked out from its code [EFF-24], [DIA-27]"),
             );
         }
         let where_clause = self.parse_where_clause();

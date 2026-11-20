@@ -523,6 +523,10 @@ pub enum WalkChange {
     Inserted,
     /// An item added to the walked set through its own name (`seen.insert(owns x)`).
     SetAdded,
+    /// A call whose function changes the walked collection (`tick()` adding to `LOG`, `[DIA-27]`).
+    Called,
+    /// Another list's elements ended, whose `drop`s change the walked collection (`[DRP-8]`).
+    Cleared,
     /// Any other change.
     Other,
 }
@@ -554,6 +558,8 @@ pub fn walk_fix_mark(part: WalkPart, change: WalkChange, nested: bool, iterable:
         WalkChange::Added => 'a',
         WalkChange::Inserted => 'i',
         WalkChange::SetAdded => 's',
+        WalkChange::Called => 'c',
+        WalkChange::Cleared => 'r',
         WalkChange::Other => 'o',
     };
     let nested = if nested { 'n' } else { '-' };
@@ -882,6 +888,16 @@ fn walk_fix(fix: &str, map: &SourceMap) -> Option<String> {
                 _ => fallback(),
             }
         }
+        // `[DIA-27]` — a call moved below the loop, named by its own code.
+        'c' if movable => (
+            format!("call `{changed}` after the loop: move line {changed_line} below the loop"),
+            format!("the call moved below the loop: line {changed_line}"),
+        ),
+        // `[DRP-8]` — a clear moved below the loop.
+        'r' if movable => (
+            format!("clear after the loop: move line {changed_line}, `{changed}`, below the loop"),
+            format!("the clear moved below the loop: line {changed_line}"),
+        ),
         _ => fallback(),
     };
     Some(if part == 'h' { help } else { fix })
@@ -912,6 +928,37 @@ fn pair(pair: &str, map: &SourceMap) -> Option<String> {
     } else {
         format!("and `{list}[{x}]` and `{list}[{y}]` are the same {noun} when `{x} == {y}`; write `if {x} != {y}:` above this line and indent it under it")
     })
+}
+
+/// `[THR-20]` — a `static mut`'s declaration given a lock, as a message writes it where the source is not at
+/// hand: "`static mut FRAME: int guarded by TICK_LOCK = 0` instead of line 17", the program's own line with
+/// `guarded by` written into it, found by the static's name in the program's files; `ty` is the type to
+/// write when the line is not found.
+pub fn guarded_static_mark(name: &str, lock: &str, ty: &str) -> String {
+    let field = '\u{3}';
+    format!("\u{1}!{name}{field}{lock}{field}{ty}\u{2}")
+}
+
+/// A [`guarded_static_mark`]'s text: `mark` is the mark's body after `!`.
+fn guarded_static(mark: &str, map: &SourceMap) -> String {
+    let mut fields = mark.split('\u{3}');
+    let (name, lock, ty) = (fields.next().unwrap_or(""), fields.next().unwrap_or(""), fields.next().unwrap_or(""));
+    let declared = format!("static mut {name}");
+    for file in map.files() {
+        for (at, line) in file.text.lines().enumerate() {
+            let code = code_of(line).trim();
+            let Some(rest) = code.strip_prefix(&declared) else { continue };
+            if !rest.starts_with([':', ' ', '=']) {
+                continue;
+            }
+            let written = match rest.split_once('=') {
+                Some((before, value)) => format!("{declared}{} guarded by {lock} = {}", before.trim_end(), value.trim()),
+                None => format!("{declared}{} guarded by {lock}", rest.trim_end()),
+            };
+            return format!("`{written}` instead of line {}", at + 1);
+        }
+    }
+    format!("`static mut {name}: {ty} guarded by {lock}`")
 }
 
 /// A line's code: up to a `#` that is outside every string and character literal.
@@ -972,6 +1019,11 @@ fn expand_marks(text: &str, map: &SourceMap) -> String {
         out.push_str(&rest[..open]);
         let after = &rest[open + 1..];
         let Some(close) = after.find('\u{2}') else { break };
+        if let Some(body) = after[..close].strip_prefix('!') {
+            out.push_str(&guarded_static(body, map));
+            rest = &after[close + 1..];
+            continue;
+        }
         if let Some(body) = after[..close].strip_prefix('%') {
             out.push_str(&pair(body, map).unwrap_or_else(|| "and the two may be the same place".to_string()));
             rest = &after[close + 1..];

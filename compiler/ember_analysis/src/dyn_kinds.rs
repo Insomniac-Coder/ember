@@ -127,6 +127,10 @@ pub(crate) struct Form {
     pub summaries: std::sync::OnceLock<std::sync::Arc<std::collections::HashMap<String, crate::summaries::Summary>>>,
     /// Each body's written name by index: the functions a summary's chain names.
     pub body_names: std::sync::OnceLock<std::sync::Arc<Vec<String>>>,
+    /// `[EFF-24]`, `[DRP-8]` (M6a) — what the checked body's calls and ends may run (`summaries::runs_of`).
+    pub runs: std::sync::OnceLock<crate::summaries::Runs>,
+    /// `[DIA-27]` — by index, whether a body is the standard library's: where a chain a message names stops.
+    pub std_bodies: std::sync::OnceLock<std::sync::Arc<Vec<bool>>>,
 }
 
 /// What [`expand`] finds.
@@ -293,7 +297,7 @@ pub(crate) fn expand(
                     }
                 }
                 under.push(read.join(";"));
-                Form { body: symbol.and_then(|symbol| copies.remove(&symbol)), sites, guards: Default::default(), index: Default::default(), repoints: Default::default(), statics: Default::default(), callees: Default::default(), summaries: Default::default(), body_names: Default::default() }
+                Form { body: symbol.and_then(|symbol| copies.remove(&symbol)), sites, guards: Default::default(), index: Default::default(), repoints: Default::default(), statics: Default::default(), callees: Default::default(), summaries: Default::default(), body_names: Default::default(), runs: Default::default(), std_bodies: Default::default() }
             })
             .collect();
         under.sort();
@@ -405,6 +409,15 @@ fn joined_symbol(targets: &[Target]) -> String {
 
 fn targets_symbols(targets: &[Target]) -> Vec<&str> {
     targets.iter().map(|target| target.symbol.as_str()).collect::<BTreeSet<_>>().into_iter().collect()
+}
+
+/// The bodies' symbols a call made direct in a form stands for: each method of a joined call
+/// ([`joined_symbol`]), or the body a form of it is ([`form_symbol`]); `None` for any other symbol.
+pub(crate) fn formed_symbols(symbol: &str) -> Option<Vec<&str>> {
+    if let Some(joined) = symbol.strip_prefix("\u{1}dyn ") {
+        return Some(joined.split(" | ").collect());
+    }
+    symbol.split_once("\u{1}kinds ").map(|(body, _)| vec![body])
 }
 
 /// The symbol of the form of the body `symbol` that `key` describes.
