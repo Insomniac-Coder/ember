@@ -290,7 +290,7 @@ pub(crate) fn summarize_flow_with(bodies: &[Body], types: &TypeTable, targets: &
 /// it, by its summary's chain, and the module variables it reaches.
 // ponytail: no `guarded by` yet (M9): every module variable is unguarded. Callbacks C may run on another
 // thread and `@unsafe(export(..., threads=...))` functions are the C interface's (M12).
-pub(crate) fn check_module_variables_on_threads(bodies: &[Body], types: &TypeTable, summaries: &[Summary], targets: &Targets, sink: &mut ember_diag::Sink) {
+pub(crate) fn check_module_variables_on_threads(bodies: &[Body], types: &TypeTable, summaries: &[std::sync::Arc<Summary>], targets: &Targets, sink: &mut ember_diag::Sink) {
     let index: HashMap<&str, usize> = bodies.iter().enumerate().map(|(at, body)| (body.symbol.as_str(), at)).collect();
     let drop_runs = DropRuns::new(bodies, types, &index);
     for (at, body) in bodies.iter().enumerate() {
@@ -389,7 +389,7 @@ fn module_variable_reached(summary: &Summary, types: &TypeTable) -> Option<(Stri
 /// `[THR-11]`, `[THR-20]`, `[EFF-1]` (review 4) — what is not followed yet is refused, not trusted: a generator that
 /// reaches a module variable (the summaries do not yet count a generator's `next` as running its body), and a
 /// scoped task or job that does (`[THR-11]`'s check of a module variable a scope's tasks reach is M9's).
-pub(crate) fn check_module_variables_not_followed(bodies: &[Body], types: &TypeTable, summaries: &[Summary], targets: &Targets, sink: &mut ember_diag::Sink) {
+pub(crate) fn check_module_variables_not_followed(bodies: &[Body], types: &TypeTable, summaries: &[std::sync::Arc<Summary>], targets: &Targets, sink: &mut ember_diag::Sink) {
     let index: HashMap<&str, usize> = bodies.iter().enumerate().map(|(at, body)| (body.symbol.as_str(), at)).collect();
     for (at, body) in bodies.iter().enumerate() {
         if in_std(body) {

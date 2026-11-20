@@ -124,7 +124,9 @@ pub(crate) struct Form {
     /// two arguments of one call.
     pub callees: std::sync::OnceLock<std::sync::Arc<std::collections::HashMap<String, (String, Vec<String>)>>>,
     /// `[EFF-24]` (M6a) — each function's summary by symbol: what a call of it changes, reshapes and ends.
-    pub summaries: std::sync::OnceLock<std::sync::Arc<std::collections::HashMap<String, crate::summaries::Summary>>>,
+    pub summaries: std::sync::OnceLock<std::sync::Arc<std::collections::HashMap<String, std::sync::Arc<crate::summaries::Summary>>>>,
+    /// `[BUD-3]` — a check of this form would have read a summary it was not given: it is checked again with them.
+    pub wanted: std::sync::atomic::AtomicBool,
     /// Each body's written name by index: the functions a summary's chain names.
     pub body_names: std::sync::OnceLock<std::sync::Arc<Vec<String>>>,
     /// `[EFF-24]`, `[DRP-8]` (M6a) — what the checked body's calls and ends may run (`summaries::runs_of`).
@@ -297,7 +299,7 @@ pub(crate) fn expand(
                     }
                 }
                 under.push(read.join(";"));
-                Form { body: symbol.and_then(|symbol| copies.remove(&symbol)), sites, guards: Default::default(), index: Default::default(), repoints: Default::default(), statics: Default::default(), callees: Default::default(), summaries: Default::default(), body_names: Default::default(), runs: Default::default(), std_bodies: Default::default() }
+                Form { body: symbol.and_then(|symbol| copies.remove(&symbol)), sites, guards: Default::default(), index: Default::default(), repoints: Default::default(), statics: Default::default(), callees: Default::default(), summaries: Default::default(), body_names: Default::default(), runs: Default::default(), std_bodies: Default::default(), wanted: Default::default() }
             })
             .collect();
         under.sort();

@@ -19,7 +19,7 @@ use ember_mir::{
 use ember_types::{TyKind, TypeTable};
 
 /// Each function's summary by symbol (`[EFF-24]`): what a written function only adds to.
-pub type Summaries = HashMap<String, crate::summaries::Summary>;
+pub type Summaries = HashMap<String, std::sync::Arc<crate::summaries::Summary>>;
 
 /// Makes the positions of every body again after their adds, by the summaries the borrow check read
 /// (`BorrowFacts::summaries`), so the rule is the one it checked. A body made so already (a bridge's
@@ -151,6 +151,13 @@ fn predecessors(body: &Body) -> Vec<Vec<usize>> {
         }
     }
     predecessors
+}
+
+/// `[BUD-3]` — whether a position in `body` may be made again after a written function, which only that
+/// function's summary decides: a name made from an element, and a written call.
+pub(crate) fn may_need_summaries(body: &Body, types: &TypeTable) -> bool {
+    body.blocks.iter().any(|block| matches!(block.terminator, Terminator::Call { func: FuncRef::Direct { .. }, .. }))
+        && !writes(body, types, &crate::borrows::module_variable_roots(body)).is_empty()
 }
 
 /// Each add a position is made again after: the call's block, the name, and the making to make again.

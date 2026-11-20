@@ -160,7 +160,7 @@ pub struct BorrowFacts {
     pub kinds: HashMap<String, Vec<String>>,
     /// `[EFF-24]` (M6a) — each function's summary by symbol, as this build's checks read them: handed
     /// to the passes after the checks (`positions`); not kept in an incremental record yet.
-    pub summaries: Option<std::sync::Arc<HashMap<String, crate::summaries::Summary>>>,
+    pub summaries: Option<std::sync::Arc<std::collections::HashMap<String, std::sync::Arc<crate::summaries::Summary>>>>,
 }
 
 /// `[DIA-8]` — one loan as the checker holds it (`[BCK-1]`): the place it borrows, whether mutably,
@@ -283,19 +283,33 @@ fn run_checks(
     let names: HashMap<String, String> =
         bodies.iter().map(|body| (body.symbol.clone(), body.name.clone())).collect();
     // `[EFF-24]` (M6a step 1) — each function's summary, worked out once for the build.
-    let targets = crate::targets::Targets::new(bodies, types);
-    let flowed = crate::summaries::summarize_flow_with(bodies, types, &targets);
+    // `[BUD-3]` — the call targets and the summaries are worked out on first need, once for the build: most
+    // programs' checks read none (no module variable, no conflict a summary decides).
+    let targets_cell: std::sync::OnceLock<crate::targets::Targets> = std::sync::OnceLock::new();
+    let targets = || targets_cell.get_or_init(|| crate::targets::Targets::new(bodies, types));
+    #[allow(clippy::type_complexity)]
+    let flow_cell: std::sync::OnceLock<(Vec<std::sync::Arc<crate::summaries::Summary>>, std::sync::Arc<std::collections::HashMap<String, std::sync::Arc<crate::summaries::Summary>>>)> = std::sync::OnceLock::new();
+    let flow = || {
+        flow_cell.get_or_init(|| {
+            let flowed: Vec<std::sync::Arc<crate::summaries::Summary>> =
+                crate::summaries::summarize_flow_with(bodies, types, targets()).into_iter().map(std::sync::Arc::new).collect();
+            let map = std::sync::Arc::new(bodies.iter().zip(&flowed).map(|(body, summary)| (body.symbol.clone(), summary.clone())).collect());
+            (flowed, map)
+        })
+    };
     let symbols: HashMap<&str, usize> = bodies.iter().enumerate().map(|(at, body)| (body.symbol.as_str(), at)).collect();
     let drop_runs = crate::drop_runs::DropRuns::new(bodies, types, &symbols);
     // `[THR-20]` — a function another thread may run that reaches a `static mut`: in the program's own
-    // check only (not the borrow report's, nor the run-time kind checks' second look).
-    if !only_runtime && reports.is_none() {
-        crate::summaries::check_module_variables_on_threads(bodies, types, &flowed, &targets, sink);
+    // check only (not the borrow report's, nor the run-time kind checks' second look); a program with no
+    // module variable has nothing here to refuse.
+    if !only_runtime && reports.is_none() && types.has_module_variables() {
+        let (flowed, _) = flow();
+        crate::summaries::check_module_variables_on_threads(bodies, types, flowed, targets(), sink);
         crate::summaries::check_views_of_module_variables_returned(bodies, types, sink);
-        crate::summaries::check_module_variables_not_followed(bodies, types, &flowed, &targets, sink);
+        crate::summaries::check_module_variables_not_followed(bodies, types, flowed, targets(), sink);
     }
-    let flow: std::sync::Arc<HashMap<String, crate::summaries::Summary>> =
-        std::sync::Arc::new(bodies.iter().zip(flowed).map(|(body, summary)| (body.symbol.clone(), summary)).collect());
+    // The borrow report reads every form once: it is given the summaries from the start.
+    let eager = reports.is_some();
     let std_bodies: std::sync::Arc<Vec<bool>> = std::sync::Arc::new(bodies.iter().map(crate::summaries::in_std).collect());
     // A method by its type (`Enemy.drop`), a function by its name.
     let body_names: std::sync::Arc<Vec<String>> = std::sync::Arc::new(
@@ -373,28 +387,44 @@ fn run_checks(
         let start = sink.mark();
         for (at, form) in forms.iter().enumerate() {
             let _ = form.callees.set(callees.clone());
-            let _ = form.summaries.set(flow.clone());
+            if eager {
+                let _ = form.summaries.set(flow().1.clone());
+            }
             let _ = form.body_names.set(body_names.clone());
             let _ = form.std_bodies.set(std_bodies.clone());
             let checked = form.body.as_ref().unwrap_or(body);
-            let _ = form.runs.set(crate::summaries::runs_of(index, checked, bodies, types, &symbols, &targets, &drop_runs));
+            // What its calls and ends run is read only where they meet a loan of a static it names
+            // (`summary_accesses`): a body that names none needs none of it.
+            let names_a_static = checked.blocks.iter().any(|block| {
+                matches!(&block.terminator, Terminator::Call { func: FuncRef::Builtin { which: Builtin::LazyStatic { .. } | Builtin::ConstStatic { .. } | Builtin::ForeignStatic { .. }, .. }, .. })
+            });
+            if names_a_static {
+                let _ = form.runs.set(crate::summaries::runs_of(index, checked, bodies, types, &symbols, targets(), &drop_runs));
+            }
             let capture_paths = capture_borrow_paths(checked, &capture_contracts);
-            let mut own = Sink::new();
             // A kept body's diagnostics all go through `own`, its errors only on.
             let at = if body.kept { usize::MAX } else { at };
-            check_body(
-                checked,
-                types,
-                &call_contract,
-                &capture_paths,
-                &owned_closure_environments,
-                dynamic.contains(&body.symbol),
-                &names,
-                form,
-                &cell_free,
-                if at == 0 { &mut *sink } else { &mut own },
-                if at == 0 { reports.as_deref_mut() } else { None },
-            );
+            // `[BUD-3]` — checked first without the summaries; a check that would have read one marks the
+            // form wanted, and it is checked again with them (its first diagnostics and guards set aside).
+            let mut own = Sink::new();
+            own.migrating = sink.migrating;
+            let check = |own: &mut Sink, reports: Option<&mut Vec<LoanReport>>| {
+                check_body(checked, types, &call_contract, &capture_paths, &owned_closure_environments, dynamic.contains(&body.symbol), &names, form, &cell_free, own, reports)
+            };
+            check(&mut own, if at == 0 { reports.as_deref_mut() } else { None });
+            if !eager && form.wanted.load(std::sync::atomic::Ordering::Relaxed) {
+                let _ = form.summaries.set(flow().1.clone());
+                form.guards.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).clear();
+                own = Sink::new();
+                own.migrating = sink.migrating;
+                check(&mut own, None);
+            }
+            if at == 0 {
+                for diagnostic in own.take() {
+                    sink.emit(diagnostic);
+                }
+                continue;
+            }
             for diagnostic in own.take().into_iter().filter(|diagnostic| !body.kept || diagnostic.severity == ember_diag::Severity::Error) {
                 let seen = sink.diagnostics()[start..].iter().any(|seen| {
                     seen.code == diagnostic.code && seen.primary.span == diagnostic.primary.span && seen.message == diagnostic.message
@@ -440,7 +470,10 @@ fn run_checks(
             })
         })
         .collect();
-    (ranges, BorrowFacts { stores: store_summaries, kinds, summaries: Some(flow) }, guards)
+    // `[BRW-16]` — the positions pass decides as the checks did: it is given the summaries wherever a body,
+    // kept or not, may make a position again after a written function.
+    let summaries = (flow_cell.get().is_some() || bodies.iter().any(|body| crate::positions::may_need_summaries(body, types))).then(|| flow().1.clone());
+    (ranges, BorrowFacts { stores: store_summaries, kinds, summaries }, guards)
 }
 
 /// `[LT-48]` — each check of a `runtime` parameter's kind the borrow checks asked for, before the
@@ -4973,7 +5006,7 @@ fn check_point_with(
                     point.block,
                     point.index,
                     loan.borrower,
-                    form.repoints.get_or_init(|| crate::positions::repoints(body, types, form.summaries.get().map(|summaries| &**summaries))),
+                    &repoints_of(body, types, form),
                 )
                 && {
                     let at = Point { block: call, index: body.blocks[call].stmts.len() };
@@ -5263,7 +5296,7 @@ fn check_point_with(
                 // another name still holds its borrow there: that name (a view made from the position,
                 // `other = boss`) is not made again and keeps the old buffer's address.
                 let kept_by = (position && matches!(access, Access::Borrow { mutable: true }))
-                    .then(|| crate::positions::repointed_add_at(body, point.block, point.index, loan.borrower, form.repoints.get_or_init(|| crate::positions::repoints(body, types, form.summaries.get().map(|summaries| &**summaries)))))
+                    .then(|| crate::positions::repointed_add_at(body, point.block, point.index, loan.borrower, &repoints_of(body, types, form)))
                     .flatten()
                     .and_then(|call| {
                         let at = Point { block: call, index: body.blocks[call].stmts.len() };
@@ -6096,7 +6129,7 @@ fn reshapes_at(body: &Body, types: &TypeTable, form: &crate::dyn_kinds::Form, po
                 // `wipe(ref mut xs)`); a change deeper inside an element is a change, not a reshape of it.
                 Terminator::Call { func: FuncRef::Direct { symbol, .. }, args, .. } => {
                     args.iter().position(given).is_some_and(|param| {
-                        form.summaries.get().and_then(|summaries| summaries.get(symbol)).is_some_and(|summary| summary.reshapes.iter().any(|fact| fact.reach.root == crate::summaries::Root::Param(param) && fact.reach.path == [crate::summaries::Step::Deref]))
+                        summary_of(form, symbol).is_some_and(|summary| summary.reshapes.iter().any(|fact| fact.reach.root == crate::summaries::Root::Param(param) && fact.reach.path == [crate::summaries::Step::Deref]))
                     })
                 }
                 _ => false,
@@ -6354,6 +6387,34 @@ fn soa_add_given_borrow_at(body: &Body, point: Point) -> Option<usize> {
     })
 }
 
+/// `[BUD-3]` — the summaries the form was given; none yet marks it wanted, to be checked again with them.
+fn wanted_summaries(form: &crate::dyn_kinds::Form) -> Option<&std::sync::Arc<std::collections::HashMap<String, std::sync::Arc<crate::summaries::Summary>>>> {
+    let summaries = form.summaries.get();
+    if summaries.is_none() {
+        form.wanted.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+    summaries
+}
+
+/// The summary of the function `symbol`, by [`wanted_summaries`].
+fn summary_of<'a>(form: &'a crate::dyn_kinds::Form, symbol: &str) -> Option<&'a crate::summaries::Summary> {
+    wanted_summaries(form)?.get(symbol).map(|summary| &**summary)
+}
+
+/// `[BRW-16]` — the adds after which a position is made again, kept once worked out with the summaries; without
+/// them (a written function's add then keeps no position), worked out for this check only, the form wanted.
+fn repoints_of<'a>(body: &Body, types: &TypeTable, form: &'a crate::dyn_kinds::Form) -> std::borrow::Cow<'a, HashSet<(usize, LocalId)>> {
+    match form.summaries.get() {
+        Some(summaries) => std::borrow::Cow::Borrowed(form.repoints.get_or_init(|| crate::positions::repoints(body, types, Some(&**summaries)))),
+        None => {
+            if crate::positions::may_need_summaries(body, types) {
+                form.wanted.store(true, std::sync::atomic::Ordering::Relaxed);
+            }
+            std::borrow::Cow::Owned(crate::positions::repoints(body, types, None))
+        }
+    }
+}
+
 /// `[EFF-1]`, `[BRW-18]`, `[DIA-27]`, `[DRP-8]` (M6a) — why a call or an end makes an access the program does
 /// not write itself.
 pub(crate) enum Cause {
@@ -6382,7 +6443,11 @@ enum End<'a> {
 /// body never names holds no loan here. A callee's facts on its parameters meet this body's loans where the
 /// arguments are borrowed (`reshapes_at`, `walk_change_through`).
 fn summary_accesses(body: &Body, types: &TypeTable, form: &crate::dyn_kinds::Form, symbols: &[(String, String)], end: End<'_>) -> Vec<(Place, Access, Cause)> {
-    let (Some(summaries), Some(names), Some(runs)) = (form.summaries.get(), form.body_names.get(), form.runs.get()) else { return Vec::new() };
+    let Some(runs) = form.runs.get() else { return Vec::new() };
+    if symbols.is_empty() || runs.statics.is_empty() {
+        return Vec::new();
+    }
+    let (Some(summaries), Some(names)) = (wanted_summaries(form), form.body_names.get()) else { return Vec::new() };
     // Each static this body names, by its name: the root of its places.
     let named = &runs.statics;
     if named.is_empty() {
@@ -6490,7 +6555,7 @@ fn summary_accesses(body: &Body, types: &TypeTable, form: &crate::dyn_kinds::For
 fn walk_change_through(body: &Body, form: &crate::dyn_kinds::Form, point: Point, func: &FuncRef) -> Option<(&'static str, String)> {
     let FuncRef::Direct { symbol, .. } = func else { return None };
     let Some(StmtKind::Assign { place: taken, .. }) = body.blocks[point.block].stmts.get(point.index).map(|stmt| &stmt.kind) else { return None };
-    let summary = form.summaries.get()?.get(symbol)?;
+    let summary = summary_of(form, symbol)?;
     let names = form.body_names.get()?;
     let param = body.blocks.iter().find_map(|block| match &block.terminator {
         Terminator::Call { func: FuncRef::Direct { symbol: called, .. }, args, .. } if called == symbol => {
@@ -6526,7 +6591,7 @@ fn walk_change_through(body: &Body, form: &crate::dyn_kinds::Form, point: Point,
 fn written_only_adds(body: &Body, form: &crate::dyn_kinds::Form, point: Point, func: &FuncRef) -> bool {
     let FuncRef::Direct { symbol, .. } = func else { return false };
     let Some(StmtKind::Assign { place: taken, .. }) = body.blocks[point.block].stmts.get(point.index).map(|stmt| &stmt.kind) else { return false };
-    let Some(summary) = form.summaries.get().and_then(|summaries| summaries.get(symbol)) else { return false };
+    let Some(summary) = summary_of(form, symbol) else { return false };
     body.blocks.iter().any(|block| match &block.terminator {
         Terminator::Call { func: FuncRef::Direct { symbol: called, .. }, args, .. } if called == symbol => args
             .iter()

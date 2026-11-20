@@ -805,6 +805,11 @@ impl TypeTable {
         self.module_variables.contains(&name)
     }
 
+    /// Whether the program has a `static mut` at all.
+    pub fn has_module_variables(&self) -> bool {
+        !self.module_variables.is_empty()
+    }
+
     /// `[STA-3]` — a static folded into the code as a scalar constant, with its value.
     pub fn add_folded_static(&mut self, name: Symbol, value: String) {
         self.folded_statics.push((name, value));
