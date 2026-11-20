@@ -7897,7 +7897,13 @@ impl<'a> Builder<'a> {
             }
             hir::ExprKind::Index { base, index } => self.lower_index(base, index, expr.span),
             hir::ExprKind::Deref(inner) => {
+                // `[STA-1]` — a static's access is part of the place it names: it moves no span of
+                // the statement the place is used in (`LOG.push(…)` is at the call, as `log.push(…)`).
+                let around = self.current_span;
                 let mut place = self.lower_place(inner);
+                if matches!(&inner.kind, hir::ExprKind::Builtin { which: hir::Builtin::LazyStatic { .. } | hir::Builtin::ConstStatic { .. } | hir::Builtin::ForeignStatic { .. }, .. }) {
+                    self.current_span = around;
+                }
                 place.projection.push(Projection::Deref);
                 place
             }

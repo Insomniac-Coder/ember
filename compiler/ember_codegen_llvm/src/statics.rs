@@ -69,7 +69,9 @@ pub(crate) fn constant_static(m: &mut Module<'_>, name: &str, ty: Ty) -> Result<
     let mut parts = 0;
     place(m, ty, &mut tokens, &mut image, 0, &symbol, &mut parts)?;
     let (ty_text, value) = image.constant();
-    m.global(format!("{ir_name} = internal constant {ty_text} {value}, align {}", align.max(1)));
+    // `[STA-1]` — a `static mut`'s value is the program's to change: writable data.
+    let storage = if m.ty.table.is_writable_static(ember_span::Symbol::intern(name)) { "global" } else { "constant" };
+    m.global(format!("{ir_name} = internal {storage} {ty_text} {value}, align {}", align.max(1)));
     Ok(ir_name)
 }
 

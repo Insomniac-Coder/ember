@@ -1,9 +1,9 @@
-error[E0100]: `global` is Python's; Ember declares no names as shared
+error[E0100]: `global` is Python's; in Ember a function changes a module variable by its name, with no word: remove line 2
  --> tests/ui/python/P18/global.em:2:5
   |
 2 |     global count
   |     ^^^^^^
   |
-  = help: keep shared state in a `static` or a class field; a lambda or a local function captures a name of the function around it without a declaration [CLO-2]
+  = help: declare the module variable `static mut` at the top of the file; a lambda or a local function uses a name of the function around it without a declaration [CLO-2]
 
 error: could not compile due to 1 error(s)

@@ -49,7 +49,7 @@ struct Write {
 
 /// Every whole write of each name the program wrote that some statement makes a position of, but for
 /// a name the body takes a view of (`ref mut boss`: what it is given may make it point anywhere).
-fn writes(body: &Body, types: &TypeTable) -> HashMap<LocalId, Vec<Write>> {
+fn writes(body: &Body, types: &TypeTable, roots: &HashMap<LocalId, LocalId>) -> HashMap<LocalId, Vec<Write>> {
     let mut found: HashMap<LocalId, Vec<Write>> = HashMap::new();
     let mut viewed: HashSet<LocalId> = HashSet::new();
     let named = |local: LocalId| matches!(body.locals[local.0 as usize].kind, LocalKind::User);
@@ -67,7 +67,7 @@ fn writes(body: &Body, types: &TypeTable) -> HashMap<LocalId, Vec<Write>> {
                     if place.projection.is_empty() && named(place.local) {
                         let making = match rvalue {
                             Rvalue::Ref { place: made, mutable } => {
-                                list_of(body, types, made).map(|list| Making { list, made: made.clone(), mutable: *mutable })
+                                list_of(body, types, roots, made).map(|list| Making { list, made: made.clone(), mutable: *mutable })
                             }
                             _ => None,
                         };
@@ -149,7 +149,8 @@ fn predecessors(body: &Body) -> Vec<Vec<usize>> {
 
 /// Each add a position is made again after: the call's block, the name, and the making to make again.
 fn plan(body: &Body, types: &TypeTable) -> Vec<(usize, LocalId, Making)> {
-    let writes = writes(body, types);
+    let roots = crate::borrows::module_variable_roots(body);
+    let writes = writes(body, types, &roots);
     let mut repoints = Vec::new();
     if writes.is_empty() {
         return repoints;
@@ -167,6 +168,7 @@ fn plan(body: &Body, types: &TypeTable) -> Vec<(usize, LocalId, Making)> {
             continue;
         }
         let Some(list) = borrowed_place(body, given.local) else { continue };
+        let list = module_variable_root(&roots, list);
         for &name in &names {
             if let Some(making) = reaching_making(&writes[&name], &predecessors, block, data.stmts.len(), &list)
                 && used_again(body, name, next.0 as usize)
@@ -229,7 +231,7 @@ fn repoint_positions(body: &mut Body, types: &TypeTable) {
     // the name is made" (a later change of `i` moves no position). One set of locals for each name and
     // making shape, set by every making of that shape; the copies go in last place first, after every
     // block is made, so the places recorded stay right.
-    let writes = writes(body, types);
+    let writes = writes(body, types, &crate::borrows::module_variable_roots(body));
     let usize_ty = types.find(&TyKind::Uint(ember_types::UintTy::Usize)).expect("`usize` is interned");
     let mut kept: Vec<(LocalId, Making, Place)> = Vec::new();
     let mut copies: Vec<(usize, usize, Vec<Stmt>)> = Vec::new();
@@ -291,8 +293,8 @@ fn repoint_positions(body: &mut Body, types: &TypeTable) {
 
 /// `[BRW-16]` — whether a loan of `loan_place` held by `borrower` is a position: a name the program
 /// wrote for an element of a list, made by indexing, the list reached through what owns it.
-pub(crate) fn is_position(body: &Body, types: &TypeTable, loan_place: &Place, borrower: LocalId) -> bool {
-    matches!(body.locals[borrower.0 as usize].kind, LocalKind::User) && list_of(body, types, loan_place).is_some()
+pub(crate) fn is_position(body: &Body, types: &TypeTable, roots: &HashMap<LocalId, LocalId>, loan_place: &Place, borrower: LocalId) -> bool {
+    matches!(body.locals[borrower.0 as usize].kind, LocalKind::User) && list_of(body, types, roots, loan_place).is_some()
 }
 
 /// Two views of one shape: the same projections, an index local for an index local.
@@ -305,8 +307,9 @@ fn same_shape(a: &Place, b: &Place) -> bool {
         })
 }
 
-/// The list `made` names an element of by indexing, when it is reached through what owns it.
-fn list_of(body: &Body, types: &TypeTable, made: &Place) -> Option<Place> {
+/// The list `made` names an element of by indexing, when it is reached through what owns it: a
+/// module variable's at its static's one root (`[LT-3]`).
+fn list_of(body: &Body, types: &TypeTable, roots: &HashMap<LocalId, LocalId>, made: &Place) -> Option<Place> {
     let at = made.projection.iter().position(|p| matches!(p, Projection::Index(_) | Projection::ConstIndex(_)))?;
     let list = Place { local: made.local, projection: made.projection[..at].to_vec() };
     if !matches!(types.kind(crate::regions::place_type(body, types, &list)), TyKind::Vec { text: false, .. }) {
@@ -322,12 +325,25 @@ fn list_of(body: &Body, types: &TypeTable, made: &Place) -> Option<Place> {
         }
         match p {
             Projection::Field(_) => true,
-            // A parameter's or `this`'s view of what the caller owns.
-            Projection::Deref => n == 0 && matches!(root.kind, LocalKind::Arg) && matches!(types.kind(root.ty), TyKind::Ref { .. }),
+            // A parameter's or `this`'s view of what the caller owns, or a module variable's own
+            // storage (`static mut`, `[LT-3]`).
+            Projection::Deref => {
+                n == 0
+                    && matches!(types.kind(root.ty), TyKind::Ref { .. })
+                    && (matches!(root.kind, LocalKind::Arg) || roots.contains_key(&made.local))
+            }
             _ => false,
         }
     });
-    owned.then_some(list)
+    owned.then(|| module_variable_root(roots, list))
+}
+
+/// A place through a module variable's temporary, at its static's one root.
+fn module_variable_root(roots: &HashMap<LocalId, LocalId>, place: Place) -> Place {
+    match roots.get(&place.local) {
+        Some(&root) if place.projection.first() == Some(&Projection::Deref) => Place { local: root, ..place },
+        _ => place,
+    }
 }
 
 /// The place the `ref mut` in `taken` holds, where the body takes it (the compiler's temporary is

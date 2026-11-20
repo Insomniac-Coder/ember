@@ -28,6 +28,7 @@ mod ffi;
 mod packs;
 mod infinite_size;
 mod managers;
+mod module_variables;
 
 pub use comptime::{ComptimeAnswer, ComptimeAnswers, ComptimeRequest};
 pub use derives::component_registry_key;
@@ -3057,6 +3058,9 @@ struct Checker<'a> {
     /// `[CT-5]`, `[STA-3]` — the statics placed in the image as constant
     /// data, by name, with their types.
     const_statics: HashMap<Symbol, Ty>,
+    /// `[STA-1]` — every Ember `static` by qualified name, with whether it is a `static mut`: a
+    /// module variable a function changes by its name.
+    native_statics: HashMap<Symbol, bool>,
     /// `[CT-5]` — the statics whose compile-time value is not known yet in
     /// this pass: initialised on first access here, so what reads one is
     /// unresolved until a later pass places it.
@@ -4289,6 +4293,7 @@ impl<'a> Checker<'a> {
             comptime_number: 0,
             comptime_quiet: false,
             const_statics: HashMap::new(),
+            native_statics: HashMap::new(),
             unsettled_statics: HashSet::new(),
             const_call_spans: HashMap::new(),
             comptime_unresolved: 0,
@@ -8775,7 +8780,30 @@ impl<'a> Checker<'a> {
                 self.type_params = type_params;
                 self.self_ty = self_ty;
                 let scalar = entry.folded.as_ref().is_some_and(|folded| folded.is_scalar());
-                if entry.ok && scalar && self.sink.error_count() == errors {
+                // `[STA-1]`, `[STA-3]`, `[CT-5]` — a `static mut` is one storage that changes: never
+                // folded into the code, placed in the image (writable) only when its value owns no
+                // heap memory, and built on first access otherwise.
+                let module_variable = self.native_statics.get(&item.name).copied().unwrap_or(false);
+                if module_variable {
+                    if entry.ok
+                        && self.sink.error_count() == errors
+                        && let Some(folded) = &entry.folded
+                        && !self.types.needs_drop(item.ty)
+                        && self.constant_static_placeable(item.ty)
+                    {
+                        let text = folded.to_text(self.types);
+                        self.types.add_constant_static(item.name, item.ty, text);
+                        self.types.mark_writable_static(item.name);
+                        self.const_statics.insert(item.name, item.ty);
+                        progress = true;
+                    } else {
+                        if entry.pending {
+                            self.unsettled_statics.insert(item.name);
+                        }
+                        self.sink.rollback(mark);
+                        left.push(item);
+                    }
+                } else if entry.ok && scalar && self.sink.error_count() == errors {
                     if let Some(folded) = &entry.folded {
                         let text = folded.to_text(self.types);
                         self.types.add_folded_static(item.name, text);
@@ -8833,7 +8861,11 @@ impl<'a> Checker<'a> {
     /// `[CT-5]` — a use of a static in the image: the value its constant
     /// data holds, which is `static` (`[LT-3]`).
     fn const_static_use(&mut self, name: Symbol, ty: Ty, span: Span) -> Expr {
-        let reference = self.types.intern(TyKind::Ref { mutable: false, inner: ty });
+        if let Some(refused) = self.module_variable_at_compile_time(name, span) {
+            return refused;
+        }
+        let mutable = self.native_statics.get(&name).copied().unwrap_or(false);
+        let reference = self.types.intern(TyKind::Ref { mutable, inner: ty });
         let access = Expr {
             ty: reference,
             kind: ExprKind::Builtin { which: Builtin::ConstStatic { name, ty }, args: Vec::new() },
@@ -8900,10 +8932,14 @@ impl<'a> Checker<'a> {
     /// `[STA-3]` — a use of a static initialised on first access: the value
     /// its accessor refers to, which is `static` (`[LT-3]`).
     fn lazy_static_use(&mut self, name: Symbol, value: LazyStatic, span: Span) -> Expr {
+        if let Some(refused) = self.module_variable_at_compile_time(name, span) {
+            return refused;
+        }
         if self.unsettled_statics.contains(&name) {
             self.comptime_unresolved += 1;
         }
-        let reference = self.types.intern(TyKind::Ref { mutable: false, inner: value.ty });
+        let mutable = self.native_statics.get(&name).copied().unwrap_or(false);
+        let reference = self.types.intern(TyKind::Ref { mutable, inner: value.ty });
         let access = Expr {
             ty: reference,
             kind: ExprKind::Builtin { which: Builtin::LazyStatic { name, init: value.init, ty: value.ty }, args: Vec::new() },
@@ -11137,7 +11173,10 @@ impl<'a> Checker<'a> {
                     // ruling of 2026-10-21, ODR-163).
                     // D-834 — asked again after `collect_methods` (`check_deferred_static_sync`): a
                     // `Send` written by hand is not recorded yet.
-                    if !self.is_sync(ty) && (!decl.is_foreign_decl || ffi_static_immutable(&item.attrs)) {
+                    // An unguarded `static mut` asks nothing of `T`: one thread and its scoped tasks
+                    // reach it (`[THR-20]`).
+                    let module_variable = decl.is_mut && !decl.is_foreign_decl;
+                    if !module_variable && !self.is_sync(ty) && (!decl.is_foreign_decl || ffi_static_immutable(&item.attrs)) {
                         self.deferred_static_sync.push((ty, decl.ty.span, decl.is_foreign_decl));
                     }
                     if decl.is_foreign_decl {
@@ -11195,18 +11234,13 @@ impl<'a> Checker<'a> {
                         "a `static`",
                         static_region,
                     );
-                    if decl.is_mut {
-                        self.error(
-                            codes::E1010,
-                            decl.name.span,
-                            "`static mut` needs `unsafe`, which is not in this phase",
-                        );
-                        continue;
-                    }
+                    self.native_statics.insert(self.qualified(decl.name.name), decl.is_mut);
                     // `[STA-3]` — anything but a literal is folded, or given a
                     // first-access initialiser, once every constant and
-                    // signature is known (`settle_statics`).
-                    if !is_literal_initializer(initializer) {
+                    // signature is known (`settle_statics`). A `static mut` is a
+                    // place whatever its initialiser (`[STA-1]`): never a literal
+                    // substituted where it is named.
+                    if decl.is_mut || !is_literal_initializer(initializer) {
                         let name = self.qualified(decl.name.name);
                         if self.constants.contains_key(&name) || self.pending_statics.iter().any(|pending| pending.name == name) {
                             self.error(
@@ -29205,6 +29239,17 @@ impl<'a> Checker<'a> {
                         return;
                     }
                 }
+                // `[STA-1]`, `[GRM-4]` — a module's `static` named by a line of a function is that
+                // static, never a new local: a `static mut` is assigned (the place below, through its
+                // `ref mut`), and a `static` is `E3023`.
+                let module_variable = match self.native_static_target(target) {
+                    Some((name, false)) => {
+                        self.refuse_static_assignment(name, target);
+                        return;
+                    }
+                    Some((_, true)) => true,
+                    None => false,
+                };
 
                 // `[CLS-7]`, `[EXC-15]` (ODR-072) — in a class method `self`
                 // is the object the method was called on for the whole call:
@@ -29227,6 +29272,7 @@ impl<'a> Checker<'a> {
                 if let ast::ExprKind::Path { segments } = &target.kind {
                     if segments.len() == 1
                         && foreign_target.is_none()
+                        && !module_variable
                         && self.lookup(segments[0].name).is_none()
                         && !self.is_capture_candidate(segments[0].name)
                     {

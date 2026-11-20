@@ -162,11 +162,19 @@ impl Parser<'_> {
         if (self.at_word(0, "global") || self.at_word(0, "nonlocal")) && self.at_name_at(1) && matches!(self.peek_at(2), TokenKind::Newline | TokenKind::Punct(Punct::Comma)) {
             let word = if self.at_word(0, "global") { "global" } else { "nonlocal" };
             let span = self.span();
-            self.report(
-                Diagnostic::error(codes::E0100, span, format!("`{word}` is Python's; Ember declares no names as shared"))
-                    .habit(Habit::P18)
-                    .help("keep shared state in a `static` or a class field; a lambda or a local function captures a name of the function around it without a declaration [CLO-2]"),
-            );
+            // `[STA-1]` — a function changes a module variable (`static mut`) by its name, with no word.
+            let diagnostic = if word == "global" {
+                Diagnostic::error(
+                    codes::E0100,
+                    span,
+                    format!("`global` is Python's; in Ember a function changes a module variable by its name, with no word: remove line {}", ember_diag::line_mark(span)),
+                )
+                .help("declare the module variable `static mut` at the top of the file; a lambda or a local function uses a name of the function around it without a declaration [CLO-2]")
+            } else {
+                Diagnostic::error(codes::E0100, span, "`nonlocal` is Python's; Ember declares no names as shared")
+                    .help("keep shared state in a `static` or a class field; a lambda or a local function captures a name of the function around it without a declaration [CLO-2]")
+            };
+            self.report(diagnostic.habit(Habit::P18));
             while !self.at_newline() && !self.at_eof() {
                 self.bump();
             }

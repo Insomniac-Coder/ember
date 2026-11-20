@@ -4860,14 +4860,15 @@ fn check_point(
         return;
     }
     for (place, access) in accesses {
-        let canonical_place = call_argument_place(body, place);
+        let roots = form.statics.get_or_init(|| module_variable_roots(body));
+        let canonical_place = call_argument_place(body, roots, place);
         let place = &canonical_place;
         for loan in scope {
             let loan_place = loan
                 .capability
                 .source_place()
                 .expect("a loan has source storage");
-            let canonical_loan_place = call_argument_place(body, loan_place);
+            let canonical_loan_place = call_argument_place(body, roots, loan_place);
             let loan_place = &canonical_loan_place;
             if !overlaps(loan_place, place) {
                 continue;
@@ -5166,7 +5167,7 @@ fn check_point(
             // remove, insert, reorder, clear or replace its list, a `ref mut` one too; an add makes it
             // again (`positions.rs`).
             let proxy = reshaped.then(|| soa_proxy_holder(body, types, regions, loan)).flatten();
-            let position = reshaped && (crate::positions::is_position(body, types, loan_place, loan.borrower) || proxy.is_some());
+            let position = reshaped && (crate::positions::is_position(body, types, roots, loan_place, loan.borrower) || proxy.is_some());
             if (matches!(access, Access::Move) || reshaped)
                 && (!loan.capability.is_mut() || position)
                 && let Some(later) = later
@@ -5336,7 +5337,7 @@ fn check_point(
                 let walks: Vec<&&Loan> = scope
                     .iter()
                     .filter(|other| {
-                        other.capability.source_place().is_some_and(|other_place| overlaps(&call_argument_place(body, other_place), place))
+                        other.capability.source_place().is_some_and(|other_place| overlaps(&call_argument_place(body, roots, other_place), place))
                             && loan_held_by_for_iterator(body, regions, other, point)
                     })
                     .collect();
@@ -5479,8 +5480,8 @@ fn check_point(
 /// verified call bindings back to their fresh borrow source, so these accesses
 /// and loans overlap the original caller place. A reference to the binding's
 /// own slot (no leading dereference) remains a distinct place.
-fn call_argument_place<'a>(body: &Body, place: &'a Place) -> Cow<'a, Place> {
-    let mut place = Cow::Borrowed(place);
+fn call_argument_place<'a>(body: &Body, roots: &HashMap<LocalId, LocalId>, place: &'a Place) -> Cow<'a, Place> {
+    let mut place = module_variable_place(roots, Cow::Borrowed(place));
     for _ in 0..body.call_argument_bindings.len() {
         if place.projection.first() != Some(&Projection::Deref) { break; }
         let Some(binding) = body.call_argument_bindings.iter().find(|binding|
@@ -5495,9 +5496,61 @@ fn call_argument_place<'a>(body: &Body, place: &'a Place) -> Cow<'a, Place> {
         let Some(borrowed) = borrowed else { break };
         let mut projection = borrowed.projection.clone();
         projection.extend_from_slice(&place.projection[1..]);
-        place = Cow::Owned(Place { local: borrowed.local, projection });
+        place = module_variable_place(roots, Cow::Owned(Place { local: borrowed.local, projection }));
     }
     place
+}
+
+/// `[STA-1]`, `[LT-3]` — a module variable is one place, which every use reaches through a temporary
+/// of its own (`_2 = lazy_static()`; a constant static's and a foreign one's alike): each such
+/// temporary, by the first temporary of the same static, so that a view of `ALL[0]` and a later
+/// `ALL.push(…)` compare as one root. A temporary given anything else is no root.
+pub(crate) fn module_variable_roots(body: &Body) -> HashMap<LocalId, LocalId> {
+    let mut of: HashMap<LocalId, ember_span::Symbol> = HashMap::new();
+    let mut other: HashSet<LocalId> = HashSet::new();
+    for block in &body.blocks {
+        for stmt in &block.stmts {
+            if let StmtKind::Assign { place, .. } = &stmt.kind
+                && place.projection.is_empty()
+            {
+                other.insert(place.local);
+            }
+        }
+        if let Terminator::Call { func, dest, .. } = &block.terminator
+            && dest.projection.is_empty()
+        {
+            match func {
+                FuncRef::Builtin {
+                    which: Builtin::LazyStatic { name, .. } | Builtin::ConstStatic { name, .. } | Builtin::ForeignStatic { symbol: name, .. },
+                    ..
+                } if body.local(dest.local).kind == LocalKind::Temp => {
+                    if of.insert(dest.local, *name).is_some_and(|before| before != *name) {
+                        other.insert(dest.local);
+                    }
+                }
+                _ => {
+                    other.insert(dest.local);
+                }
+            }
+        }
+    }
+    let mut first: HashMap<ember_span::Symbol, LocalId> = HashMap::new();
+    let mut temporaries: Vec<(LocalId, ember_span::Symbol)> = of.into_iter().filter(|(local, _)| !other.contains(local)).collect();
+    temporaries.sort();
+    for (local, name) in &temporaries {
+        first.entry(*name).or_insert(*local);
+    }
+    temporaries.into_iter().map(|(local, name)| (local, first[&name])).collect()
+}
+
+/// A place through a module variable's temporary (`(*_7)`), at its static's one root.
+fn module_variable_place<'a>(roots: &HashMap<LocalId, LocalId>, place: Cow<'a, Place>) -> Cow<'a, Place> {
+    match roots.get(&place.local) {
+        Some(&root) if root != place.local && place.projection.first() == Some(&Projection::Deref) => {
+            Cow::Owned(Place { local: root, projection: place.projection.clone() })
+        }
+        _ => place,
+    }
 }
 
 /// `[CTL-2]`, shape B2 — whether a loan is retained by the compiler-created
@@ -5734,13 +5787,19 @@ fn place_name(body: &Body, types: &TypeTable, place: &Place) -> String {
     let decl = body.local(place.local);
     // `[CLS-7]` — a method's object is `this` in its text, and reached without a `*`.
     let object = place.local == LocalId(1) && body.arg_count > 0 && decl.name.as_deref() == Some("self");
+    let mut ty = decl.ty;
+    let mut at = 0;
     let mut out = if object {
         "this".to_string()
+    } else if let Some(name) = module_variable_name(body, place)
+        && let TyKind::Ref { inner, .. } = types.kind(ty)
+    {
+        // `[STA-1]` — a module variable is named as written: `LOG`, not the temporary its use reads.
+        (ty, at) = (*inner, 1);
+        name
     } else {
         decl.name.clone().unwrap_or_else(|| format!("_{}", place.local.0))
     };
-    let mut ty = decl.ty;
-    let mut at = 0;
     while at < place.projection.len() {
         // IX.1 — Box auto-deref is represented internally as its private
         // pointer field followed by a dereference. Diagnostics must name the
@@ -5793,6 +5852,22 @@ fn place_name(body: &Body, types: &TypeTable, place: &Place) -> String {
         at += 1;
     }
     out
+}
+
+/// The name of the module variable whose storage a place through a compiler temporary is
+/// (`(*_5)` where `_5 = lazy_static()` reads `LOG`).
+fn module_variable_name(body: &Body, place: &Place) -> Option<String> {
+    if place.projection.first() != Some(&Projection::Deref) || body.local(place.local).kind != LocalKind::Temp {
+        return None;
+    }
+    body.blocks.iter().find_map(|block| match &block.terminator {
+        Terminator::Call { func: FuncRef::Builtin { which: Builtin::LazyStatic { name, .. } | Builtin::ConstStatic { name, .. }, .. }, dest, .. }
+            if dest.local == place.local && dest.projection.is_empty() =>
+        {
+            Some(name.as_str().rsplit('.').next().unwrap_or(name.as_str()).to_string())
+        }
+        _ => None,
+    })
 }
 
 /// `[DIA-2]` — a place as a diagnostic names it: its path in quotes, or, for the iterator a `for`
@@ -5973,7 +6048,9 @@ fn walk_change_message(
     let collection = name.trim_matches('`').trim_start_matches('*').to_string();
     // The fixes rewrite the line through the collection's own name: a change through another
     // name (a view of it, a call) is moved or collected.
-    let own_name = place.local == loan_place.local && !collection.contains('…') && body.local(place.local).name.is_some();
+    let own_name = place.local == loan_place.local
+        && !collection.contains('…')
+        && (body.local(place.local).name.is_some() || module_variable_name(body, place).is_some());
     let past = place.projection.get(loan_place.projection.len());
     let element = own_name
         && !map
