@@ -43,7 +43,9 @@ today (`FN-9/accept_a_ref_mut_class_parameter_may_change_and_replace`,
 `FN-9/accept_a_changing_method_through_a_ref_mut_p`,
 `BRW-21/accept_a_call_through_a_function_value_whose_functions_keep_the_promise`); none was run.
 
-**Batch 2's probe.** One fault fixed (`copy of` a span returned as an `Array`, LT-47); every other
+**Batch 2's probe.** One fault fixed (`copy of` a span returned as an `Array`, LT-47), and one found
+later, while writing M14's bank (`2370ee6f`): DIA-25's accept left `k` unread in `for k, ref mut v in
+counts:` (`L1001`), and now prints it; every other
 failure is not built: the compile-time checks for links and class objects (today run-time, or E3021
 where the spec says E3060 for a reshape), positions across a push, a method's object reserved, a
 `Map` walked `for k, ref mut v in`, `sharedref mut` (M5's A2-8), the message texts (E3040's label,
