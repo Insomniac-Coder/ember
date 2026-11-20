@@ -27,7 +27,7 @@ fn main():
     idx = i32x4.from_array([3, 0, 1, 3])
     println(f32x4.gather(table, idx).to_array())
     out: Array[f32] = [0.0, 0.0, 0.0, 0.0]
-    f32x4.from_array([11.0, 13.0, 0.0, 0.0]).scatter(out, i32x4.from_array([3, 1, 0, 2]))
+    f32x4.from_array([11.0, 13.0, 0.0, 0.0]).scatter(ref mut out, i32x4.from_array([3, 1, 0, 2]))
     println(out)
     a = f64x2.from_array([2.0, 3.0])
     println(a.fma(a, f64x2.from_array([3.0, 8.0])).to_array())

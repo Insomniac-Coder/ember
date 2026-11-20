@@ -115,6 +115,11 @@ pub(crate) struct Form {
     pub guards: std::sync::Mutex<Vec<Guard>>,
     /// `[BRW-5]` — the indexes the checked body proves different, read once when first asked.
     pub index: std::sync::OnceLock<crate::index_proofs::IndexProofs>,
+    /// `[BRW-16]` — the adds after which a position is made again (`positions::repoints`).
+    pub repoints: std::sync::OnceLock<std::collections::HashSet<(usize, ember_mir::LocalId)>>,
+    /// `[BRW-5]` — each function's name and its parameters' names, by symbol: what `E3022` names for
+    /// two arguments of one call.
+    pub callees: std::sync::OnceLock<std::sync::Arc<std::collections::HashMap<String, (String, Vec<String>)>>>,
 }
 
 /// What [`expand`] finds.
@@ -281,7 +286,7 @@ pub(crate) fn expand(
                     }
                 }
                 under.push(read.join(";"));
-                Form { body: symbol.and_then(|symbol| copies.remove(&symbol)), sites, guards: Default::default(), index: Default::default() }
+                Form { body: symbol.and_then(|symbol| copies.remove(&symbol)), sites, guards: Default::default(), index: Default::default(), repoints: Default::default(), callees: Default::default() }
             })
             .collect();
         under.sort();

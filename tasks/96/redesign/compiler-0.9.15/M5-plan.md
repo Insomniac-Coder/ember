@@ -32,24 +32,39 @@ to `tests/conformance/<RULE>/` when it is built.
   `for ref mut p in players:`. std.ecs, 9 tests and 5 first-week helped copies follow the migration. A counting
   loop's removal is `E3020` ("`xs.pop()` shortens `xs`, whose length this loop read once on line 3; ...").
 - **A2-6, E3020's texts, done for a change through the collection's own name** (2026-11-20): the message names the
-  line, the loop's line and the lines to write (`walk_change_message` in `borrows.rs`; `ember_diag::walk_fix_mark`
-  quotes and rewrites the program's lines): an element written goes through the loop's own handle ("`xs[0] = 5`
-  (line 3) writes an element of `xs`, which this loop walks (line 2); to change the element the loop is on, write
-  `for ref mut x in xs:` in place of line 2 and `x = 5` in place of line 3"), a map's value the same way (`index_mut`,
-  `index_set`), a push collects in a list of your own extended after the loop, anything else moves below the loop.
-  `Array.extend(owns items)` takes an iterable of `T` over (`[STD-15]`, std's `extend_owned`), so the message's fix
-  compiles. Left: the chain a call's change goes through ("(through `note`, line 4)", M6a's summaries), a map's
-  insert collected in a list of your own (needs the summaries' add-only fact for written functions), generators.
+  line, the loop's `for` line and the lines to write. The analysis names the change (an element, a map's value,
+  an add, a map's new key, a set's new item, anything else: `walk_change_message`); `ember_diag::walk_fix_mark`
+  chooses the fix from the program's text: the loop's own handle for a plain header (its names as written), a
+  list of your own for an add (a fresh name, the type as written: `TypeTable::written`), `[BRW-18]`'s key-collect
+  form for a map's insert, the line moved below the loop only when it reads nothing the loop binds, and otherwise
+  a sentence with no code (never `?`); nested walks of one collection give one message (`[DIA-26]`).
+  `Array.extend(owns items)` takes an `IntoIterator` of `T` over (std's `extend_owned`). Left: the chain a call's
+  change goes through (M6a), `extend`'s other iterables and its no-word form (review.md, two questions).
 - **A2-5, positions, done for a list reached through what owns it** (2026-11-20, `ember_analysis/src/positions.rs`):
   a name the program wrote for an element made by indexing (`boss = ref mut enemies[i]`, `boss = enemies[0]`) of
-  an `Array` reached through locals, a `ref`/`ref mut` parameter, `this` and fields keeps the index it was made
-  with (a saved copy), and where a built-in that only adds (`push`, `extend`, `reserve`) returns and the name is
-  used again, the name is made again from it, on the call's own edge, before the borrow check. So a push ends no
-  borrow it holds, both backends find the element through the new buffer, and a removal, insert, reorder, clear
-  or replacement ends it: `E3060` at the later use with `[BRW-16]`'s text (`borrows.rs`, `positions::is_position`).
-  `Array.insert(i, owns v)` takes its value over (`[STD-15]`). Left: `xs.get(i).unwrap()`, `static mut` lists
-  (A1-17), SoA proxies (A2-7), written functions that add or remove (`extend(owns …)` routed to std, `retain`,
-  M6a's summaries), other containers' addresses ended by an add (`m.insert`, a type's own `index`, M6a).
+  an `Array` reached through locals, a `ref`/`ref mut` parameter, `this` and fields (never a link) keeps the index
+  it was made with (a saved copy, a constant included), and is made again after a call that only adds (`push`,
+  `extend`, `reserve`, std's `extend_owned`) where, on every way back, its last making is of that list in one
+  shape and it is used again (`positions::repoints`, one rule for both sides). The borrow check sees the borrow
+  live across the add and lets only that add's `ref mut` of the list meet it, when no other name holds the
+  borrow there (a copy `other = boss` is an address: `E3060` naming it); so a removal, insert, reorder, clear or
+  replacement anywhere before the last use ends it (`E3060` with `[BRW-16]`'s text). The pass runs after the
+  checks. Both backends find the element through the new buffer. `Array.insert(i, owns v)` takes its value over.
+  Reviewed twice by workflows (round 1 found the two holes, fixed). Left: `xs.get(i).unwrap()`, `static mut`
+  lists (A1-17), SoA proxies (A2-7), written functions that add or remove (`retain`, M6a), other containers'
+  addresses ended by an add (`m.insert`, a type's own `index`, M6a).
+- **A2-4b, E3022's texts for one call, and DIA-26, done** (2026-11-20): two `ref mut` elements of one list given to
+  one call name the callee's parameters ("`collide` changes `a` and `b` as two different bodies, and `bodies[i]`
+  and `bodies[j]` are the same body when `i == j`; write `if i != j:` above this line and indent it under it",
+  `call_pair_message` with `ember_diag::pair_mark`), "but both are `bodies[i]`" when written alike; the length an
+  index check reads gets no message of its own, so `xs[0] = 9` while a view of `xs` is used is one `E3021`.
+- **A2-7, done for SoA proxies, SIMD stores and `reborrow`** (2026-11-20): `ps[i]` is an `SoARef`, `ref mut
+  ps[i]` and `for ref mut p in ps:` give `SoAMut`s, `copy of ps[i]` gathers by `load()` and `load()` written at a
+  use is `E1010`; a proxy is a position (an add meets its borrow when only proxies hold it; a removal ends it,
+  `E3060` with `[BRW-16]`'s text); `v.store(ref mut s)`, `v.scatter(ref mut s, idx)` (`E3028` without the word);
+  `reborrow()` is no method (`E2072`, its help `ref mut span`); a `ref mut x` over a part that is a `ref mut`
+  view already names that view (`get_pair_mut`'s pair: `b += a`). Left: a column reached through a read-only
+  name (`E3027`), a length change as a reshape of all of `ps` in a walk (`E3020`).
 - **A2-3 mostly done** (round 7's H4, `lanes/a.md`): part names are views, re-pointing, names that keep their place,
   `const ref mut`, BRW-13 credited. Left: the `Cell` refusal (BRW-15.1), a `ref mut dst: MutSpan` parameter by
   address (BRW-14.8), BRW-1's `E3021` text for a part name, a part of a `packed` struct.

@@ -3790,6 +3790,8 @@ struct Checker<'a> {
     /// made them (`views.rs`). Cleared for a local when it is declared, since local numbers are
     /// reused from body to body.
     view_names: HashMap<LocalId, views::ViewName>,
+    /// `[SOA-6]` — the `SoA` element `ref mut` stands before (`ref mut ps[i]`): its proxy is an `SoAMut`.
+    soa_ref_mut: Option<Span>,
     /// `[BRW-14]` — the headers whose names keep their place, by where their pattern starts.
     kept_headers: std::collections::BTreeMap<(u32, u32), views::KeptHeader>,
     /// `[BRW-15]` — the arguments given to each plain parameter (by its declaration), and the changes
@@ -4465,6 +4467,7 @@ impl<'a> Checker<'a> {
             scopes: Vec::new(),
             borrowed_params: HashSet::new(),
             view_names: HashMap::new(),
+            soa_ref_mut: None,
             kept_headers: std::collections::BTreeMap::new(),
             plain_arguments: HashMap::new(),
             parameter_changes: Vec::new(),
@@ -31952,7 +31955,13 @@ impl<'a> Checker<'a> {
                 }
                 // `[GRM-13]` — `ref x` / `ref mut x` always borrow; a plain
                 // name borrows a non-`Copy` part of a place not consumed.
-                let by_ref = if *by_ref {
+                // `[BRW-5]`, `[CTL-1]` — a part that is a view already (`get_pair_mut`'s `(ref mut T,
+                // ref mut T)`) is named by the word that matches it: `ref mut b` names the `ref mut`
+                // view itself, as a loop's `ref mut v` over a map's values does, not a view of it.
+                let names_the_view = *by_ref && matches!(*self.types.kind(expected), TyKind::Ref { mutable: m, .. } if m == *mutable);
+                let by_ref = if names_the_view {
+                    None
+                } else if *by_ref {
                     Some(*mutable)
                 } else if self.match_by_ref && !self.types.is_copy(expected) {
                     Some(false)
@@ -38174,11 +38183,11 @@ impl<'a> Checker<'a> {
             while let TyKind::Ref { inner, .. } = *self.types.kind(seen) {
                 seen = inner;
             }
-            // A `MutSpan` is walked through its own `iter_mut()` (below): it is left as written.
-            if matches!(
-                self.types.kind(seen),
-                TyKind::Vec { text: false, .. } | TyKind::Array { .. } | TyKind::ArrayN { .. } | TyKind::Span { mutable: false, .. }
-            ) {
+            // A `MutSpan` is walked through its own `iter_mut()` (below), and a `Span` has no changeable
+            // elements: both are left as written.
+            if matches!(self.types.kind(seen), TyKind::Vec { text: false, .. } | TyKind::Array { .. } | TyKind::ArrayN { .. }) {
+                // The loop walks `xs`: its names view `xs`'s elements (`views.rs` quotes `xs`).
+                self.note_kept_header(views::KeptKind::Loop, pattern.span, recv.span);
                 return self.check_for_iterator(label, pattern, recv, body, else_block, span);
             }
         }
@@ -38220,9 +38229,24 @@ impl<'a> Checker<'a> {
                 // `[CLI-20]` — from 0.9.8, `for k, v in m:` over a `Map` to `for k, v in m.items():`,
                 // which means what the two names over the map mean here.
                 if self.sink.migrating && !changes {
+                    // A postfix expression takes `.items()` as it is; any other in brackets
+                    // (`(copy of m).items()`).
+                    let postfix = matches!(
+                        iter.kind,
+                        ast::ExprKind::Path { .. } | ast::ExprKind::Field { .. } | ast::ExprKind::Call { .. }
+                            | ast::ExprKind::MethodCall { .. } | ast::ExprKind::Paren(_) | ast::ExprKind::IndexOrInstantiate { .. }
+                    );
+                    let edits = if postfix {
+                        vec![(iter.span.shrink_to_end(), ember_diag::Replacement::Text(".items()".to_string()))]
+                    } else {
+                        vec![
+                            (Span::new(iter.span.file, iter.span.start, iter.span.start), ember_diag::Replacement::Text("(".to_string())),
+                            (iter.span.shrink_to_end(), ember_diag::Replacement::Text(").items()".to_string())),
+                        ]
+                    };
                     self.sink.emit(
-                        Diagnostic::note_only(iter.span, "a loop over a `Map` with two names")
-                            .migrate("`for k, v in m:` over a `Map` to `m.items()`", iter.span.shrink_to_end(), ".items()"),
+                        Diagnostic::note_only(pattern.span, "a loop over a `Map` with two names")
+                            .migrate_edits("`for k, v in m:` over a `Map` to `m.items()`", edits),
                     );
                 }
                 let method = ast::Ident { name: Symbol::intern(if changes { "__items_mut" } else { "items" }), span: iter.span };
@@ -38282,7 +38306,10 @@ impl<'a> Checker<'a> {
         // `[SOA-6]` — `for p in ps` gives `SoARef`s, `for p in ps.iter_mut()` `SoAMut`s.
         let soa_loop = match &iterable.kind {
             ExprKind::Builtin { which: Builtin::SoA { op: hir::SoAOp::Iter { mutable }, .. }, args } => Some((args[0].clone(), *mutable)),
-            _ if self.soa_inner(iterable.ty).is_some() => Some((iterable.clone(), false)),
+            // `for ref mut p in ps:` yields `SoAMut`s.
+            _ if self.soa_inner(iterable.ty).is_some() => {
+                Some((iterable.clone(), matches!(pattern.kind, ast::PatternKind::Bind { by_ref: true, mutable: true, sub: None, .. })))
+            }
             _ => None,
         };
         if let Some((soa, mutable)) = soa_loop {
@@ -41880,9 +41907,18 @@ impl<'a> Checker<'a> {
             // for a `ref` local it yields the deref, which makes `ref mut r`
             // a reborrow (`[BRW-6]`) with no extra machinery.
             ast::ExprKind::RefOf { mutable, place, .. } => {
+                let was = std::mem::replace(&mut self.soa_ref_mut, if *mutable { Some(place.span) } else { None });
                 let inner = self.synth(place);
+                self.soa_ref_mut = was;
                 if inner.ty == self.common.error {
                     return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+                }
+                // `[SOA-6]` — `ref mut ps[i]` is an `SoAMut[T]`, `ref ps[i]` an `SoARef[T]`: the proxy is
+                // the view.
+                if let TyKind::Struct(id) = *self.types.kind(inner.ty)
+                    && self.soa_proxies.contains_key(&id)
+                {
+                    return inner;
                 }
                 let inner = self.through_a_returned_ref(inner);
                 // `[HEAP-9]` — an `owns T` reads as its `T`: `ref b` or `ref mut b` where a view of
@@ -50840,6 +50876,13 @@ impl<'a> Checker<'a> {
         if receiver.ty == self.common.error {
             return error;
         }
+        // `[SOA-6]` — `copy of ps[i]` gathers a `T` of your own by the proxy's `load()`, the method
+        // `copy of` runs here as it runs `clone` elsewhere.
+        if let TyKind::Struct(id) = *self.types.kind(receiver.ty)
+            && let Some(&(soa, _)) = self.soa_proxies.get(&id)
+        {
+            return self.soa_proxy_load(receiver, soa, span);
+        }
         // A read-only view's target is copied (`if this.keep exists as n:` then `copy of n`).
         let copied = match *self.types.kind(receiver.ty) {
             TyKind::Ref { inner, .. } => inner,
@@ -51856,7 +51899,16 @@ impl<'a> Checker<'a> {
         {
             if !name.name.is("load") || !args.is_empty() || !explicit.is_empty() {
                 let shown = self.types.display(receiver.ty);
-                self.error(codes::E1010, name.span, format!("`{shown}` has `load()` and its fields only, not `{}`", name.name));
+                self.error(codes::E1010, name.span, format!("`{shown}` has its fields only, not `{}`", name.name));
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            }
+            // `[SOA-6]` — `load()` is what `copy of` runs: written at a use it is `E1010`.
+            if !self.generated_files.contains(&span.file) && self.written_line(name.span).as_deref() == Some("load") {
+                let written = self.written_line(recv_span).unwrap_or_else(|| "ps[i]".to_string());
+                self.sink.emit(
+                    Diagnostic::error(codes::E1010, name.span, format!("`load()` is what `copy of` runs; write `copy of {written}`"))
+                        .note("a copy is asked for with `copy of` before the value [SOA-6], [OWN-8]"),
+                );
                 return Expr { ty: self.common.error, kind: ExprKind::Error, span };
             }
             return self.soa_proxy_load(receiver, soa, span);
@@ -57025,6 +57077,14 @@ impl<'a> Checker<'a> {
         let index = self.check_expr(index, int);
         let mutable = self.place_writable(&soa);
         if self.soa_element_field != Some(span) {
+            // `[SOA-6]` — `ps[i]` is an `SoARef[T]`, a read-only name of element `i`; `ref mut ps[i]`
+            // an `SoAMut[T]`, which needs a `ps` this function may change.
+            let asked = self.soa_ref_mut == Some(span);
+            if asked && !mutable {
+                let written = self.written_line(soa.span).unwrap_or_else(|| "ps".to_string());
+                self.error(codes::E3027, span, format!("`ref mut` names an element `{written}` may not change here: `{written}` only reads it"));
+            }
+            let mutable = asked && mutable;
             // `[SOA-6]` — the element as a whole: a proxy borrowing `ps` (all of it, mutably for an
             // `SoAMut`), whose fields are places in the columns.
             return self.soa_proxy_value(soa, index, mutable, span);
@@ -57606,7 +57666,22 @@ impl<'a> Checker<'a> {
                     self.simd_require_unsafe(&text, if scatter { "scatter" } else { "store" }, span);
                 }
                 let view = self.types.intern(TyKind::Span { elem: lane, mutable: true });
-                let target = self.check_expr(&args[0].value, view);
+                // `[SIMD-9]` — a store and a scatter write the caller's elements, and the call says so:
+                // `v.store(ref mut s)` (`E3028` without it).
+                let written = &args[0].value;
+                let (target_expr, said) = match &written.kind {
+                    ast::ExprKind::RefOf { mutable: true, place, .. } => (&**place, true),
+                    _ => (written, false),
+                };
+                if !said && self.written_call && written.id != ast::NodeId::DUMMY && !self.generated_files.contains(&written.span.file) {
+                    let name = self.written_line(written.span).unwrap_or_else(|| "the span".to_string());
+                    let mut diagnostic = Diagnostic::error(codes::E3028, written.span, format!("`{text}` writes the elements of `{name}`, and the call says so"));
+                    if let Some(line) = self.line_with(written.span, &format!("ref mut {name}")) {
+                        diagnostic = diagnostic.help(format!("say so at the call: `{line}` [SIMD-9]"));
+                    }
+                    self.sink.emit(diagnostic);
+                }
+                let target = self.check_expr(target_expr, view);
                 let void = self.common.void;
                 if !scatter {
                     self.simd_call(hir::SimdOp::Store { checked }, vector, void, vec![receiver, target], span)
@@ -61146,36 +61221,15 @@ impl<'a> Checker<'a> {
             };
         }
         let usize_ty = self.common.usize;
-        if mutable && name.name.is("reborrow") {
-            if !args.is_empty() {
-                self.error(
-                    codes::E2020,
-                    span,
-                    format!("`reborrow` takes 0 arguments, found {}", args.len()),
-                );
-                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
-            }
-            let receiver = if is_place(&receiver.kind) {
-                self.pass_receiver(receiver, Mode::Mut, span)
-            } else if self.viewed_place(&receiver) {
-                receiver
-            } else {
-                self.error(
-                    codes::E2140,
-                    span,
-                    "`reborrow` needs a mutable span variable or a view of a mutable place",
-                );
-                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
-            };
-            let view = self.types.intern(TyKind::Span { elem, mutable: true });
-            return Expr {
-                ty: view,
-                kind: ExprKind::Builtin {
-                    which: Builtin::SpanReborrow,
-                    args: vec![receiver],
-                },
-                span,
-            };
+        // `[SPN-3]` (0.9.15) — a `MutSpan` is lent with `ref mut`, which before a span names its elements:
+        // `reborrow()` is no method of 0.9.15 and later.
+        if name.name.is("reborrow") {
+            let written = self.written_line(receiver.span).unwrap_or_else(|| "the span".to_string());
+            self.sink.emit(
+                Diagnostic::error(codes::E2072, span, format!("`{}` has no method named `reborrow`", self.types.display(receiver.ty)))
+                    .help(format!("a span is lent with `ref mut`: write `ref mut {written}` in place of `{written}.reborrow()` [SPN-3]")),
+            );
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         }
         if matches!(name.name.as_str(), "iter" | "iter_mut") {
             if !args.is_empty() {

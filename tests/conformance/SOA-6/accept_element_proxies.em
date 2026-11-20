@@ -9,10 +9,10 @@
 #$ dee 1
 #$ 38 Named(name='ann', score=6)
 #$ 1
-# `[SOA-6]` — `ps[i]` is an element proxy: an `SoAMut` where `ps` is mutable, whose fields are
-# places in the columns (`p.score += 10` writes one); `load()` gathers a copy; `ps[i] = v` scatters
-# one; `for p in ps` gives `SoARef`s and `for p in ps.iter_mut()` `SoAMut`s (`[CTL-3b]`: a counted
-# loop); an `SoAMut` passes where an `SoARef` is wanted.
+# `[SOA-6]` — `ps[i]` is an element proxy, an `SoARef` that reads, and `ref mut ps[i]` an `SoAMut`, whose
+# fields are places in the columns (`p.score += 10` writes one); `copy of ps[i]` gathers a copy by the
+# proxy's `load()`; `ps[i] = v` scatters one; `for p in ps` gives `SoARef`s and `for ref mut p in ps`
+# `SoAMut`s (`[CTL-3b]`: a counted loop); an `SoAMut` passes where an `SoARef` is wanted.
 
 struct Named:
     name: String
@@ -26,18 +26,18 @@ fn main():
     ns.push(owns Named("ann".to_string(), 3))
     ns.push(owns Named("bob".to_string(), 5))
     ns.push(owns Named("cy".to_string(), 8))
-    p = ns[1]
-    println(p.name, p.score, p.load())
+    p = ref mut ns[1]
+    println(p.name, p.score, copy of p)
     p.score += 10
     println(ns[1].score)
     ns[2] = Named("dee".to_string(), 1)
     println(ns.get(2))
     for q in ns:
         println(q.name, q.score)
-    for q in ns.iter_mut():
+    for ref mut q in ns:
         q.score *= 2
     s = 0
     for q in ns:
         s += score_of(q)
-    println(s, ns[0].load())
+    println(s, copy of ns[0])
     println(score_of(ns[2]) // 2)

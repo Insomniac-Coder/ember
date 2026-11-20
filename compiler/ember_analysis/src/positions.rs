@@ -6,12 +6,14 @@
 //! index. So an add ends no borrow the name holds, while what may remove, insert, reorder, clear or
 //! replace the list still meets it (`E3060` at the later use, `borrows.rs`).
 //!
-//! It runs before the borrow check, which then sees the name made again after the add.
+//! One rule says where: [`repoints`]. The borrow check reads it to let those adds meet the name's
+//! borrow (the borrow is still live across them, so anything else that may reshape the list before
+//! the name's last use is refused), and the pass runs after the checks, with the same rule.
 
 use std::collections::{HashMap, HashSet};
 
 use ember_mir::{
-    BasicBlock, BasicBlockId, Body, Builtin, FuncRef, LocalDecl, LocalId, LocalKind, Operand, Place, Projection, Rvalue,
+    BasicBlock, BasicBlockId, Body, Builtin, Const, FuncRef, LocalDecl, LocalId, LocalKind, Operand, Place, Projection, Rvalue,
     Stmt, StmtKind, Terminator,
 };
 use ember_types::{TyKind, TypeTable};
@@ -22,84 +24,257 @@ pub fn repoint_positions_all(bodies: &mut [Body], types: &TypeTable) {
     }
 }
 
-/// A position name: the list it names an element of, the view each making takes (`&mut xs[_11]`),
-/// and where each making is.
-struct Position {
+/// A making of a position: the list, the view taken (`&mut xs[_11]`) and its word.
+#[derive(Clone)]
+struct Making {
     list: Place,
     made: Place,
     mutable: bool,
-    makings: Vec<(usize, usize)>,
 }
 
-fn repoint_positions(body: &mut Body, types: &TypeTable) {
-    let positions = position_names(body, types);
-    if positions.is_empty() {
-        return;
+impl Making {
+    /// The same list, word and view but for its index locals.
+    fn same_as(&self, other: &Making) -> bool {
+        self.list == other.list && self.mutable == other.mutable && same_shape(&self.made, &other.made)
     }
-    let blocks: Vec<usize> = (0..body.blocks.len()).collect();
-    let dominators = crate::loop_version::dominators(body, 0, &blocks);
-    // Each add of a position's list made after the position on every way there, where the name is
-    // used again: the call's block and the name.
-    let mut repoints: Vec<(usize, LocalId)> = Vec::new();
-    for (&name, position) in &positions {
-        for (block, data) in body.blocks.iter().enumerate() {
-            let Terminator::Call { func: FuncRef::Builtin { which, .. }, args, next, .. } = &data.terminator else { continue };
-            if !matches!(which, Builtin::ArrayPush | Builtin::ArrayExtend | Builtin::ArrayReserve | Builtin::ArrayReserveHint { .. }) {
-                continue;
+}
+
+/// A whole write of a name the program wrote: its block, its statement (the block's length for a
+/// call's result), and the making it is when it makes a position.
+struct Write {
+    block: usize,
+    at: usize,
+    making: Option<Making>,
+}
+
+/// Every whole write of each name the program wrote that some statement makes a position of, but for
+/// a name the body takes a view of (`ref mut boss`: what it is given may make it point anywhere).
+fn writes(body: &Body, types: &TypeTable) -> HashMap<LocalId, Vec<Write>> {
+    let mut found: HashMap<LocalId, Vec<Write>> = HashMap::new();
+    let mut viewed: HashSet<LocalId> = HashSet::new();
+    let named = |local: LocalId| matches!(body.locals[local.0 as usize].kind, LocalKind::User);
+    for (block, data) in body.blocks.iter().enumerate() {
+        for (at, stmt) in data.stmts.iter().enumerate() {
+            match &stmt.kind {
+                StmtKind::Assign { place, rvalue } => {
+                    // A `ref mut` of the name itself may make it point anywhere; a read-only view of it (a
+                    // lambda's capture) reads the name, which is made again after an add.
+                    if let Rvalue::Ref { place: taken, mutable: true } = rvalue
+                        && taken.projection.is_empty()
+                    {
+                        viewed.insert(taken.local);
+                    }
+                    if place.projection.is_empty() && named(place.local) {
+                        let making = match rvalue {
+                            Rvalue::Ref { place: made, mutable } => {
+                                list_of(body, types, made).map(|list| Making { list, made: made.clone(), mutable: *mutable })
+                            }
+                            _ => None,
+                        };
+                        found.entry(place.local).or_default().push(Write { block, at, making });
+                    }
+                }
+                StmtKind::Drop { place, .. } if place.projection.is_empty() && named(place.local) => {
+                    found.entry(place.local).or_default().push(Write { block, at, making: None });
+                }
+                _ => {}
             }
-            let Some(Operand::Copy(given) | Operand::Move(given)) = args.first() else { continue };
-            if !given.projection.is_empty() || borrowed_place(&data.stmts, given.local).as_ref() != Some(&position.list) {
-                continue;
+        }
+        if let Terminator::Call { dest, .. } = &data.terminator
+            && dest.projection.is_empty()
+            && named(dest.local)
+        {
+            found.entry(dest.local).or_default().push(Write { block, at: data.stmts.len(), making: None });
+        }
+    }
+    found.retain(|name, writes| !viewed.contains(name) && writes.iter().any(|write| write.making.is_some()));
+    found
+}
+
+/// The making of a position of `list` that a name holds at the end of `call`'s statements on every
+/// way there, one shape for all of them: the last whole write of the name on each way back must be a
+/// making of that list, and no way may reach the body's start without one.
+fn reaching_making(writes: &[Write], predecessors: &[Vec<usize>], call: usize, call_stmts: usize, list: &Place) -> Option<Making> {
+    // The last write in a block, before `limit`.
+    let last = |block: usize, limit: usize| writes.iter().filter(|w| w.block == block && w.at < limit).max_by_key(|w| w.at);
+    let mut found: Option<Making> = None;
+    let mut agree = |write: &Write| -> bool {
+        let Some(making) = &write.making else { return false };
+        if &making.list != list {
+            return false;
+        }
+        match &found {
+            Some(first) => first.same_as(making),
+            None => {
+                found = Some(making.clone());
+                true
             }
-            let made_before = position
-                .makings
-                .iter()
-                .any(|&(at, _)| at == block || dominators.get(&block).is_some_and(|set| set.contains(&at)));
-            if made_before && used_again(body, name, next.0 as usize) {
-                repoints.push((block, name));
+        }
+    };
+    if let Some(write) = last(call, call_stmts) {
+        return if agree(write) { found } else { None };
+    }
+    if predecessors[call].is_empty() {
+        return None;
+    }
+    let mut seen = HashSet::new();
+    let mut work: Vec<usize> = predecessors[call].clone();
+    while let Some(block) = work.pop() {
+        if !seen.insert(block) {
+            continue;
+        }
+        if let Some(write) = last(block, usize::MAX) {
+            if !agree(write) {
+                return None;
+            }
+            continue;
+        }
+        if predecessors[block].is_empty() {
+            return None;
+        }
+        work.extend(predecessors[block].iter().copied());
+    }
+    found
+}
+
+fn predecessors(body: &Body) -> Vec<Vec<usize>> {
+    let mut predecessors = vec![Vec::new(); body.blocks.len()];
+    for (block, data) in body.blocks.iter().enumerate() {
+        for next in crate::borrows::access_successors(&data.terminator) {
+            predecessors[next.0 as usize].push(block);
+        }
+    }
+    predecessors
+}
+
+/// Each add a position is made again after: the call's block, the name, and the making to make again.
+fn plan(body: &Body, types: &TypeTable) -> Vec<(usize, LocalId, Making)> {
+    let writes = writes(body, types);
+    let mut repoints = Vec::new();
+    if writes.is_empty() {
+        return repoints;
+    }
+    let predecessors = predecessors(body);
+    let mut names: Vec<LocalId> = writes.keys().copied().collect();
+    names.sort();
+    for (block, data) in body.blocks.iter().enumerate() {
+        let Terminator::Call { func, args, next, .. } = &data.terminator else { continue };
+        if !only_adds(func) {
+            continue;
+        }
+        let Some(Operand::Copy(given) | Operand::Move(given)) = args.first() else { continue };
+        if !given.projection.is_empty() {
+            continue;
+        }
+        let Some(list) = borrowed_place(body, given.local) else { continue };
+        for &name in &names {
+            if let Some(making) = reaching_making(&writes[&name], &predecessors, block, data.stmts.len(), &list)
+                && used_again(body, name, next.0 as usize)
+            {
+                repoints.push((block, name, making));
             }
         }
     }
+    repoints
+}
+
+/// The adds a position is made again after: each `(the call's block, the name)`, where the call only
+/// adds to the name's list, the name holds a position of it on every way there, and is used again.
+pub(crate) fn repoints(body: &Body, types: &TypeTable) -> HashSet<(usize, LocalId)> {
+    plan(body, types).into_iter().map(|(block, name, _)| (block, name)).collect()
+}
+
+/// Whether the access at `(block, index)` is the `ref mut` of its list that an add in `repoints`
+/// takes, an add after which `borrower` is made again: the call the borrowed temporary is given.
+pub(crate) fn repointed_add_at(body: &Body, block: usize, index: usize, borrower: LocalId, repoints: &HashSet<(usize, LocalId)>) -> Option<usize> {
+    let Some(StmtKind::Assign { place: taken, rvalue: Rvalue::Ref { mutable: true, .. } }) =
+        body.blocks[block].stmts.get(index).map(|stmt| &stmt.kind)
+    else {
+        return None;
+    };
+    if !taken.projection.is_empty() {
+        return None;
+    }
+    body.blocks.iter().enumerate().find_map(|(call, data)| match &data.terminator {
+        Terminator::Call { args, .. }
+            if matches!(args.first(), Some(Operand::Copy(given) | Operand::Move(given)) if given.local == taken.local && given.projection.is_empty())
+                && repoints.contains(&(call, borrower)) =>
+        {
+            Some(call)
+        }
+        _ => None,
+    })
+}
+
+/// `[EFF-24]` — a call that only adds to the list its first argument points at: the built-ins, and
+/// `extend(owns items)`, which the compiler routes to std's `extend_owned`.
+pub(crate) fn only_adds(func: &FuncRef) -> bool {
+    match func {
+        FuncRef::Builtin { which, .. } => {
+            matches!(which, Builtin::ArrayPush | Builtin::ArrayExtend | Builtin::ArrayReserve | Builtin::ArrayReserveHint { .. })
+        }
+        FuncRef::Direct { symbol, .. } => {
+            ember_branding::demangle(symbol).is_some_and(|found| found.components == ["std", "core", "Array", "extend_owned"])
+        }
+        _ => false,
+    }
+}
+
+fn repoint_positions(body: &mut Body, types: &TypeTable) {
+    let repoints = plan(body, types);
+    if repoints.is_empty() {
+        return;
+    }
     // The index each making read, kept in a local of the name's own: "the index is read once, where
-    // the name is made" (a later change of `i` moves no position). The copies go in after every
-    // block is made, last place first, so the places recorded stay right.
-    let mut kept: HashMap<LocalId, Place> = HashMap::new();
+    // the name is made" (a later change of `i` moves no position). One set of locals for each name and
+    // making shape, set by every making of that shape; the copies go in last place first, after every
+    // block is made, so the places recorded stay right.
+    let writes = writes(body, types);
+    let usize_ty = types.find(&TyKind::Uint(ember_types::UintTy::Usize)).expect("`usize` is interned");
+    let mut kept: Vec<(LocalId, Making, Place)> = Vec::new();
     let mut copies: Vec<(usize, usize, Vec<Stmt>)> = Vec::new();
-    for (block, name) in repoints {
-        let position = &positions[&name];
-        let again = kept.entry(name).or_insert_with(|| {
-            let mut again = position.made.clone();
-            let mut saved = Vec::new();
-            for projection in &mut again.projection {
-                if let Projection::Index(index) = projection {
-                    let local = LocalId(body.locals.len() as u32);
-                    let decl = &body.locals[index.0 as usize];
-                    body.locals.push(LocalDecl { ty: decl.ty, kind: LocalKind::Temp, name: None, span: decl.span });
-                    saved.push(local);
-                    *index = local;
+    for (block, name, making) in repoints {
+        let again = match kept.iter().find(|(kept_name, kept_making, _)| *kept_name == name && kept_making.same_as(&making)) {
+            Some((_, _, again)) => again.clone(),
+            None => {
+                let mut again = making.made.clone();
+                let mut saved = Vec::new();
+                let span = body.locals[name.0 as usize].span;
+                for projection in &mut again.projection {
+                    if matches!(projection, Projection::Index(_) | Projection::ConstIndex(_)) {
+                        let local = LocalId(body.locals.len() as u32);
+                        body.locals.push(LocalDecl { ty: usize_ty, kind: LocalKind::Temp, name: None, span });
+                        saved.push(local);
+                        *projection = Projection::Index(local);
+                    }
                 }
+                for write in &writes[&name] {
+                    let Some(this) = &write.making else { continue };
+                    if !this.same_as(&making) {
+                        continue;
+                    }
+                    let span = body.blocks[write.block].stmts[write.at].span;
+                    // Each index the making read: a local's value, or the constant it wrote.
+                    let indexes = this.made.projection.iter().filter_map(|p| match p {
+                        Projection::Index(index) => Some(Operand::Copy(whole(*index))),
+                        Projection::ConstIndex(value) => Some(Operand::Const(Const::Int { value: *value as u128, ty: usize_ty })),
+                        _ => None,
+                    });
+                    let made_copies = indexes
+                        .zip(&saved)
+                        .map(|(index, local)| Stmt { kind: StmtKind::Assign { place: whole(*local), rvalue: Rvalue::Use(index) }, span })
+                        .collect();
+                    copies.push((write.block, write.at + 1, made_copies));
+                }
+                kept.push((name, making.clone(), again.clone()));
+                again
             }
-            for &(making_block, at) in &position.makings {
-                let stmt = &body.blocks[making_block].stmts[at];
-                let (StmtKind::Assign { rvalue: Rvalue::Ref { place: made, .. }, .. }, span) = (&stmt.kind, stmt.span) else { continue };
-                let indexes = made.projection.iter().filter_map(|p| if let Projection::Index(index) = p { Some(*index) } else { None });
-                let made_copies = indexes
-                    .zip(&saved)
-                    .map(|(index, local)| Stmt {
-                        kind: StmtKind::Assign { place: whole(*local), rvalue: Rvalue::Use(Operand::Copy(whole(index))) },
-                        span,
-                    })
-                    .collect();
-                copies.push((making_block, at + 1, made_copies));
-            }
-            again
-        });
-        let (making_block, at) = position.makings[0];
-        let span = body.blocks[making_block].stmts[at].span;
-        let stmt = Stmt {
-            kind: StmtKind::Assign { place: whole(name), rvalue: Rvalue::Ref { place: again.clone(), mutable: position.mutable } },
-            span,
         };
+        let span = writes[&name]
+            .iter()
+            .find(|w| w.making.as_ref().is_some_and(|m| m.same_as(&making)))
+            .map_or(body.blocks[block].terminator_span, |w| body.blocks[w.block].stmts[w.at].span);
+        let stmt = Stmt { kind: StmtKind::Assign { place: whole(name), rvalue: Rvalue::Ref { place: again, mutable: making.mutable } }, span };
         // On the call's own edge: a block that makes the name again, then goes where the call went.
         let bridge = BasicBlockId(body.blocks.len() as u32);
         let terminator_span = body.blocks[block].terminator_span;
@@ -108,43 +283,10 @@ fn repoint_positions(body: &mut Body, types: &TypeTable) {
         body.blocks.push(BasicBlock { stmts: vec![stmt], terminator: Terminator::Goto(after), terminator_span, call_span: None });
     }
     copies.sort_by(|a, b| (b.0, b.1).cmp(&(a.0, a.1)));
+    copies.dedup_by(|a, b| a.0 == b.0 && a.1 == b.1);
     for (block, at, stmts) in copies {
         body.blocks[block].stmts.splice(at..at, stmts);
     }
-}
-
-/// The names the program wrote whose every making is one view (but for its indexes) of an element
-/// of one list by indexing, the list reached through what owns it.
-fn position_names(body: &Body, types: &TypeTable) -> HashMap<LocalId, Position> {
-    let mut found: HashMap<LocalId, Position> = HashMap::new();
-    let mut refused: HashSet<LocalId> = HashSet::new();
-    for (block, data) in body.blocks.iter().enumerate() {
-        for (at, stmt) in data.stmts.iter().enumerate() {
-            let StmtKind::Assign { place, rvalue } = &stmt.kind else { continue };
-            if !place.projection.is_empty() || !matches!(body.locals[place.local.0 as usize].kind, LocalKind::User) {
-                continue;
-            }
-            let making = match rvalue {
-                Rvalue::Ref { place: made, mutable } => list_of(body, types, made).map(|list| (list, made, *mutable)),
-                _ => None,
-            };
-            match (making, found.get_mut(&place.local)) {
-                (Some((list, made, mutable)), Some(position))
-                    if position.list == list && position.mutable == mutable && same_shape(&position.made, made) =>
-                {
-                    position.makings.push((block, at))
-                }
-                (Some((list, made, mutable)), None) => {
-                    found.insert(place.local, Position { list, made: made.clone(), mutable, makings: vec![(block, at)] });
-                }
-                _ => {
-                    refused.insert(place.local);
-                }
-            }
-        }
-    }
-    found.retain(|name, _| !refused.contains(name));
-    found
 }
 
 /// `[BRW-16]` — whether a loan of `loan_place` held by `borrower` is a position: a name the program
@@ -158,7 +300,7 @@ fn same_shape(a: &Place, b: &Place) -> bool {
     a.local == b.local
         && a.projection.len() == b.projection.len()
         && a.projection.iter().zip(&b.projection).all(|pair| match pair {
-            (Projection::Index(_), Projection::Index(_)) => true,
+            (Projection::Index(_) | Projection::ConstIndex(_), Projection::Index(_) | Projection::ConstIndex(_)) => true,
             (x, y) => x == y,
         })
 }
@@ -188,9 +330,10 @@ fn list_of(body: &Body, types: &TypeTable, made: &Place) -> Option<Place> {
     owned.then_some(list)
 }
 
-/// The place the `ref mut` in `taken` holds, where one of `stmts` takes it.
-fn borrowed_place(stmts: &[Stmt], taken: LocalId) -> Option<Place> {
-    stmts.iter().rev().find_map(|stmt| match &stmt.kind {
+/// The place the `ref mut` in `taken` holds, where the body takes it (the compiler's temporary is
+/// made once, perhaps before the call's arguments).
+fn borrowed_place(body: &Body, taken: LocalId) -> Option<Place> {
+    body.blocks.iter().flat_map(|block| block.stmts.iter()).find_map(|stmt| match &stmt.kind {
         StmtKind::Assign { place, rvalue: Rvalue::Ref { place: borrowed, mutable: true } }
             if place.local == taken && place.projection.is_empty() =>
         {
@@ -202,6 +345,11 @@ fn borrowed_place(stmts: &[Stmt], taken: LocalId) -> Option<Place> {
 
 /// Whether `name` may be read from the start of block `from` on before it is made again.
 fn used_again(body: &Body, name: LocalId, from: usize) -> bool {
+    next_read(body, name, from).is_some()
+}
+
+/// Where `name` may next be read from the start of block `from` on, before it is made again.
+pub(crate) fn next_read(body: &Body, name: LocalId, from: usize) -> Option<ember_span::Span> {
     let mut seen = HashSet::new();
     let mut work = vec![from];
     while let Some(block) = work.pop() {
@@ -221,24 +369,25 @@ fn used_again(body: &Body, name: LocalId, from: usize) -> bool {
                     }
                 }
             });
-            if read || made {
-                verdict = Some(read);
+            if read {
+                return Some(stmt.span);
+            }
+            if made {
+                verdict = Some(());
                 break;
             }
         }
-        match verdict {
-            Some(read) if read => return true,
-            Some(_) => continue,
-            None => {}
+        if verdict.is_some() {
+            continue;
         }
         let mut read = false;
         crate::loop_version::visit_terminator(&data.terminator, &mut |place, _, _| read |= place.local == name);
         if read {
-            return true;
+            return Some(data.terminator_span);
         }
         work.extend(crate::borrows::access_successors(&data.terminator).into_iter().map(|b| b.0 as usize));
     }
-    false
+    None
 }
 
 fn whole(local: LocalId) -> Place {

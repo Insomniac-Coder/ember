@@ -3190,6 +3190,51 @@ impl TypeTable {
 
     /// How a type is written in Ember, for the user (`[DIA-2]`): a generic
     /// instance is `Range[i64]`, and a prelude type has its prelude name.
+    /// `[DIA-2]` — a type as a program writes it, for a line a message gives it to write: the
+    /// prelude's names bare (`Map`, `Set`, `int`, `float`, `[MOD-5]`), a map's and a set's default
+    /// hasher left off; the rest as `display` shows it.
+    pub fn written(&self, ty: Ty) -> String {
+        let list = |items: &[Ty]| items.iter().map(|&item| self.written(item)).collect::<Vec<_>>().join(", ");
+        match self.kind(ty) {
+            TyKind::Int(IntTy::I64) => "int".into(),
+            TyKind::Float(FloatTy::F64) => "float".into(),
+            TyKind::Vec { elem, text: false } => format!("Array[{}]", self.written(*elem)),
+            TyKind::Span { elem, mutable } => format!("{}[{}]", if *mutable { "MutSpan" } else { "Span" }, self.written(*elem)),
+            TyKind::Tuple(items) => format!("({})", list(items)),
+            TyKind::Ref { mutable, inner } => format!("ref {}{}", if *mutable { "mut " } else { "" }, self.written(*inner)),
+            TyKind::Struct(id) => match self.struct_def(*id).origin.as_ref() {
+                Some((generic, args)) if generic.as_str() == "std.collections.Map" && args.len() >= 2 => format!("Map[{}]", list(&args[..2])),
+                Some((generic, args)) if generic.as_str() == "std.collections.Set" && !args.is_empty() => format!("Set[{}]", list(&args[..1])),
+                _ => Self::prelude_numbers(&self.display(ty)),
+            },
+            _ => Self::prelude_numbers(&self.display(ty)),
+        }
+    }
+
+    /// `display`'s text with the prelude's number names (`[MOD-5]`): `i64` is `int`, `f64` `float`.
+    fn prelude_numbers(shown: &str) -> String {
+        let mut out = String::with_capacity(shown.len());
+        let mut word = String::new();
+        let flush = |word: &mut String, out: &mut String| {
+            out.push_str(match word.as_str() {
+                "i64" => "int",
+                "f64" => "float",
+                other => other,
+            });
+            word.clear();
+        };
+        for c in shown.chars() {
+            if c.is_alphanumeric() || c == '_' || c == '.' {
+                word.push(c);
+            } else {
+                flush(&mut word, &mut out);
+                out.push(c);
+            }
+        }
+        flush(&mut word, &mut out);
+        out
+    }
+
     pub fn display(&self, ty: Ty) -> String {
         self.render(ty, true)
     }

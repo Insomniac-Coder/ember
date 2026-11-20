@@ -6,7 +6,7 @@ error[E3020]: `values.push(owns 3)` (line 6) adds to `values`, which this loop w
 6 |         values.push(owns 3)
   |         ^^^^^^^^^^^^^^^^^^^ this changes what the loop walks
   |
-  = help: a list of your own, added after the loop: `values.extend(owns added)`; to drop items, `values.retain(owns fn(item) => keep(item))` after the loop
+  = help: a list of your own, added to `values` below the loop
   = note: while a loop walks a collection, nothing changes it but the loop's own handle on the item it is on; items are added or removed after the loop (CTL-2)
 
 error: could not compile due to 1 error(s)

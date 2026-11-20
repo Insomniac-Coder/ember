@@ -9,6 +9,7 @@
 //! [`SourceMap`](ember_span::SourceMap) so that synthesised sources render the
 //! same way real files do.
 
+use std::collections::HashSet;
 use std::fmt::Write as _;
 
 use ember_span::{FileId, SourceMap, Span};
@@ -508,98 +509,409 @@ pub fn line_code_mark(span: Span) -> String {
     format!("\u{1}#{}:{}\u{2}", span.file.0, span.start)
 }
 
-/// `[CTL-2]` — what a walk's fix writes, quoted from the program's own lines, for a message written
-/// where the source is not at hand.
-#[derive(Clone, Copy)]
-pub enum WalkFix {
-    /// The loop's header naming its element so that it may change it: `for ref mut x in xs:`, a
-    /// map's `for k, ref mut v in counts:`.
-    Header,
-    /// The changing line through that name: `x = 5` for `xs[0] = 5`, `v *= 2` for `counts[k] *= 2`.
+/// `[CTL-2]`, `[BRW-18]`, `[DIA-25]` — the change a walk's `E3020` is about, as the analysis that
+/// finds it knows it; the fix is chosen where the program's text is at hand (`walk_fix_mark`).
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum WalkChange {
+    /// An element of the walked list written through the list's own name (`xs[0] = 5`).
     Element,
-    /// The changing line adding to a list of the program's own: `added.push(owns 3)` for `xs.push(owns 3)`.
+    /// A value of the walked map written through the map's own name (`counts[k] *= 2`).
+    Value,
+    /// An add to the walked list through its own name (`xs.push(owns v)`, `xs.extend(owns ys)`).
     Added,
+    /// A key added to the walked map through its own name (`counts.insert(owns k, owns 0)`).
+    Inserted,
+    /// An item added to the walked set through its own name (`seen.insert(owns x)`).
+    SetAdded,
+    /// Any other change.
+    Other,
 }
 
-/// The text a [`WalkFix`] writes for the loop whose header `header` is on, over `collection` (a map's
-/// when `map`), and the line `line` is on.
-pub fn walk_fix_mark(fix: WalkFix, map: bool, header: Span, line: Span, collection: &str) -> String {
-    let mode = match (fix, map) {
-        (WalkFix::Header, false) => 'h',
-        (WalkFix::Header, true) => 'H',
-        (WalkFix::Element, false) => 'e',
-        (WalkFix::Element, true) => 'E',
-        (WalkFix::Added, _) => 'a',
+/// What of a walk's fix a mark writes.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum WalkPart {
+    /// The fix clause the message ends with.
+    Fix,
+    /// The help: the fix by its shape's name (`[DIA-7a]` B2).
+    Help,
+    /// The line the loop's `for` is on.
+    LoopLine,
+}
+
+/// A mark for a walk's fix: `change` made on the line `line` is on, inside the loop whose iterable
+/// starts at `iterable`, over `collection`; `types` are what a list of the program's own holds (the
+/// walked list's type for an add; a map's key and value types; a set's item type), as the program
+/// writes them; `nested` when another loop walks the collection too.
+pub fn walk_fix_mark(part: WalkPart, change: WalkChange, nested: bool, iterable: Span, line: Span, collection: &str, types: [&str; 2]) -> String {
+    let part = match part {
+        WalkPart::Fix => 'f',
+        WalkPart::Help => 'h',
+        WalkPart::LoopLine => 'l',
     };
-    format!("\u{1}&{mode}{}:{}:{}:{collection}\u{2}", header.file.0, header.start, line.start)
+    let change = match change {
+        WalkChange::Element => 'e',
+        WalkChange::Value => 'v',
+        WalkChange::Added => 'a',
+        WalkChange::Inserted => 'i',
+        WalkChange::SetAdded => 's',
+        WalkChange::Other => 'o',
+    };
+    let nested = if nested { 'n' } else { '-' };
+    let field = '\u{3}';
+    format!(
+        "\u{1}&{part}{change}{nested}{field}{}{field}{}{field}{}{field}{collection}{field}{}{field}{}\u{2}",
+        iterable.file.0, iterable.start, line.start, types[0], types[1]
+    )
+}
+
+/// The program's own names in `text`: every word of its code that may be one, outside comments and
+/// string and character literals.
+fn words_in(text: &str) -> HashSet<String> {
+    let mut words = HashSet::new();
+    for line in text.lines() {
+        let mut word = String::new();
+        let mut quote: Option<char> = None;
+        for c in code_of(line).chars().chain(std::iter::once(' ')) {
+            match (quote, c) {
+                (Some(q), c) if c == q => quote = None,
+                (Some(_), _) => {}
+                (None, '"' | '\'') => quote = Some(c),
+                (None, c) if c.is_alphanumeric() || c == '_' => word.push(c),
+                (None, _) => {
+                    if word.starts_with(|c: char| c.is_alphabetic() || c == '_') {
+                        words.insert(std::mem::take(&mut word));
+                    }
+                    word.clear();
+                }
+            }
+        }
+    }
+    words
+}
+
+/// `base`, or `base2`, `base3`, … : the first that is none of `taken`.
+fn fresh_name(base: &str, taken: &HashSet<String>) -> String {
+    (1..).map(|n| if n == 1 { base.to_string() } else { format!("{base}{n}") }).find(|name| !taken.contains(name)).unwrap_or_else(|| base.to_string())
+}
+
+/// The byte where `text`'s bracket opened at `open` closes, past it.
+fn closing(text: &str, open: usize) -> Option<usize> {
+    let mut depth = 0i32;
+    let mut quote: Option<char> = None;
+    for (n, c) in text[open..].char_indices() {
+        match (quote, c) {
+            (Some(q), c) if c == q => quote = None,
+            (Some(_), _) => {}
+            (None, '"' | '\'') => quote = Some(c),
+            (None, '[' | '(' | '{') => depth += 1,
+            (None, ']' | ')' | '}') => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(open + n + 1);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Where `line` names `collection` as itself (not the end of a longer name), followed, past any
+/// spaces, by `after`: the name's start and where `after` is.
+fn named_at(line: &str, collection: &str, after: char) -> Option<(usize, usize)> {
+    line.match_indices(collection).map(|(at, _)| at).find_map(|at| {
+        let before = line[..at].chars().next_back();
+        if before.is_some_and(|c| c.is_alphanumeric() || c == '_' || c == '.') {
+            return None;
+        }
+        let rest = &line[at + collection.len()..];
+        let skipped = rest.len() - rest.trim_start().len();
+        rest.trim_start().starts_with(after).then_some((at, at + collection.len() + skipped))
+    })
+}
+
+/// The top-level arguments of the call whose `(` is at `open` in `line`.
+fn call_arguments(line: &str, open: usize) -> Option<Vec<String>> {
+    let close = closing(line, open)?;
+    let inner = &line[open + 1..close - 1];
+    let mut args = Vec::new();
+    let (mut depth, mut start, mut quote) = (0i32, 0usize, None::<char>);
+    for (n, c) in inner.char_indices() {
+        match (quote, c) {
+            (Some(q), c) if c == q => quote = None,
+            (Some(_), _) => {}
+            (None, '"' | '\'') => quote = Some(c),
+            (None, '[' | '(' | '{') => depth += 1,
+            (None, ']' | ')' | '}') => depth -= 1,
+            (None, ',') if depth == 0 => {
+                args.push(inner[start..n].trim().to_string());
+                start = n + 1;
+            }
+            _ => {}
+        }
+    }
+    if !inner[start..].trim().is_empty() {
+        args.push(inner[start..].trim().to_string());
+    }
+    Some(args)
 }
 
 /// A [`walk_fix_mark`]'s text: `fix` is the mark's body after `&`.
 fn walk_fix(fix: &str, map: &SourceMap) -> Option<String> {
-    let mode = fix.chars().next()?;
-    let mut parts = fix[1..].splitn(4, ':');
-    let file = map.get(FileId(parts.next()?.parse().ok()?))?;
-    let header: usize = parts.next()?.parse().ok()?;
-    let line: usize = parts.next()?.parse().ok()?;
-    let collection = parts.next()?;
-    let code_at = |at: usize| -> Option<&str> {
-        let start = file.text.get(..at)?.rfind('\n').map_or(0, |at| at + 1);
-        let end = file.text.get(at..)?.find('\n').map_or(file.text.len(), |n| at + n);
-        Some(code_of(file.text.get(start..end)?).trim())
-    };
-    // The loop's names, as `for k, v in counts:` writes them, without their words (`ref mut x`).
-    let header_code = code_at(header)?;
-    let pattern = header_code.split_once("for ").and_then(|(_, rest)| rest.split_once(" in ")).map_or("", |(names, _)| names);
-    let names: Vec<&str> = pattern
-        .split(',')
-        .map(|name| name.trim().trim_start_matches("ref mut ").trim_start_matches("ref ").trim_start_matches("owns ").trim())
-        .collect();
-    let usable = |name: &str| {
-        let name = name.trim_start_matches('_');
-        (!name.is_empty() && name.chars().all(|c| c.is_alphanumeric() || c == '_')).then(|| name.to_string())
-    };
-    // ponytail: a list loop with several names (`for i, x in xs.enumerate():`) gets its last one.
-    let key = names.first().and_then(|name| usable(name)).unwrap_or_else(|| "k".to_string());
-    let element = if mode.is_ascii_uppercase() {
-        names.get(1).and_then(|name| usable(name)).unwrap_or_else(|| if key == "v" { "value".to_string() } else { "v".to_string() })
-    } else {
-        names.last().and_then(|name| usable(name)).unwrap_or_else(|| "x".to_string())
-    };
-    let line_code = code_at(line)?;
-    // The first `collection` the line names as itself, not as the end of a longer name.
-    let named_at = |after: char| {
-        line_code.match_indices(collection).map(|(at, _)| at).find(|&at| {
-            let before = line_code[..at].chars().next_back();
-            !before.is_some_and(|c| c.is_alphanumeric() || c == '_' || c == '.') && line_code[at + collection.len()..].starts_with(after)
-        })
-    };
-    match mode {
-        'h' => Some(format!("for ref mut {element} in {collection}:")),
-        'H' => Some(format!("for {key}, ref mut {element} in {collection}:")),
-        'e' | 'E' => {
-            let at = named_at('[')?;
-            let mut depth = 0;
-            let end = line_code[at..].char_indices().find_map(|(n, c)| {
-                match c {
-                    '[' => depth += 1,
-                    ']' => {
-                        depth -= 1;
-                        if depth == 0 {
-                            return Some(at + n + 1);
-                        }
-                    }
-                    _ => {}
-                }
-                None
-            })?;
-            Some(format!("{}{element}{}", &line_code[..at], &line_code[end..]))
-        }
-        'a' => {
-            let at = named_at('.')?;
-            Some(format!("{}added{}", &line_code[..at], &line_code[at + collection.len()..]))
-        }
-        _ => None,
+    let mut chars = fix.chars();
+    let (part, change, nested) = (chars.next()?, chars.next()?, chars.next()? == 'n');
+    let mut fields = chars.as_str().split('\u{3}').skip(1);
+    let file = map.get(FileId(fields.next()?.parse().ok()?))?;
+    let iterable_at: usize = fields.next()?.parse().ok()?;
+    let line_at: usize = fields.next()?.parse().ok()?;
+    let collection = fields.next()?.trim_start_matches('*');
+    let (first_type, second_type) = (fields.next()?, fields.next()?);
+    let text = file.text.as_str();
+    let line_of = |at: usize| text.get(..at).map_or(1, |before| before.matches('\n').count() + 1);
+    let line_start = |at: usize| text.get(..at).and_then(|before| before.rfind('\n')).map_or(0, |n| n + 1);
+    let line_end = |at: usize| text.get(at..).and_then(|after| after.find('\n')).map_or(text.len(), |n| at + n);
+    let indent_of = |line: &str| line.len() - line.trim_start().len();
+    let squeeze = |s: &str| s.split_whitespace().collect::<Vec<_>>().join(" ");
+    // The loop's header: the `for` statement on the iterable's own line, `for <names> in <iterable>:`.
+    // Anything else (a comprehension, a header over several lines, a label) gets the plain sentence.
+    let header_start = line_start(iterable_at);
+    let header_raw = text.get(header_start..line_end(iterable_at))?;
+    let header_indent = indent_of(header_raw);
+    let header_code = squeeze(code_of(header_raw));
+    let header = header_code.strip_prefix("for ").filter(|_| header_code.ends_with(':')).and_then(|rest| {
+        let rest = &rest[..rest.len() - 1];
+        let (pattern, iterable) = rest.split_once(" in ")?;
+        Some((pattern.trim().to_string(), iterable.trim().to_string()))
+    });
+    let loop_line = line_of(iterable_at);
+    if part == 'l' {
+        return Some(loop_line.to_string());
     }
+    let simple_name = |name: &str| !name.is_empty() && name.chars().all(|c| c.is_alphanumeric() || c == '_');
+    let names: Vec<String> = header.as_ref().map_or_else(Vec::new, |(pattern, _)| {
+        pattern.split(',').map(|name| name.trim().trim_start_matches("ref mut ").trim_start_matches("ref ").trim_start_matches("owns ").trim().to_string()).collect()
+    });
+    // The changed statement: on one line, at the loop body's own level (not inside an `if` or an arm).
+    let changed_start = line_start(line_at);
+    let changed_raw = text.get(changed_start..line_end(line_at))?;
+    let changed = code_of(changed_raw).trim();
+    let changed_line = line_of(line_at);
+    let balanced = |s: &str| {
+        let (mut depth, mut quote) = (0i32, None::<char>);
+        for c in s.chars() {
+            match (quote, c) {
+                (Some(q), c) if c == q => quote = None,
+                (Some(_), _) => {}
+                (None, '"' | '\'') => quote = Some(c),
+                (None, '(' | '[' | '{') => depth += 1,
+                (None, ')' | ']' | '}') => depth -= 1,
+                _ => {}
+            }
+        }
+        depth == 0 && quote.is_none()
+    };
+    let whole_statement = balanced(changed) && !changed.ends_with(',') && !changed.ends_with('\\');
+    let body_lines: Vec<&str> = text.get(line_end(iterable_at)..changed_start).unwrap_or("").lines().collect();
+    let body_indent = body_lines.iter().chain(std::iter::once(&changed_raw)).find(|line| !code_of(line).trim().is_empty()).map(|line| indent_of(line));
+    let at_body_level = body_indent == Some(indent_of(changed_raw));
+    // What the loop binds by the changed line, as conservatively as the text allows: its names, and
+    // every word its body writes before an `=`, after `as`, in a `for` header or a `match` arm's head.
+    let mut bound: HashSet<String> = names.iter().filter(|n| simple_name(n)).cloned().collect();
+    for body_line in &body_lines {
+        let code = code_of(body_line).trim();
+        if indent_of(body_line) <= header_indent && !code.is_empty() {
+            break;
+        }
+        let words = |s: &str| s.split(|c: char| !(c.is_alphanumeric() || c == '_')).filter(|w| simple_name(w)).map(str::to_string).collect::<Vec<_>>();
+        if let Some(rest) = code.strip_prefix("for ")
+            && let Some((loop_names, _)) = rest.split_once(" in ")
+        {
+            bound.extend(words(loop_names));
+        }
+        if let Some((_, after)) = code.split_once(" as ") {
+            bound.extend(words(after.trim_end_matches(':')));
+        }
+        if code.ends_with(':') && !code.starts_with("if ") && !code.starts_with("elif ") && !code.starts_with("while ") && !code.starts_with("for ") {
+            bound.extend(words(code));
+        }
+        if let Some((left, right)) = code.split_once('=')
+            && !right.starts_with('=')
+            && !left.ends_with(['!', '<', '>'])
+        {
+            bound.extend(words(left.split(':').next().unwrap_or("")));
+        }
+    }
+    // The words a line reads as names: not a field or method after `.`, not in a string.
+    let read_names = |line: &str| -> Vec<String> {
+        let mut out = Vec::new();
+        let (mut word, mut quote, mut after_dot) = (String::new(), None::<char>, false);
+        for c in line.chars().chain(std::iter::once(' ')) {
+            match (quote, c) {
+                (Some(q), c) if c == q => quote = None,
+                (Some(_), _) => {}
+                (None, '"' | '\'') => quote = Some(c),
+                (None, c) if c.is_alphanumeric() || c == '_' => word.push(c),
+                (None, c) => {
+                    if !word.is_empty() && !after_dot && word.starts_with(|c: char| c.is_alphabetic() || c == '_') {
+                        out.push(std::mem::take(&mut word));
+                    }
+                    word.clear();
+                    after_dot = c == '.';
+                }
+            }
+        }
+        out
+    };
+    let reads_bound = read_names(changed).iter().any(|name| bound.contains(name));
+    let binds = changed.split_once('=').is_some_and(|(left, right)| {
+        let name = left.split(':').next().unwrap_or("").trim();
+        !right.starts_with('=') && !left.ends_with(['!', '<', '>', '+', '-', '*', '/', '%', '&', '|', '^']) && simple_name(name) && name != "_"
+    });
+    let taken = words_in(text);
+    let header_plain = header.as_ref().is_some_and(|(_, iterable)| {
+        [
+            collection.to_string(),
+            format!("{collection}.iter()"),
+            format!("{collection}.iter_mut()"),
+            format!("{collection}.as_span()"),
+            format!("{collection}.as_span().iter()"),
+        ]
+        .contains(iterable)
+    });
+    let movable = !nested && header.is_some() && whole_statement && at_body_level && !reads_bound && !changed.ends_with(':') && !binds;
+    let codable = !nested && header.is_some() && whole_statement;
+    // The line through the loop's own handle: its one mention of the collection, an element of it,
+    // replaced by the handle; not a lasting view, not a copy of itself (`x = x`).
+    let through = |handle: &str| -> Option<String> {
+        if changed.contains("ref ") || bound.contains(handle) && !names.iter().any(|n| n == handle) {
+            return None;
+        }
+        let (at, open) = named_at(changed, collection, '[')?;
+        let close = closing(changed, open)?;
+        let line = format!("{}{handle}{}", &changed[..at], &changed[close..]);
+        let left_alone = line.replace(' ', "") == format!("{handle}={handle}");
+        let still_named = read_names(&line).iter().any(|name| name == collection.split('.').next().unwrap_or(collection));
+        (!left_alone && !still_named).then_some(line)
+    };
+    let fallback = || -> (String, String) {
+        if movable {
+            (
+                format!("change it after the loop: move line {changed_line}, `{changed}`, below the loop"),
+                format!("the change moved below the loop: line {changed_line}"),
+            )
+        } else {
+            (
+                "make the change after the loop, from what a list of your own collects as the loop runs".to_string(),
+                "the change made below the loop, from a list of your own".to_string(),
+            )
+        }
+    };
+    let typed = |ty: &str| !ty.is_empty() && !ty.contains('.');
+    let (fix, help) = match change {
+        'e' if codable && header_plain && names.len() == 1 && simple_name(&names[0]) => {
+            let handle = if names[0] == "_" { fresh_name("x", &taken) } else { names[0].clone() };
+            match through(&handle) {
+                Some(line) => {
+                    let header = format!("for ref mut {handle} in {collection}:");
+                    (
+                        format!("to change the element the loop is on, write `{header}` in place of line {loop_line} and `{line}` in place of line {changed_line}"),
+                        format!("the loop's own handle changes the element it is on: `{header}`"),
+                    )
+                }
+                None => fallback(),
+            }
+        }
+        'v' if codable && header_plain && (1..=2).contains(&names.len()) && names.iter().all(|n| simple_name(n)) && names[0] != "_" => {
+            let handle = names.get(1).filter(|name| *name != "_").cloned().unwrap_or_else(|| fresh_name(if names[0] == "v" { "value" } else { "v" }, &taken));
+            match through(&handle) {
+                Some(line) => {
+                    let header = format!("for {}, ref mut {handle} in {collection}:", names[0]);
+                    (
+                        format!("change each value through the loop's own handle: write `{header}` in place of line {loop_line} and `{line}` in place of line {changed_line}"),
+                        format!("the loop's own handle changes the value it is on: `{header}`"),
+                    )
+                }
+                None => fallback(),
+            }
+        }
+        'a' if codable && at_body_level && typed(first_type) => match named_at(changed, collection, '.') {
+            Some((at, dot)) if at == 0 || changed[..at].trim().is_empty() => {
+                let list = fresh_name("added", &taken);
+                let line = format!("{list}{}", &changed[dot..]);
+                (
+                    format!("collect what it adds in a list of your own: write `{list}: {first_type} = []` before the loop, `{line}` in place of line {changed_line}, and `{collection}.extend(owns {list})` after the loop"),
+                    format!("a list of your own, added to `{collection}` below the loop"),
+                )
+            }
+            _ => fallback(),
+        },
+        'i' | 's' if codable && at_body_level && typed(first_type) && (change == 's' || typed(second_type)) => {
+            let call = named_at(changed, collection, '.').and_then(|(at, dot)| {
+                let after = &changed[dot + 1..];
+                if !changed[..at].trim().is_empty() || !after.trim_start().starts_with(if change == 'i' { "insert" } else { "add" }) {
+                    return None;
+                }
+                let open = dot + 1 + after.find('(')?;
+                (closing(changed, open)? == changed.len()).then(|| call_arguments(changed, open)).flatten()
+            });
+            match call {
+                Some(args) if args.len() == if change == 'i' { 2 } else { 1 } => {
+                    let list = fresh_name(if change == 'i' { "new_keys" } else { "added" }, &taken);
+                    let item = fresh_name("u", &taken);
+                    let bare = |arg: &str| arg.trim_start_matches("owns ").trim().to_string();
+                    let key = bare(&args[0]);
+                    if change == 's' {
+                        (
+                            format!("collect what it adds in a list of your own: write `{list}: Array[{first_type}] = []` before the loop, `{list}.push(owns {key})` in place of line {changed_line}, and `for {item} in owns {list}: {collection}.add(owns {item})` after the loop"),
+                            format!("a list of your own, added to `{collection}` below the loop"),
+                        )
+                    } else if read_names(&args[1]).iter().any(|name| bound.contains(name)) {
+                        let value = bare(&args[1]);
+                        let second = fresh_name("w", &taken);
+                        (
+                            format!("collect the new entries in a list of your own: write `{list}: Array[({first_type}, {second_type})] = []` before the loop, `{list}.push(owns ({key}, {value}))` in place of line {changed_line}, and `for ({item}, {second}) in owns {list}: {collection}.insert(owns {item}, owns {second})` after the loop"),
+                            format!("a list of your own, added to `{collection}` below the loop"),
+                        )
+                    } else {
+                        (
+                            format!("collect the new keys in a list of your own: write `{list}: Array[{first_type}] = []` before the loop, `{list}.push(owns {key})` in place of line {changed_line}, and `for {item} in owns {list}: {collection}.insert(owns {item}, {})` after the loop", args[1]),
+                            format!("a list of your own, added to `{collection}` below the loop"),
+                        )
+                    }
+                }
+                _ => fallback(),
+            }
+        }
+        _ => fallback(),
+    };
+    Some(if part == 'h' { help } else { fix })
+}
+
+/// `[BRW-5]` — the end of `E3022`'s message for two `ref mut` elements of `list` given to one call,
+/// whose indexes are written at `first` and `second`: "but both are `bodies[i]`" when they are
+/// written alike, otherwise "and `bodies[i]` and `bodies[j]` are the same body when `i == j`; write
+/// `if i != j:` above this line and indent it under it".
+pub fn pair_mark(list: &str, noun: &str, first: Span, second: Span) -> String {
+    let field = '\u{3}';
+    format!("\u{1}%{}{field}{}{field}{}{field}{}{field}{}{field}{list}{field}{noun}\u{2}", first.file.0, first.start, first.end, second.start, second.end)
+}
+
+/// A [`pair_mark`]'s text: `pair` is the mark's body after `%`.
+fn pair(pair: &str, map: &SourceMap) -> Option<String> {
+    let mut fields = pair.split('\u{3}');
+    let file = map.get(FileId(fields.next()?.parse().ok()?))?;
+    let mut at = || -> Option<usize> { fields.next()?.parse().ok() };
+    let (a0, a1, b0, b1) = (at()?, at()?, at()?, at()?);
+    let list = fields.next()?;
+    let noun = fields.next()?;
+    let squeeze = |s: &str| s.split_whitespace().collect::<Vec<_>>().join(" ");
+    let x = squeeze(file.text.get(a0..a1)?);
+    let y = squeeze(file.text.get(b0..b1)?);
+    Some(if x == y {
+        format!("but both are `{list}[{x}]`")
+    } else {
+        format!("and `{list}[{x}]` and `{list}[{y}]` are the same {noun} when `{x} == {y}`; write `if {x} != {y}:` above this line and indent it under it")
+    })
 }
 
 /// A line's code: up to a `#` that is outside every string and character literal.
@@ -660,6 +972,11 @@ fn expand_marks(text: &str, map: &SourceMap) -> String {
         out.push_str(&rest[..open]);
         let after = &rest[open + 1..];
         let Some(close) = after.find('\u{2}') else { break };
+        if let Some(body) = after[..close].strip_prefix('%') {
+            out.push_str(&pair(body, map).unwrap_or_else(|| "and the two may be the same place".to_string()));
+            rest = &after[close + 1..];
+            continue;
+        }
         if let Some(fix) = after[..close].strip_prefix('&') {
             out.push_str(&walk_fix(fix, map).unwrap_or_else(|| "?".to_string()));
             rest = &after[close + 1..];

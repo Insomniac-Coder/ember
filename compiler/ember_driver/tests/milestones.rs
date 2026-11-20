@@ -9339,7 +9339,6 @@ fn every_example_of_the_specification_checks() {
         ("XI.2 Threads and synchronisation (`std.thread`, `std.sync`)", 1, WRITTEN_IN_0915),
         ("XI.3 Scoped tasks", 1, WRITTEN_IN_0915),
         ("XI.4 Parallel loops", 1, WRITTEN_IN_0915),
-        ("XII.1 `SoA[T]`", 1, WRITTEN_IN_0915),
         ("XII.3 ECS (`std.ecs`)", 1, WRITTEN_IN_0915),
         ("Annex A — Syntax Quick Reference", 1, WRITTEN_IN_0915),
     ];

@@ -11,8 +11,8 @@
 ## The compiler knows these types by their names here, as it knows `std.sync`'s. What it gives
 ## them (`[SIMD-4]`, `[SIMD-8]`, `[SIMD-9]`):
 ##
-## - `V.splat(x)`, `V.from_array(a)` and `v.to_array()` (written here), `V.load(s)` and `v.store(s)`
-##   (`s.len()` at least `V.LANES`), `V.gather(s, idx)` and `v.scatter(s, idx)` (`idx` an integer
+## - `V.splat(x)`, `V.from_array(a)` and `v.to_array()` (written here), `V.load(s)` and `v.store(ref mut s)`
+##   (`s.len()` at least `V.LANES`), `V.gather(s, idx)` and `v.scatter(ref mut s, idx)` (`idx` an integer
 ##   vector of as many lanes, each lane's index checked against `s.len()`): a failure is a `Bounds`
 ##   panic naming the lane. The unchecked forms `load_unchecked`, `store_unchecked`,
 ##   `gather_unchecked` and `scatter_unchecked` are `unsafe`.

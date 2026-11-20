@@ -25,7 +25,7 @@ fn scale(xs: Span[f32], ref mut out: MutSpan[f32], k: f32):
     kv = f32x8.splat(k)
     for i in (0..xs.len()).step_by(8):
         v = f32x8.load(xs[i..i + 8])
-        (v * kv).store(out[i..i + 8])
+        (v * kv).store(ref mut out[i..i + 8])
 
 fn main():
     xs: Array[f32] = []

@@ -5748,9 +5748,6 @@ fn compile_once(input: &Path, command: &str, options: &Options, attempts: &mut i
     // `[OWN-3]`, Part XVIII §4.9 — moves are tracked, a use after a move is
     // `E3040`, and the drops lowering inserted are removed where the value was
     // moved away or made conditional on a drop flag where it may have been.
-    // `[BRW-16]` — a position is made again from its kept index after an add to its list, before the
-    // borrow check sees it.
-    mir.pass("positions", &mut types, |bodies, types| ember_analysis::positions::repoint_positions_all(&mut bodies[..fresh], types));
     mir.pass("drop elaboration", &mut types, |bodies, types| ember_analysis::elaborate_drops_all(&mut bodies[..fresh], types, &mut sink));
     mark("drop elaboration", "all modules");
     // `[LNT-3]` — `L1001`/`L1002` are emitted by `build` and `check`, not only
@@ -5818,6 +5815,10 @@ fn compile_once(input: &Path, command: &str, options: &Options, attempts: &mut i
     if sink.has_errors() {
         return Ok(finish(&sink, &map, options));
     }
+    // `[BRW-16]` — a position is made again from its kept index after an add to its list, where the
+    // borrow check let the add meet its borrow (`positions::repoints`); a kept body was made so when
+    // it was checked.
+    mir.pass("positions", &mut types, |bodies, types| ember_analysis::positions::repoint_positions_all(&mut bodies[..fresh], types));
     let interface_cache = interface_cache.expect("a program without errors prepares its interface artifacts");
     // `[BLD-1]` — the checked forms: those the clean modules were kept against must still hold; each
     // module checked here is kept for the next build; and what the clean ones reported is reported.

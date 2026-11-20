@@ -3119,6 +3119,13 @@ fn dump_expr(expr: &Expr, function: &Function, types: &ember_types::TypeTable) -
 /// `std.core`'s `option_m(x, f)` or `result_m(x, f)` (`synth_wrapper_callback`): for such a
 /// function's qualified name, the method the program wrote, which a message names instead.
 pub fn routed_method(qualified: &str) -> Option<&str> {
+    // `Array`'s methods the compiler routes to std's helpers (`[STD-15]`): the program wrote these.
+    match qualified.strip_prefix("std.").unwrap_or(qualified) {
+        "core.Array.extend_owned" => return Some("extend"),
+        "core.Array.sort_ord" => return Some("sort"),
+        "core.Array.sorted_ord" => return Some("sorted"),
+        _ => {}
+    }
     let name = qualified.strip_prefix("std.core.").or_else(|| qualified.strip_prefix("core."))?;
     name.strip_prefix("option_").or_else(|| name.strip_prefix("result_")).filter(|method| !method.is_empty())
 }

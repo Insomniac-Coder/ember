@@ -796,3 +796,30 @@ header including `<vector>` is `unsafe` with MSVC only (recommended one spelling
 TCB-4 needs a milestone test (`ember tcb`'s list). Old tests the target contradicts: INDEX §2 (C pointer types under
 `callback(…)`, `owned fn`, FFI-22's stop text, FFI-39d's run-time panic, FFI-40's `T&`, FFI-42a's `@ffi(const)`
 E3021, FFI-39c's missing `owns`, `virtuals=[…]` in 15 files).
+
+## The lead's M5 work, reviewed (2026-11-20)
+
+A review workflow (four lenses, each finding checked by a skeptic) found 26 defects in commit `5c8f50c5`; the
+critical ones were mine and are fixed in the next commit: the positions pass ran before the borrow check, so a
+removal before an add was never seen (an out-of-range write), and a copy of a position (`other = boss`) kept the
+old buffer's address. Two items stay open, as spec questions:
+
+1. **`extend` without the word.** `[STD-15]` gives only `extend(owns items)`, and `[FN-2a]` makes a missing word
+   before an `owns` parameter's argument `E3028`, so `xs.extend(ys)` should be refused, as `push(3)` now is. But
+   std itself appends a byte span to a buffer (`std/src/fs.em:173`, `this.buffer.extend(data)`), and the spec
+   gives no way to append a span's `Copy` elements without a copy of its own (`extend(owns copy of data)` copies
+   twice). Readings: (a) refuse it, and std writes `extend(owns copy of data)`; (b) a span of `Copy` elements is
+   an iterable of `T` its items are copied from, so `extend(span)` stays, with no word. My recommendation: (b),
+   written into STD-15, since it is the C-speed form and hands nothing over. Until ruled, the old path stays.
+2. **What `extend(owns items)` takes.** "An iterable of `T`": today the routed helper takes an `IntoIterator`
+   (lists, sets, maps, ranges); generators, iterator adapters and fixed arrays are refused (`E2040`), though a
+   `for` walks them. The general fix is a std blanket `extend[I: needs Iterator] I implements IntoIterator`
+   (or lowering `extend` through the loop's own iteration); it changes how every loop resolves, so it waits for
+   its own change with its own tests.
+
+A second review round (three lenses, a skeptic each) of the reworked code found no soundness defect in the
+positions design; it found 19 message defects in the render-time E3020 fix chooser (a tab in a header panicked it;
+comprehensions, nested walks, names an `exists as` or a `match` arm makes, lines inside an `if`, a statement over
+several lines, labels) and in the smaller fixes (`TypeTable::written`, a shared `Span`'s `iter_mut()`, helps over
+`.iter()`, the effects names). All are fixed in the next commit: the chooser gives code only where the program's
+text makes it safe, and the plain sentence otherwise, never `?`.

@@ -526,21 +526,35 @@ impl Checker<'_> {
         let header = self.kept_header(local)?;
         let decl = &self.locals[local.0 as usize];
         let noun = self.value_noun(decl.ty);
-        let mut source = self.written_line(header.source).unwrap_or_else(|| "it".to_string());
-        let mut fix = self.line_with(decl.span, &format!("ref mut {name}"))?;
-        // `[CTL-1]` — `for p in ps.iter_mut():` is 0.9.10's spelling of a loop over `ps`, whose own
-        // handle is `for ref mut p in ps:`.
-        if matches!(header.kind, KeptKind::Loop) && source.ends_with(".iter_mut()") {
-            source.truncate(source.len() - ".iter_mut()".len());
-            fix = fix.replacen(".iter_mut():", ":", 1);
+        let source = self.written_line(header.source).unwrap_or_else(|| "it".to_string());
+        let fix = self.line_with(decl.span, &format!("ref mut {name}"))?;
+        // `[CTL-1]` — `for p in ps.iter_mut():` is 0.9.10's spelling of a loop over `ps` (the header
+        // the checker noted walks `ps`), whose own handle is `for ref mut p in ps:`; `ps.iter()` gives
+        // read-only views of the same elements. Over any other call the loop's own handle is not
+        // the program's to write: the message gives no line.
+        let mut source = source;
+        let mut fix = Some(fix);
+        if matches!(header.kind, KeptKind::Loop) {
+            let mut line = fix.take().unwrap_or_default().replacen(&format!("{source}.iter_mut():"), &format!("{source}:"), 1);
+            if let Some(place) = source.strip_suffix(".iter()").filter(|place| plain_place(place)).map(str::to_string) {
+                line = line.replacen(&format!("{source}:"), &format!("{place}:"), 1);
+                source = place;
+                fix = Some(line);
+            } else if plain_place(&source) {
+                fix = Some(line);
+            }
         }
-        let message = format!(
-            "`{change}` changes the {noun} in `{source}`, but `{name}` only reads it; to change that {noun} through `{name}`, write `{fix}`"
-        );
+        let message = match &fix {
+            Some(fix) => format!("`{change}` changes the {noun} in `{source}`, but `{name}` only reads it; to change that {noun} through `{name}`, write `{fix}`"),
+            None => format!("`{change}` changes the {noun} in `{source}`, but `{name}` only reads it"),
+        };
         if let Some(callee) = given_to {
+            let mut diagnostic = Diagnostic::error(codes::E3027, write, format!("`{name}` only reads the {noun} in `{source}`, so it cannot be given to `{callee}` as `ref mut`"));
+            if let Some(fix) = &fix {
+                diagnostic = diagnostic.help(format!("to change that {noun} through `{name}`, write `{fix}`"));
+            }
             return Some(
-                Diagnostic::error(codes::E3027, write, format!("`{name}` only reads the {noun} in `{source}`, so it cannot be given to `{callee}` as `ref mut`"))
-                    .help(format!("to change that {noun} through `{name}`, write `{fix}`"))
+                diagnostic
                     .secondary(decl.span, format!("`{name}` reads the {noun} here"))
                     .note("a loop, pattern or opened name views what it names and only reads it [BRW-14], [BRW-15]"),
             );
@@ -575,8 +589,15 @@ impl Checker<'_> {
         // xs.iter_mut():` being 0.9.10's spelling of `for ref mut v in xs:`).
         match (header.kind, self.line_with(decl.span, &format!("ref mut {name}"))) {
             (KeptKind::Loop, Some(line)) => {
-                let line = line.replacen(".iter_mut():", ":", 1);
-                diagnostic.help(format!("to change the {noun} in `{}` itself, write `{line}`", source.trim_end_matches(".iter_mut()")))
+                let line = line.replacen(&format!("{source}.iter_mut():"), &format!("{source}:"), 1);
+                match source.strip_suffix(".iter()").filter(|place| plain_place(place)) {
+                    Some(place) => {
+                        let line = line.replacen(&format!("{source}:"), &format!("{place}:"), 1);
+                        diagnostic.help(format!("to change the {noun} in `{place}` itself, write `{line}`"))
+                    }
+                    None if plain_place(&source) => diagnostic.help(format!("to change the {noun} in `{source}` itself, write `{line}`")),
+                    None => diagnostic,
+                }
             }
             _ => diagnostic,
         }
@@ -881,4 +902,9 @@ impl Checker<'_> {
 pub(crate) fn a_noun(noun: &str) -> String {
     let article = if noun.starts_with(['a', 'e', 'i', 'o', 'u']) { "an" } else { "a" };
     format!("{article} {noun}")
+}
+
+/// Whether `text` writes a place a loop may walk by its own handle: names and fields (`xs`, `this.items`).
+fn plain_place(text: &str) -> bool {
+    !text.is_empty() && text.split('.').all(|part| !part.is_empty() && part.chars().all(|c| c.is_alphanumeric() || c == '_'))
 }

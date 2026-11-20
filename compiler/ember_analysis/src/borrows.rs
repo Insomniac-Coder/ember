@@ -34,6 +34,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use ember_diag::{Diagnostic, Sink, codes};
 use ember_mir::{
+    SoAOp,
     AggregateKind, BasicBlock, BasicBlockId, Body, Builtin, CallableAccessSummary as CallAccessContract,
     CallableRegionMetadata, Const, FuncRef, LocalDecl,
     LocalId, LocalKind, Operand, ParameterFieldAccess, ParameterMode, Place, Projection, RegionAccessKind,
@@ -278,6 +279,17 @@ fn run_checks(
         |func: &FuncRef| stores::with_stores(contract_for(func, &summaries, &signatures), func, &store_summaries);
     let names: HashMap<String, String> =
         bodies.iter().map(|body| (body.symbol.clone(), body.name.clone())).collect();
+    // `[BRW-5]` — each function's written name and its parameters' names.
+    let callees: std::sync::Arc<HashMap<String, (String, Vec<String>)>> = std::sync::Arc::new(
+        bodies
+            .iter()
+            .map(|body| {
+                let short = body.name.rsplit('.').next().unwrap_or(&body.name).to_string();
+                let params = body.locals.iter().filter(|local| matches!(local.kind, LocalKind::Arg)).map(|local| local.name.clone().unwrap_or_default()).collect();
+                (body.symbol.clone(), (short, params))
+            })
+            .collect(),
+    );
     // `[THR-11]` — a scoped task copies the views it only reads; its scope bounds them (the
     // flow into the `Scope`, `regions.rs`), so they need not be static as an `owned fn`'s.
     let scoped_task_environments: HashSet<StructId> = bodies
@@ -332,6 +344,7 @@ fn run_checks(
         let forms = expansion.forms.get(&index).filter(|forms| !forms.is_empty()).map_or(&plain[..], Vec::as_slice);
         let start = sink.mark();
         for (at, form) in forms.iter().enumerate() {
+            let _ = form.callees.set(callees.clone());
             let checked = form.body.as_ref().unwrap_or(body);
             let capture_paths = capture_borrow_paths(checked, &capture_contracts);
             let mut own = Sink::new();
@@ -4864,8 +4877,51 @@ fn check_point(
             if index_apart(body, types, form, loan_place, place, &[loan.created_at.block, point.block]) {
                 continue;
             }
+            // `[BRW-16]` — an add to a position's list, after which the position is made again from its
+            // index (`positions.rs`), meets the position's borrow and ends nothing of it, when the
+            // name is the only one that still holds the borrow where the add runs: a copy of the
+            // view (`other = boss`) is not made again, and keeps the old buffer's address.
+            if matches!(access, Access::Borrow { mutable: true })
+                && let Some(call) = crate::positions::repointed_add_at(
+                    body,
+                    point.block,
+                    point.index,
+                    loan.borrower,
+                    form.repoints.get_or_init(|| crate::positions::repoints(body, types)),
+                )
+                && {
+                    let at = Point { block: call, index: body.blocks[call].stmts.len() };
+                    regions.holders(loan.capability.validity_interval.0).iter().all(|holder| {
+                        *holder == loan.borrower || !regions.local_regions(*holder).iter().any(|slot| regions.contains(slot.region, at))
+                    })
+                }
+            {
+                continue;
+            }
+            // `[SOA-6]` — a proxy is a position: it finds its element again through `ps` at each use, so
+            // an add to `ps` (`push`, `try_push`, `reserve`) meets the borrow it holds and ends nothing,
+            // when only proxies hold the borrow where the add runs (a view of a field a proxy gave
+            // points into a column, which the add may move).
+            if matches!(access, Access::Borrow { mutable: true })
+                && let Some(call) = soa_add_given_borrow_at(body, point)
+                && loan_place == place
+                && {
+                    let at = Point { block: call, index: body.blocks[call].stmts.len() };
+                    let mut held = regions.holders(loan.capability.validity_interval.0).iter().filter(|holder| {
+                        regions.local_regions(**holder).iter().any(|slot| regions.contains(slot.region, at))
+                    });
+                    held.clone().next().is_some() && held.all(|holder| is_soa_proxy(types, body.local(*holder).ty))
+                }
+            {
+                continue;
+            }
             // The borrower itself is not a conflicting access.
             if place.local == loan.borrower {
+                continue;
+            }
+            // `[DIA-26]` — the length an index check reads (`i < xs.len` before the `assert`) is part of
+            // the element access the next line makes, which gets the one message (`xs[0] = 9`).
+            if matches!(access, Access::Read) && index_check_at(body, point) {
                 continue;
             }
             // Writing a reference replaces the reference, not what it refers to: a loan taken
@@ -4951,7 +5007,14 @@ fn check_point(
             // diagnostic identity. If another mutable argument overlaps it,
             // the user wrote two mutable borrows of one place (E3022/B1), not
             // a shared-plus-mutable overlap (E3021/B3).
+            // `[BRW-5]` — two `ref mut` elements of one list given to one call: "`collide` changes
+            // `a` and `b` as two different bodies, and `bodies[i]` and `bodies[j]` are the same
+            // body when `i == j`; write `if i != j:` above this line and indent it under it".
+            let pair = (loan.capability.is_mut() && matches!(access, Access::Borrow { mutable: true }))
+                .then(|| call_pair_message(body, types, form, loan, loan_place, place, point, span))
+                .flatten();
             let (code, message) = match (loan.capability.is_mut(), access) {
+                (true, Access::Borrow { mutable: true }) if pair.is_some() => (codes::E3022, pair.clone().unwrap_or_default()),
                 (true, Access::Borrow { mutable: true }) => (
                     codes::E3022,
                     format!("{name} is already mutably borrowed"),
@@ -5102,21 +5165,71 @@ fn check_point(
             // `[BRW-16]` — a position (a name for a list element made by indexing) is ended by what may
             // remove, insert, reorder, clear or replace its list, a `ref mut` one too; an add makes it
             // again (`positions.rs`).
-            let position = reshaped && crate::positions::is_position(body, types, loan_place, loan.borrower);
+            let proxy = reshaped.then(|| soa_proxy_holder(body, types, regions, loan)).flatten();
+            let position = reshaped && (crate::positions::is_position(body, types, loan_place, loan.borrower) || proxy.is_some());
             if (matches!(access, Access::Move) || reshaped)
                 && (!loan.capability.is_mut() || position)
                 && let Some(later) = later
             {
-                if !repeated {
-                    let diagnostic = if position {
+                // `[BRW-16]`, `[BRW-17]` — an add the position is made again after, refused because
+                // another name still holds its borrow there: that name (a view made from the position,
+                // `other = boss`) is not made again and keeps the old buffer's address.
+                let kept_by = (position && matches!(access, Access::Borrow { mutable: true }))
+                    .then(|| crate::positions::repointed_add_at(body, point.block, point.index, loan.borrower, form.repoints.get_or_init(|| crate::positions::repoints(body, types))))
+                    .flatten()
+                    .and_then(|call| {
+                        let at = Point { block: call, index: body.blocks[call].stmts.len() };
+                        let Terminator::Call { next, .. } = &body.blocks[call].terminator else { return None };
+                        let mut holders: Vec<LocalId> = regions.holders(loan.capability.validity_interval.0).iter().copied().collect();
+                        holders.sort();
+                        holders.into_iter().find_map(|holder| {
+                            let live = regions.local_regions(holder).iter().any(|slot| regions.contains(slot.region, at));
+                            let name = body.local(holder).name.clone().filter(|_| holder != loan.borrower && live)?;
+                            Some((name, body.local(holder).span, crate::positions::next_read(body, holder, next.0 as usize)?))
+                        })
+                    });
+                if let Some((holder, made_at, used_at)) = kept_by {
+                    if !repeated {
                         let view = body.local(loan.borrower).name.clone().unwrap_or_default();
                         let noun = viewed_noun(types, place_ty(body, types, loan_place));
+                        sink.emit_classified(
+                            Diagnostic::error(
+                                codes::E3060,
+                                used_at,
+                                format!(
+                                    "`{}` (line {}) may move the {noun} `{view}` names, and `{holder}`, made from it (line {}), still views the old place on line {}; use `{holder}` before line {}, or make it again after it: `{}`",
+                                    ember_diag::text_mark(span),
+                                    ember_diag::line_mark(span),
+                                    ember_diag::line_mark(made_at),
+                                    ember_diag::line_mark(used_at),
+                                    ember_diag::line_mark(span),
+                                    ember_diag::line_code_mark(made_at)
+                                ),
+                            )
+                            .primary_label(format!("`{holder}` is used here"))
+                            .secondary(span, "this may move what the list holds")
+                            .secondary(made_at, format!("`{holder}` is made here"))
+                            .help(format!("`{view}` itself is found again after the add; a name made from it is not: use `{view}`, or make `{holder}` again below the add")),
+                        );
+                    }
+                    continue;
+                }
+                if !repeated {
+                    let diagnostic = if position {
+                        let (view, noun) = match proxy {
+                            Some((holder, element)) => (body.local(holder).name.clone().unwrap_or_default(), viewed_noun(types, element)),
+                            None => (body.local(loan.borrower).name.clone().unwrap_or_default(), viewed_noun(types, place_ty(body, types, loan_place))),
+                        };
                         let ends = matches!(access, Access::Write)
                             || call_given_borrow_at(body, point).is_some_and(|(func, _)| {
                                 matches!(func, FuncRef::Builtin { which: Builtin::ArrayClear | Builtin::ArrayTruncate | Builtin::ArrayPop { .. } | Builtin::ArrayDrain, .. })
+                                    || matches!(func, FuncRef::Builtin { which: Builtin::SoA { op: SoAOp::Clear | SoAOp::TakeLast | SoAOp::Truncate | SoAOp::DropAt | SoAOp::SetLen, .. }, .. })
                             });
+                        let adds = call_given_borrow_at(body, point).is_some_and(|(func, _)| crate::positions::only_adds(func));
                         let change = if matches!(access, Access::Write) { ember_diag::line_code_mark(span) } else { ember_diag::text_mark(span) };
-                        let what = if ends {
+                        let what = if adds {
+                            format!("may move the {noun} `{view}` names to a new place")
+                        } else if ends {
                             format!("may end the {noun} `{view}` names")
                         } else {
                             format!("may put another {noun} in the place `{view}` names")
@@ -5218,11 +5331,21 @@ fn check_point(
             let (code, message) = if loan.arena_scope {
                 (codes::E3096, format!("{name} is scoped here"))
             } else if iteration_borrow {
-                {
-                let (message, help) = walk_change_message(body, types, loan, loan_place, place, *access, point, span, &name);
+                // `[DIA-26]` — loops nested over one collection: one message, the innermost loop's,
+                // whose fix uses neither loop's handle.
+                let walks: Vec<&&Loan> = scope
+                    .iter()
+                    .filter(|other| {
+                        other.capability.source_place().is_some_and(|other_place| overlaps(&call_argument_place(body, other_place), place))
+                            && loan_held_by_for_iterator(body, regions, other, point)
+                    })
+                    .collect();
+                if walks.iter().any(|other| other.span.start > loan.span.start) {
+                    continue;
+                }
+                let (message, help) = walk_change_message(body, types, loan, loan_place, place, *access, point, span, &name, walks.len() > 1);
                 walk_help = Some(help);
                 (codes::E3020, message)
-            }
             } else {
                 (code, message)
             };
@@ -5817,12 +5940,11 @@ fn reshapes_at(body: &Body, types: &TypeTable, point: Point, place: &Place, acce
 }
 
 /// `[CTL-2]`, `[BRW-18]`, `[DIA-25]` — `E3020`'s message for a change of the collection a loop walks
-/// (`loan_place`, the loop's header at `loan.span`), made at `span` by `access` to `place`, with the
-/// lines that fix it: an element written goes through the loop's own handle ("`xs[0] = 5` (line 3)
-/// writes an element of `xs`, which this loop walks (line 2); to change the element the loop is on,
-/// write `for ref mut x in xs:` in place of line 2 and `x = 5` in place of line 3"), a map's value
-/// the same way (`for k, ref mut v in counts:`), a push collects in a list of the program's own,
-/// extended after the loop; anything else moves below the loop.
+/// (`loan_place`, the loop's iterable at `loan.span`), made at `span` by `access` to `place`: the
+/// line, the loop's line and the lines that fix it, which `ember_diag::walk_fix_mark` chooses from
+/// the program's text (the loop's own handle for an element or a map's value, a list of the
+/// program's own for an add, the change moved below the loop when it reads nothing the loop binds).
+/// With the help, the fix by its shape's name (`[DIA-7a]` B2).
 #[allow(clippy::too_many_arguments)]
 fn walk_change_message(
     body: &Body,
@@ -5834,78 +5956,162 @@ fn walk_change_message(
     point: Point,
     span: Span,
     name: &str,
+    nested: bool,
 ) -> (String, String) {
     let mut walked = place_ty(body, types, loan_place);
     while let TyKind::Ref { inner, .. } = *types.kind(walked) {
         walked = inner;
     }
-    let map = matches!(*types.kind(walked), TyKind::Struct(id)
-        if types.struct_def(id).origin.as_ref().is_some_and(|(origin, _)| origin.as_str() == "std.collections.Map"));
-    let collection = name.trim_matches('`');
-    let changed = ember_diag::line_code_mark(span);
-    let line = ember_diag::line_mark(span);
-    let header = ember_diag::line_mark(loan.span);
-    let walks = if map {
-        format!("whose keys this loop walks (line {header})")
-    } else {
-        format!("which this loop walks (line {header})")
+    let origin = match *types.kind(walked) {
+        TyKind::Struct(id) => types.struct_def(id).origin.clone(),
+        _ => None,
     };
-    let fix = |which| ember_diag::walk_fix_mark(which, map, loan.span, span, collection);
+    let collection_named = |path: &str| origin.as_ref().is_some_and(|(generic, _)| generic.as_str() == path);
+    let (map, set) = (collection_named("std.collections.Map"), collection_named("std.collections.Set"));
+    let argument = |n: usize| origin.as_ref().and_then(|(_, args)| args.get(n).copied()).map(|ty| types.written(ty)).unwrap_or_default();
+    // The collection as the program names it: a `ref mut` parameter's `*ys` is `ys`.
+    let collection = name.trim_matches('`').trim_start_matches('*').to_string();
     // The fixes rewrite the line through the collection's own name: a change through another
-    // name (a view of it, a call) moves below the loop.
+    // name (a view of it, a call) is moved or collected.
     let own_name = place.local == loan_place.local && !collection.contains('…') && body.local(place.local).name.is_some();
     let past = place.projection.get(loan_place.projection.len());
     let element = own_name
         && !map
+        && !set
         && matches!(access, Access::Write | Access::Borrow { mutable: true })
         && place.projection.starts_with(&loan_place.projection)
         && matches!(past, Some(Projection::Index(_) | Projection::ConstIndex(_)));
     let call = matches!(access, Access::Borrow { mutable: true }).then(|| call_given_borrow_at(body, point)).flatten();
+    let calls = |path: &[&str]| call.is_some_and(|(func, _)| matches!(func, FuncRef::Direct { symbol, .. } if ember_branding::demangle(symbol).is_some_and(|found| found.components == path)));
     // A map's `counts[k]` is a call given the map that returns a `ref mut` of a value (`index_mut`),
     // or, written to, its `index_set` (`[STD-17]`).
     let value = own_name
         && map
-        && call.is_some_and(|(func, dest)| {
-            matches!(*types.kind(place_ty(body, types, dest)), TyKind::Ref { mutable: true, .. })
-                || matches!(func, FuncRef::Direct { symbol, .. } if ember_branding::demangle(symbol)
-                    .is_some_and(|found| found.components == ["std", "collections", "Map", "index_set"]))
-        });
+        && (call.is_some_and(|(_, dest)| matches!(*types.kind(place_ty(body, types, dest)), TyKind::Ref { mutable: true, .. }))
+            || calls(&["std", "collections", "Map", "index_set"]));
     let added = own_name
         && !map
-        && call.is_some_and(|(func, _)| matches!(func, FuncRef::Builtin { which: Builtin::ArrayPush | Builtin::ArrayExtend, .. }));
-    if element {
-        (
-            format!(
-                "`{changed}` (line {line}) writes an element of `{collection}`, {walks}; to change the element the loop is on, write `{}` in place of line {header} and `{}` in place of line {line}",
-                fix(ember_diag::WalkFix::Header),
-                fix(ember_diag::WalkFix::Element)
-            ),
-            format!("the loop's own handle changes the element it is on: `{}`", fix(ember_diag::WalkFix::Header)),
-        )
+        && !set
+        && call.is_some_and(|(func, _)| {
+            matches!(func, FuncRef::Builtin { which: Builtin::ArrayPush | Builtin::ArrayExtend, .. })
+                || matches!(func, FuncRef::Direct { symbol, .. } if ember_branding::demangle(symbol).is_some_and(|found| found.components == ["std", "core", "Array", "extend_owned"]))
+        });
+    let inserted = own_name && map && calls(&["std", "collections", "Map", "insert"]);
+    let set_added = own_name && set && calls(&["std", "collections", "Set", "add"]);
+    use ember_diag::{WalkChange, WalkPart};
+    let (change, kinds, verb) = if element {
+        (WalkChange::Element, [String::new(), String::new()], "writes an element of")
     } else if value {
-        (
-            format!(
-                "`{changed}` (line {line}) changes `{collection}`, {walks}; change each value through the loop's own handle: write `{}` in place of line {header} and `{}` in place of line {line}",
-                fix(ember_diag::WalkFix::Header),
-                fix(ember_diag::WalkFix::Element)
-            ),
-            format!("the loop's own handle changes the value it is on: `{}`", fix(ember_diag::WalkFix::Header)),
-        )
+        (WalkChange::Value, [String::new(), String::new()], "changes")
     } else if added {
-        (
-            format!(
-                "`{changed}` (line {line}) adds to `{collection}`, {walks}; collect what it adds in a list of your own: write `added: {} = []` before the loop, `{}` in place of line {line}, and `{collection}.extend(owns added)` after the loop",
-                types.display(walked),
-                fix(ember_diag::WalkFix::Added)
-            ),
-            format!("a list of your own, added after the loop: `{collection}.extend(owns added)`; to drop items, `{collection}.retain(owns fn(item) => keep(item))` after the loop"),
-        )
+        (WalkChange::Added, [types.written(walked), String::new()], "adds to")
+    } else if inserted {
+        (WalkChange::Inserted, [argument(0), argument(1)], "adds to")
+    } else if set_added {
+        (WalkChange::SetAdded, [argument(0), String::new()], "adds to")
     } else {
-        (
-            format!("`{changed}` (line {line}) changes `{collection}`, {walks}; change it after the loop: move line {line}, `{changed}`, below the loop"),
-            format!("the change moved below the loop: line {line}"),
-        )
+        (WalkChange::Other, [String::new(), String::new()], "changes")
+    };
+    let mark = |part| ember_diag::walk_fix_mark(part, change, nested, loan.span, span, &collection, [&kinds[0], &kinds[1]]);
+    let walks = if map { "whose keys this loop walks" } else { "which this loop walks" };
+    (
+        format!(
+            "`{}` (line {}) {verb} `{collection}`, {walks} (line {}); {}",
+            ember_diag::line_code_mark(span),
+            ember_diag::line_mark(span),
+            mark(WalkPart::LoopLine),
+            mark(WalkPart::Fix)
+        ),
+        mark(WalkPart::Help),
+    )
+}
+
+/// `[BRW-5]` — `E3022`'s message for two `ref mut` elements of one list given to one call: the loan's
+/// temporary and the one the access at `point` takes are both the call's arguments.
+#[allow(clippy::too_many_arguments)]
+fn call_pair_message(body: &Body, types: &TypeTable, form: &crate::dyn_kinds::Form, loan: &Loan, loan_place: &Place, place: &Place, point: Point, span: Span) -> Option<String> {
+    let StmtKind::Assign { place: taken, rvalue: Rvalue::Ref { mutable: true, .. } } = &body.blocks[point.block].stmts.get(point.index)?.kind else {
+        return None;
+    };
+    let index = |p: &Place| p.projection.iter().position(|step| matches!(step, Projection::Index(_) | Projection::ConstIndex(_)));
+    let (at_loan, at_place) = (index(loan_place)?, index(place)?);
+    // One list, an element of it each.
+    if loan_place.local != place.local || loan_place.projection[..at_loan] != place.projection[..at_place] || loan_place.projection.len() != at_loan + 1 || place.projection.len() != at_place + 1 {
+        return None;
     }
+    let position = |args: &[Operand], local: LocalId| args.iter().position(|arg| matches!(arg, Operand::Copy(given) | Operand::Move(given) if given.local == local && given.projection.is_empty()));
+    let (symbol, first, second) = body.blocks.iter().find_map(|block| match &block.terminator {
+        Terminator::Call { func: FuncRef::Direct { symbol, .. }, args, .. } => Some((symbol, position(args, loan.borrower)?, position(args, taken.local)?)),
+        _ => None,
+    })?;
+    let (callee, params) = form.callees.get()?.get(symbol)?;
+    let (a, b) = (params.get(first)?, params.get(second)?);
+    let list = Place { local: place.local, projection: place.projection[..at_place].to_vec() };
+    let list = place_name(body, types, &list);
+    if list.contains('…') {
+        return None;
+    }
+    let noun = viewed_noun(types, place_ty(body, types, place));
+    let plural = if let Some(stem) = noun.strip_suffix('y').filter(|stem| !stem.ends_with(['a', 'e', 'i', 'o', 'u'])) {
+        format!("{stem}ies")
+    } else if noun.ends_with(['s', 'x']) || noun.ends_with("ch") || noun.ends_with("sh") {
+        format!("{noun}es")
+    } else {
+        format!("{noun}s")
+    };
+    Some(format!("`{callee}` changes `{a}` and `{b}` as two different {plural}, {}", ember_diag::pair_mark(&list, &noun, loan.span, span)))
+}
+
+/// Whether the statement at `point` computes the condition of its block's bounds check (`_12 =
+/// copy _11 < copy _1.1` before `assert(copy _12)` with `Bounds`): a read the compiler made.
+fn index_check_at(body: &Body, point: Point) -> bool {
+    let block = &body.blocks[point.block];
+    let Some(StmtKind::Assign { place: condition, rvalue: Rvalue::BinaryOp { .. } }) = block.stmts.get(point.index).map(|stmt| &stmt.kind) else {
+        return false;
+    };
+    matches!(&block.terminator, Terminator::Assert { cond: Operand::Copy(checked) | Operand::Move(checked), msg: ember_mir::AssertKind::Bounds { .. }, .. }
+        if checked == condition && matches!(body.local(condition.local).kind, LocalKind::Temp))
+}
+
+/// `[SOA-6]` — whether `ty` is an element proxy, `SoARef[T]` or `SoAMut[T]`.
+fn is_soa_proxy(types: &TypeTable, ty: Ty) -> bool {
+    soa_proxy_element(types, ty).is_some()
+}
+
+/// The element type of the proxy type `ty`.
+fn soa_proxy_element(types: &TypeTable, ty: Ty) -> Option<Ty> {
+    let TyKind::Struct(id) = *types.kind(ty) else { return None };
+    let (origin, args) = types.struct_def(id).origin.as_ref()?;
+    matches!(origin.as_str(), "SoARef" | "SoAMut").then(|| args.first().copied()).flatten()
+}
+
+/// A proxy the program named that holds `loan`, and its element's type.
+fn soa_proxy_holder(body: &Body, types: &TypeTable, regions: &Regions, loan: &Loan) -> Option<(LocalId, Ty)> {
+    let mut holders: Vec<LocalId> = regions.holders(loan.capability.validity_interval.0).iter().copied().collect();
+    holders.sort();
+    holders.into_iter().find_map(|holder| {
+        let local = body.local(holder);
+        local.name.as_ref()?;
+        Some((holder, soa_proxy_element(types, local.ty)?))
+    })
+}
+
+/// The block of the `SoA` add (`push`, `try_push`, `reserve`) given the `ref mut` taken at `point`.
+fn soa_add_given_borrow_at(body: &Body, point: Point) -> Option<usize> {
+    let Some(StmtKind::Assign { place: taken, rvalue: Rvalue::Ref { mutable: true, .. } }) = body.blocks[point.block].stmts.get(point.index).map(|stmt| &stmt.kind) else {
+        return None;
+    };
+    if !taken.projection.is_empty() {
+        return None;
+    }
+    body.blocks.iter().enumerate().find_map(|(block, data)| match &data.terminator {
+        Terminator::Call { func: FuncRef::Builtin { which: Builtin::SoA { op: SoAOp::Push | SoAOp::TryPush | SoAOp::Reserve, .. }, .. }, args, .. }
+            if matches!(args.first(), Some(Operand::Copy(given) | Operand::Move(given)) if given.local == taken.local && given.projection.is_empty()) =>
+        {
+            Some(block)
+        }
+        _ => None,
+    })
 }
 
 /// The call given the `ref mut` taken at `point` (`t = ref mut xs` before `push(t, …)`), and where

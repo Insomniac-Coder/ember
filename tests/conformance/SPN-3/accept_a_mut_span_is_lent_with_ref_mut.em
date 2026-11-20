@@ -5,12 +5,13 @@
 #$ stdout: 30
 #$ stdout: 2
 
-# Explicit reborrow produces a new mutable view without moving its parent.
-# Direct view-producing expressions use the same operation and provenance.
+# `[SPN-3]` — a `MutSpan` is lent with `ref mut`, which before a span names its elements: a `ref mut` name
+# of a `ref mut` name views the same elements without moving it, `ref mut` stands before a span made in
+# the call, and a `ref mut` parameter is given `ref mut` before the argument.
 
 [T]
 fn view_len(ref mut span: MutSpan[T]) -> int:
-    child = span.reborrow()
+    child = ref mut span
     return child.len()
 
 fn main():
@@ -18,12 +19,12 @@ fn main():
     values.push(owns 1)
     values.push(owns 2)
     parent = ref mut values.as_mut_span()
-    child = ref mut parent.reborrow()
+    child = ref mut parent
     child[0] = 10
     println(child[0])
     parent[1] = 20
     println(parent[1])
-    direct = ref mut values.as_mut_span().reborrow()
+    direct = ref mut values.as_mut_span()
     direct[0] = 30
     println(direct[0])
-    println(view_len[i32](values.as_mut_span()))
+    println(view_len[i32](ref mut values.as_mut_span()))

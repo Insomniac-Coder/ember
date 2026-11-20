@@ -671,7 +671,7 @@ extend[T: needs Component] WriteSoa[T] implements ParamOps:
     static fn get_mut(ref mut view: WriteSoa[T], e: Entity) -> Option[SoAMut[T]]:
         match view.set.slot(e):
             Some(at):
-                return Some(view.values[at])
+                return Some(ref mut view.values[at])
             None:
                 return None
 

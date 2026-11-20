@@ -17,7 +17,7 @@ fn main():
     kept = ""
     for k in n.keys():
         kept = k
-        n.insert(owns "c", owns 3)    #$ error[E3020]: `n.insert(owns "c", owns 3)` (line 20) changes `n`, whose keys this loop walks (line 18); change it after the loop: move line 20, `n.insert(owns "c", owns 3)`, below the loop
+        n.insert(owns "c", owns 3)    #$ error[E3020]: `n.insert(owns "c", owns 3)` (line 20) adds to `n`, whose keys this loop walks (line 18); collect the new keys in a list of your own: write `new_keys: Array[String] = []` before the loop, `new_keys.push(owns "c")` in place of line 20, and `for u in owns new_keys: n.insert(owns u, owns 3)` after the loop
     println(kept)
     s: Set[String] = Set()
     s.add(owns "x")

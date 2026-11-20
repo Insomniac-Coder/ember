@@ -13,10 +13,10 @@ fn main():
     match cpp.Bag.new():
         Ok(bag):
             for item in bag:
-                _ = bag.put(item)    #$ error[E3020]: `_ = bag.put(item)` (line 16) changes `bag`, which this loop walks (line 15); change it after the loop: move line 16, `_ = bag.put(item)`, below the loop
+                _ = bag.put(item)    #$ error[E3020]: `_ = bag.put(item)` (line 16) changes `bag`, which this loop walks (line 15); make the change after the loop, from what a list of your own collects as the loop runs
                 println(bag.size())    #$ error[E3021]: is borrowed here and mutably borrowed elsewhere
         Err(error):
             println(error.what)
     row = cpp.Row(cells = [5, 6, 7])
     for cell in row:
-        row.cells[0] = cell    #$ error[E3020]: `row.cells[0] = cell` (line 22) changes `row`, which this loop walks (line 21); change it after the loop: move line 22, `row.cells[0] = cell`, below the loop
+        row.cells[0] = cell    #$ error[E3020]: `row.cells[0] = cell` (line 22) changes `row`, which this loop walks (line 21); make the change after the loop, from what a list of your own collects as the loop runs

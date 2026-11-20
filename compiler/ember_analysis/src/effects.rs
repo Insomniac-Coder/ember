@@ -912,6 +912,14 @@ fn display_name(body: &Body, types: &TypeTable) -> String {
     if body.is_lambda {
         return "a lambda".to_string();
     }
+    // A std helper the compiler routes a method to is the method the program wrote (`Array.extend`).
+    if let Some(found) = ember_branding::demangle(&body.symbol)
+        && found.components.len() == 4
+        && found.components[..3] == ["std", "core", "Array"]
+        && let Some(method) = ember_hir::routed_method(&found.components.join("."))
+    {
+        return format!("Array.{method}");
+    }
     match body.class_owner {
         Some(class) if !body.name.contains('.') => format!("{}.{}", types.class_def(class).name, body.name),
         _ => body.name.clone(),
