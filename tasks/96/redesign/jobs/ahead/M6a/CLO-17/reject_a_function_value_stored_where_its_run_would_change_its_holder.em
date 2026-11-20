@@ -8,8 +8,8 @@
 # The first message is the spec's, with this file's line numbers. The others have no text in the
 # spec: code only. `wipe_panels` ends the panel that holds the function (owned all the way down),
 # through a call. The `weakref bus` capture case needs capture words (M8): not here. Q4 asks
-# whether a function with no state (all but the first here) is refused too; these follow the
-# clause's letter and its `BUS` example.
+# whether a function whose state is not a block (every case here) is refused too; these follow the
+# clause's letter and its examples, reading (A).
 
 class Button:
     handlers: Array[fn()] = []

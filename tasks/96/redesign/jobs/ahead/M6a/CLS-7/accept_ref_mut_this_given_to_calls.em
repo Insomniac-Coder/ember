@@ -7,7 +7,7 @@
 #$ stdout: 1
 # The case std.ecs needs (W8): a method gives `this` to `ref mut` parameters, directly and through
 # stored functions called by position, which change its fields. None of them ends or replaces the
-# object, so every call is allowed.
+# object, so every call is allowed. `this.handlers[this.current](...)` calls an element (Q8).
 
 class Ui:
     handlers: Array[fn(ref mut Ui)] = []

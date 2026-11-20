@@ -4,8 +4,8 @@
 #$ test: compile-fail
 #$ rules: OBJ-5, CLS-7a, EFF-1, DIA-22
 # `drop` calls `retire`, and `retire` calls `archive`, which takes the object over and stores it in
-# a module variable: the call in `drop` is refused. Where the refusal stands (the call in `drop`,
-# `[DIA-22]`) is the reading this file takes; no text in the spec for this program: code only.
+# a module variable: the call in `drop` is refused, there (`[DIA-22]`). E3016 rather than E3013 is
+# Q7's reading (A). No text in the spec for this program: code only.
 
 class Player:
     name: String
