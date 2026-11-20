@@ -33,7 +33,9 @@ diagnostic anywhere in the file, used where the spec does not say on which line 
 pushed into an `Array[String]` (THR-1's E7014 program takes a `String`); `weakref thread_shared x`
 on a name already `thread_shared` (`E0109`, `[OWN-13]`: it is `weakref x`); a handle declared inside
 a `with` block and used after it (the fix's handles are kept in a list declared before, as the
-spec's own program does). Everything else is not built: capture words (E0900), `Lock` and `guarded
+spec's own program does). A fourth, found while writing M7's bank (`d029f474`): WK-12's thread
+captured its link `copy of w`, but a `weakref` link is not `Copy` (`E2116`, `[WK-11]`); it captures
+`fn() weakref st:` now. Everything else is not built: capture words (E0900), `Lock` and `guarded
 by` (`std.sync` has no `Lock` yet), the effect-based task check (today's borrow check of tasks),
 reductions, E7007/E7012/E7013/E7014/E7015/E7017/E7018 in their 0.9.20 forms, `sharedref mut`, a
 `@parallel` element walk and `Array` writes (E7010 today), `@parallel` on a `while` (E0108 today).

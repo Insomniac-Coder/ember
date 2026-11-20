@@ -20,7 +20,7 @@ fn hit(w: weakref thread_shared Stats):
 fn main():
     st = thread_shared Stats()
     w = weakref st
-    h = thread.spawn(owns fn() copy of w: hit(w))
+    h = thread.spawn(owns fn() weakref st: hit(st))
     h.join()
     println(st.hits.load())
     st = thread_shared Stats()
