@@ -40890,7 +40890,8 @@ impl<'a> Checker<'a> {
                 {
                     let qualified = self.qualified_in_module(module, name.name);
                     if self.constants.contains_key(&qualified) || self.expr_consts.contains_key(&qualified)
-                        || self.foreign_statics.contains_key(&qualified) || self.lazy_statics.contains_key(&qualified) {
+                        || self.foreign_statics.contains_key(&qualified) || self.lazy_statics.contains_key(&qualified)
+                        || self.const_statics.contains_key(&qualified) {
                         if !self.item_accessible(module, qualified) {
                             self.report_item_not_visible(module, qualified, name.span);
                             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
