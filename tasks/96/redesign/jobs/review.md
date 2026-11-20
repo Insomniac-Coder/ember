@@ -726,3 +726,8 @@ Merged: `tasks/96/redesign/jobs/ahead/M6a/` (15 rules, 42 clauses, 69 files; IND
 "neither changes nor ends while `p` is used"; where `ref mut this` is checked; a `drop` handing `this` to an `owns this`
 method (E3016 recommended). Its eighth, `x.f[i](...)` for a field `f`, the spec already decides (an element call):
 an implementation gap (today E2072).
+
+D2's second batch (29 rules, 50 files) is merged too. Its new questions (INDEX §3): Q9, a deeper call chain's message
+(the stored-handler shape recommended); Q11, BCK-6's "rounds where it did not" (the reading needing no index proof
+recommended). Q10 is no question: Hardened_14's DIA-2 says `int`, not `i64`, and `[int; 3]` as written, so the
+compiler's `i64` is an implementation gap (the type table holds one type for both); the W7 ruling only let DIA-2 wait.
