@@ -3,6 +3,7 @@
 #$ test: run-pass
 #$ rules: DIA-25, GRM-13
 #$ stdout: 1
+#$ stdout: a
 #$ stdout: 4
 # The lines the E0113 and BRW-18 messages give, written in: each program compiles and does what
 # the line says. (The other files' accept_the_line... and accept_the_ways_out... do the same for
@@ -33,5 +34,6 @@ fn main():
     counts: Map[String, int] = Map()
     counts.insert(owns String("a"), owns 2)
     for k, ref mut v in counts:
+        println(k)
         v *= 2
     println(counts["a"])
