@@ -751,3 +751,12 @@ are where-reported questions the files leave open (E2117, E2050). Found on the w
 for an `owns` parameter is E3028 today, though `[CLS-3]` says that argument takes no word (a defect); three older
 tests the target contradicts (INDEX §2: ATT-1's `@static_safe` text, EFF-12's two `@static_safe` files, TYP-22's
 refusal of every generic method).
+
+D2's M9 bank (22 rules, 47 files, `ahead/M9/INDEX.md`) is merged. Its five questions (INDEX §3) stay open:
+THR-10's two codes for a `R` that is not `Send` (E7015 or E7008); THR-10's "spawn inside a walk is E3020"
+clause, for which no refused program could be built (a thread changes things only under locks or atomics, and a
+walk under that lock is the clause's exception); where E7007, E7012, E7010, THR-18's E3060 and a scope's-end E7018
+stand; GRM-17's one simple statement in a bracketed lambda against THR-21's and CLO-17's
+`fn() copy of part: for x in part: total += x`; where WK-12's E7014 stands. Old tests the target contradicts:
+INDEX §2. Not written: A6-13 and A9-9 (C++ handle classes, the FFI milestone's harness), A6-14's run-time checks
+(a milestone test), THR-4, THR-13, RC-4's internal counting, PAR-2a, PAR-2b.
