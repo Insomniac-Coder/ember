@@ -13,6 +13,7 @@
 #$ stdout: 12
 #$ stdout: 0 0 12
 # The four acceptances, each as the clause writes it; `first_even` is the spec's own function.
+# `first_big` is the fourth under Q11's reading (a), which (b) accepts too.
 
 struct Enemy:
     hp: int

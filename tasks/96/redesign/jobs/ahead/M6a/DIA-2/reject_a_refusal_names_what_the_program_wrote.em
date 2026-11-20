@@ -8,6 +8,7 @@
 #$ rules: DIA-2, DIA-25, FN-2a
 # Each expectation pins only the name the clause requires; the rest of each message is not the
 # spec's for these programs. The call's line to write names the caller's `a`, not `bump`'s `n`.
+# `int` for `len()`'s result and `[int; 3]` follow the text against the lead's earlier ruling: Q10.
 
 fn bump(ref mut n: int):
     n += 1
