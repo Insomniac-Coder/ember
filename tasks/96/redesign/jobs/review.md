@@ -786,3 +786,13 @@ E3026 by CLO-4 and LT-42; recommended E3026); ECS-3's `orphan(e)` result (recomm
 rewrites need the owner's sign-off). A stale gap-map line: A8-7's handed-over named function (the spec lends it,
 STD-19, ODR-240). Not written: the rest of ECS-8 (`on_update`, `on_destroy`, `sort_as`, snapshots, `RuntimeView`,
 `Handle`), A8-12 (a measurement).
+
+D2's M12 bank (13 rules, 26 files with their C and C++ headers, `ahead/M12/INDEX.md`) is merged. Its questions
+(INDEX §3) stay open: FFI-52's example never reads `token` (L1001; recommended `_token`); FFI-52's "registered from
+`register_cb` (line 14)" (recommended the registering call's line); FFI-54's E2114 help naming `second = owns
+Widget(id=2)` (recommended the message's own value); FFI-39d's "objects C++ may hold (line 6)" (recommended the
+class's declaration line); FFI-52's "exported, line 5" (recommended the attribute's line); whether `import cpp` of a
+header including `<vector>` is `unsafe` with MSVC only (recommended one spelling, the most demanding compiler's).
+TCB-4 needs a milestone test (`ember tcb`'s list). Old tests the target contradicts: INDEX §2 (C pointer types under
+`callback(…)`, `owned fn`, FFI-22's stop text, FFI-39d's run-time panic, FFI-40's `T&`, FFI-42a's `@ffi(const)`
+E3021, FFI-39c's missing `owns`, `virtuals=[…]` in 15 files).
