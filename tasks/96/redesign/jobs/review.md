@@ -768,3 +768,11 @@ describes (a word capture given away, or the real `s` handed over inside the lam
 contradicts: INDEX §2 (CLO-1's two one-function-place refusals against ODR-278, CLO-10's three-word limit, GRM-42's
 E0120 text, CLO-6/6a texts, the removed CLO-13 and CLO-15). Not written: A6-7's C callbacks (the FFI harness),
 CLO-3's `extern "C" fn` conversion panic (no text in the spec).
+
+D2's M7 bank (6 rules, 11 files, `ahead/M7/INDEX.md`) is merged, with a fix to M9's WK-12 accept file (a
+`weakref` link captured `fn() weakref st:`, not `copy of w`, E2116). Its questions (INDEX §3) stay open: WK-17's
+"compiled with no header test", which output cannot show (recommended: `ember inspect --safety` lists no `Stale`
+check at the walk's reads, both backends); WK-7's owner `clear()` "always called" (recommended: its `drop` calls
+it). Old tests the target contradicts: the five `warning_*` L3001 files in WK-5/6/7 and WK-15's debug-run leak
+report. Not written: WK-7's two-package cases, loops through `thread_shared` owners (M9's `guarded by`), WK-15's
+leak report (a milestone test).
