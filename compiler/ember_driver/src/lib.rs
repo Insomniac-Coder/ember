@@ -5921,7 +5921,10 @@ fn compile_once(input: &Path, command: &str, options: &Options, attempts: &mut i
         let declared: Vec<String> = declared.iter().map(|layer| format!("\"{layer}\"")).collect();
         Some((left_out, declared.join(", ")))
     };
-    if ember_analysis::effects::check_layers_all(mir.bodies(), &types, &omitted, &mut sink) > 0 {
+    // A build where no package declares its layers has none to check: the effects' graph is not built twice.
+    if packages.list.iter().any(|package| package.layers.is_some())
+        && ember_analysis::effects::check_layers_all(mir.bodies(), &types, &omitted, &mut sink) > 0
+    {
         return Ok(finish(&sink, &map, options));
     }
     mark("effects", "all modules");

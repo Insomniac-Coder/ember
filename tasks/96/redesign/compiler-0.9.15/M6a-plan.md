@@ -69,6 +69,18 @@ this row: its `RefCell` part is M6b's, and the run-time access machinery goes wi
   to `LOG` (its line 22), ...". Facts carry their built-in's verb (`Fact::op`). Parameters' facts still meet the
   loans where the arguments are borrowed (`reshapes_at`); other conflicts than a walk's keep the generic texts
   until step 7.
+- **The cost (BUD-3, 2026-11-20):** `tools/compile_budgets.py` against main's release: B1 1.081x, B3 1.039x, B6
+  1.034x, B9 1.016x (memory), all failing; `--timings` puts all of it in "borrow checks" (238 to 349 ms cold, 40 to
+  121 ms after a one-body edit): over 6,171 bodies, the summaries' worklist 54.6 ms, `Targets::new` 23.3 ms, the
+  whole-program checks 4 ms, `DropRuns` 2 ms, and `runs_of` for every checked form ~25 ms. **The plan:** the
+  summaries are read at few points (a call while a loan of a static lives, a `ref mut` argument meeting a loan, a
+  written add with a live position, a spawn, a generator, a scoped task), so they are worked out **lazily**: a
+  `LazySummaries` (a mutex over each body's `Option<Arc<Summary>>`) computes the summary a check asks for together
+  with its callees' (the worklist over that closure only) and keeps them; `Targets` is made on first need;
+  `runs_of` is asked per call only where a loan of a module variable is in scope; the positions pass gets the
+  summaries the checks asked for plus those its candidates in every body (kept ones too) need, so it decides as
+  the checks did. The effects build their `Graph` once for both their checks (`check_effects_all`,
+  `check_layers_all`), and not at all for layers when no package declares any. Measured again before main.
 - **Step 6's plan (the lead, 2026-11-20):** the call check reads stage 2 (`used_after`, `read_while`,
   `changed_while`), which needs every body's regions (`summaries::summarize` already makes them with
   `borrows::regions_all`). `regions_all` builds again the contracts, capture contracts and store summaries
