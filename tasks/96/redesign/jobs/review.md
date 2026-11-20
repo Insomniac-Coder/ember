@@ -776,3 +776,13 @@ check at the walk's reads, both backends); WK-7's owner `clear()` "always called
 it). Old tests the target contradicts: the five `warning_*` L3001 files in WK-5/6/7 and WK-15's debug-run leak
 report. Not written: WK-7's two-package cases, loops through `thread_shared` owners (M9's `guarded by`), WK-15's
 leak report (a milestone test).
+
+D2's M14 bank (12 rules, 20 files, `ahead/M14/INDEX.md`) is merged, with a fix to M6a's DIA-25 accept (an unread
+`k`, L1001). Its questions (INDEX §3) stay open: ECS-8's kept listener capturing a local with `ref` (E3063 by ECS-8,
+E3026 by CLO-4 and LT-42; recommended E3026); ECS-3's `orphan(e)` result (recommended `-> bool`); ECS-3's
+`create_at(hint)` when the hint's index is in use (recommended EnTT's: another index); ECS-4's `each(f)` arguments
+(recommended the entity and the items, with the view's words). Old tests the target contradicts: all 34 files of
+`tests/conformance/ECS-1` to `ECS-7` (the removed `World`/`Query` API) and A8-11's three design tests (their
+rewrites need the owner's sign-off). A stale gap-map line: A8-7's handed-over named function (the spec lends it,
+STD-19, ODR-240). Not written: the rest of ECS-8 (`on_update`, `on_destroy`, `sort_as`, snapshots, `RuntimeView`,
+`Handle`), A8-12 (a measurement).
