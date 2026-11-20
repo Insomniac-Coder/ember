@@ -9329,7 +9329,6 @@ fn every_example_of_the_specification_checks() {
     const WRITTEN_IN_0915: &str = "written in 0.9.15, which this compiler does not implement yet";
     const WRITTEN_IN_0920: &str = "written in 0.9.20, which this compiler does not implement yet";
     const BASELINE: &[(&str, usize, &str)] = &[
-        ("V.7 Constants and statics", 1, WRITTEN_IN_0915),
         ("VI.5 Lambdas and function values", 1, WRITTEN_IN_0915),
         ("Views with several regions", 1, WRITTEN_IN_0915),
         // `owns (…)` before an argument for an `owns` parameter, since 0.9.20_Hardened_3.

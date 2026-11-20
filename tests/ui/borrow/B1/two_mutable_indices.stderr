@@ -1,4 +1,4 @@
-error[E3022]: `values[…]` is already mutably borrowed
+error[E3022]: `second` and `first` would both change an element of `values`, and `values[i]` and `values[j]` are the same number when `i == j`; write `if i != j:` above this line and indent it under it
  --> tests/ui/borrow/B1/two_mutable_indices.em:8:42
   |
 7 |     first: ref mut i32 = ref mut values[i]
